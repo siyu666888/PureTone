@@ -1,0 +1,52 @@
+# PureTone v1.0.2 播放控制区 UI 优化 —— 测试证据（2026-10-21）
+
+## 优化项与实现对照（用户 7 条建议）
+
+| # | 建议 | 实现 | 验证 |
+|---|---|---|---|
+| 1 | 图标质感统一 | 全部控制图标换 Rounded 圆润变体；prev/next 36dp、次级 26dp、主钮 76dp，权重分级 | ✅ 截图确认 |
+| 2 | 播放/暂停突出 | 76dp 圆形微渐变容器（主色→亮阶）+ 10dp 阴影；按压缩放 0.88x 弹性回弹；AnimatedContent 图标淡入淡出切换 | ✅ 截图 + 点击确认 |
+| 3 | 播放模式状态 | OFF 灰 / ALL 主色+底圆+圆点 / ONE 主色+圆点+"1"图标；着色与圆点 220ms 动画过渡；contentDescription 随态变化 | ✅ 三态循环实测（关闭→列表循环→单曲循环→关闭） |
+| 4 | 进度条联动 | 自定义进度条：轨道 6dp、滑块 18dp 白芯+阴影、整条 24dp 热区；拖动弹出时间气泡实时预览；单击定位 | ✅ 拖动截图见 drag_bubble2.png（气泡 01:13）；单击/拖动均 seek 成功 |
+| 5 | 收藏+歌词入口 | 副控制行（主控行上方）：心形收藏（点亮态填充+底圆）、歌词按钮（点亮=面板展开）；收藏 Room 持久化 + 「我喜欢」页 + 列表心形标记 | ✅ 收藏 toggle、我喜欢（1）、列表心形、歌词面板展开均实测 |
+| 6 | 迷你条优化 | 底部 2dp 主色进度线；长按副行切换「剩余 -mm:ss / 总时长」（AnimatedContent 过渡） | ✅ 长按截图见 mini_longpress.png |
+| 7 | 手势与动画 | 封面左右滑动切歌（跟手偏移≤160px + 松手弹性回位）、双击暂停/播放；封面切歌 AnimatedContent 淡入淡出+缩放；按钮按压/变色/图标切换全动画 | ✅ 左滑下一首、右滑上一首、双击暂停均实测 |
+
+## 数据层变更（收藏功能）
+- `SongEntity` 新增 `favorite` 列；`PureToneDatabase` v1→v2，`MIGRATION_1_2`（ALTER TABLE ADD COLUMN）
+- `DataModule` 注册迁移（无 fallbackToDestructiveMigration，老用户数据不丢）
+- `MusicRepository.toEntity` 修复：同步对账时从旧行保留 favorite（REPLACE 策略会冲掉用户标记）
+- `SongDao`：setFavorite / isFavorite / observeFavorites
+- `PlayerViewModel`：favorite 状态（currentSongId 去重收集）+ 乐观更新 toggleFavorite
+- 「我喜欢」区块接入 MeScreen；SongRow 行内心形标记
+
+## 顺带修复的存量 bug（单测暴露，与本次 UI 无关）
+1. `M3uCodec.parse`：`#EXTINF:0,标签` 时长为 0 时标签不可信，应置 null（此前误把纯路径当标题）
+   —— 规则：duration==0 → title=null，与 serialize 的 `#EXTINF:0` 输出对称，保证往返稳定
+2. `PlaylistImportResolver`：后缀匹配 tier 未做唯一性校验——裸文件名（a.mp3）同时命中
+   Music/ 与 Download/ 两首同名歌时静默导入第一首（错歌）；改为 singleOrNull 唯一才匹配，
+   歧义则跳过（与 byName tier 的既有语义一致）
+3. 修复后 22/22 单测全绿（此前 2 个失败为存量失败）
+
+## 真机/模拟器验证矩阵（x86_64 模拟器，Android 14）
+
+| 包 | 结果 |
+|---|---|
+| debug v1.0.2 | 新 UI 全部交互通过：气泡拖动、收藏、循环三态、左滑/右滑/双击、歌词面板、迷你条长按 |
+| release v1.0.2 | UI 一致；**Room 1→2 迁移无崩溃**（旧 v1.0.1 数据上覆盖安装）；收藏写入+读取正常；R8 无裁类问题 |
+| 单元测试 | 22/22 通过 |
+| 签名 | v2 scheme 验证通过（PureTone-v1.0.2-{arm64-v8a,armeabi-v7a,x86,x86_64,universal}-release.apk） |
+
+## 控件坐标备忘（1080x2340，供后续 adb 测试）
+- 收藏 (397,1823) / 歌词 (683,1823)
+- 随机 (167,2027) / 上一首 (334,2027) / 播放暂停 (541,2027) / 下一首 (746,2027) / 循环 (913,2027)
+- 进度条热区 y≈1580-1620；封面中心 (540,750)
+
+## 复现命令
+```bash
+adb install -r app/build/outputs/apk/debug/PureTone-v1.0.2-x86_64-debug.apk
+adb shell am start -n com.puretone.player.debug/com.puretone.player.MainActivity
+adb shell input tap 377 715        # 播放第一首
+adb shell input tap 200 1905       # 迷你条展开播放页
+adb shell uiautomator dump ...     # 读 contentDescription 验证控件状态
+```

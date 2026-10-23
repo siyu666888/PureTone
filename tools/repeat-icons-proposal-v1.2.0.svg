@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 470" width="560" height="470">
+  <title>PureTone 循环图标重设计方案（长方形 · 圆角 · 箭头处留空隙）</title>
+
+  <style>
+    .t   { font-family: sans-serif; font-size: 15px; font-weight: 500; fill: #111; }
+    .ts  { font-family: sans-serif; font-size: 13px; fill: #666; }
+    .tcap{ font-family: sans-serif; font-size: 12px; fill: #888; }
+    .ico { fill: none; stroke: #111; stroke-linecap: round; stroke-linejoin: round; }
+    .ico-old { fill: none; stroke: #999; stroke-linecap: round; stroke-linejoin: round; }
+    .grid{ fill: none; stroke: #e6e6e6; stroke-width: 1; }
+  </style>
+
+  <text class="t" x="40" y="32">PureTone 循环图标重设计方案</text>
+  <text class="ts" x="40" y="52">新设计：圆角长方形轨道，两段路径收尾相连，箭头相连处留空隙</text>
+
+  <!-- 行 1：新设计 -->
+  <g transform="translate(90,80) scale(4.2857)">
+    <path class="ico" stroke-width="1.8" d="
+      M4,11.6 L4,10 A4,4 0 0 1 8,6 L20,6 A4,4 0 0 1 24,10 L24,11.6
+      M24,14.1 L21.8,11.6 M24,14.1 L26.2,11.6
+      M24,16.4 L24,18 A4,4 0 0 1 20,22 L8,22 A4,4 0 0 1 4,18 L4,16.4
+      M4,13.9 L1.8,16.4 M4,13.9 L6.2,16.4"/>
+  </g>
+  <text class="ts" x="150" y="225" text-anchor="middle">顺序播放（列表循环）</text>
+
+  <g transform="translate(350,80) scale(4.2857)">
+    <path class="ico" stroke-width="1.8" d="
+      M4,11.6 L4,10 A4,4 0 0 1 8,6 L20,6 A4,4 0 0 1 24,10 L24,11.6
+      M24,14.1 L21.8,11.6 M24,14.1 L26.2,11.6
+      M24,16.4 L24,18 A4,4 0 0 1 20,22 L8,22 A4,4 0 0 1 4,18 L4,16.4
+      M4,13.9 L1.8,16.4 M4,13.9 L6.2,16.4
+      M14,11.8 L14,16.2 M12.2,13 L14,11.8"/>
+  </g>
+  <text class="ts" x="410" y="225" text-anchor="middle">单曲循环</text>
+
+  <!-- 行 2：现状对比 -->
+  <text class="ts" x="40" y="275">现状（圆形版，v1.1.8 起）</text>
+  <g transform="translate(110,300) scale(2.857)">
+    <path class="ico-old" stroke-width="1.8" d="
+      M7,14 A7,7 0 0 1 21,14
+      M21,16.4 L18.8,13.9 M21,16.4 L23.2,13.9
+      M21,14 A7,7 0 0 1 7,14
+      M7,11.6 L4.8,14.1 M7,11.6 L9.2,14.1"/>
+  </g>
+  <text class="ts" x="150" y="390" text-anchor="middle">顺序播放（旧）</text>
+
+  <g transform="translate(370,300) scale(2.857)">
+    <path class="ico-old" stroke-width="1.8" d="
+      M7,14 A7,7 0 0 1 21,14
+      M21,16.4 L18.8,13.9 M21,16.4 L23.2,13.9
+      M21,14 A7,7 0 0 1 7,14
+      M7,11.6 L4.8,14.1 M7,11.6 L9.2,14.1
+      M14,11.2 L14,16.8 M11.9,12.5 L14,11.2"/>
+  </g>
+  <text class="ts" x="410" y="390" text-anchor="middle">单曲循环（旧）</text>
+
+  <!-- 规格说明 -->
+  <text class="tcap" x="40" y="428">规格：视口 28×28 · 圆角矩形 x=4..24 / y=6..22 · 圆角半径 4 · 描边 1.8 圆头圆角</text>
+  <text class="tcap" x="40" y="447">箭头：翼距 4.4 / 高 2.5（与现有一致）· 左右两处空隙各 2.3（箭头尖 14.1 ↔ 下段起点 16.4）</text>
+</svg>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 品牌色板（与 ui/theme/Color.kt 保持一致） -->
+    <color name="brand_primary">#5E6AD2</color>
+    <color name="brand_primary_dark">#BFC2F3</color>
+    <!-- 图标底色：取自徽标图边缘色，使前景方块与背景/启动屏无缝融合 -->
+    <color name="ic_launcher_background">#050D26</color>
+    <color name="surface_light">#FAF9FF</color>
+    <color name="surface_dark">#121218</color>
+</resources>

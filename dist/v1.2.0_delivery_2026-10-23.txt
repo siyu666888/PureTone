@@ -1,0 +1,74 @@
+================================================================
+PureTone v1.2.0 交付证据（2026-10-23）
+================================================================
+
+一、版本
+- versionName : 1.2.0
+- versionCode : 16
+- 唯一来源    : app/build.gradle.kts 的 appVersionName / appVersionCode
+
+二、本次改动（4 项用户需求）
+1) 播放队列浮层精简
+   - 仅保留「上一首 / 播放·暂停 / 下一首」三个按钮，移除其余全部按钮
+     （右上角「关闭」按钮、每行尾部的「移除」按钮均已删除）；
+   - 队列标题「播放队列（N）」与歌曲列表保留（否则浮层失去存在意义），
+     点击列表项即切歌；关闭方式为下滑或点击遮罩（ModalBottomSheet 原生行为）；
+   - 列表高度由固定 420dp 改为 heightIn(max = 400dp)，为底部控制条让位；
+   - 注意：队列允许同一首歌出现多次，列表 key 不能只用 songId，故沿用位置索引；
+   - 文件：ui/screens/PlayerScreen.kt。
+
+2) 循环播放 / 单曲循环图标重设计（按已确认设计稿）
+   - 由「圆形闭环」改为「圆角长方形 + 两箭头收尾相连 + 相连处留空隙」；
+   - 抽为共享 PathBuilder.rectLoop()，RepeatAll 直接复用、RepeatOne 追加中央「1」；
+   - 参数：轨道 x=4..24 / y=6..22（20×16），圆角 R=4，描边 STROKE_LINE=1.8 圆头圆角；
+     箭头翼距 4.4 / 高 2.5（与既有箭头一致）；
+     空隙 2.3：右侧 箭头尖 14.1 ↔ 下段起点 16.4，左侧对称；
+   - 中央「1」：竖线 (14,11.8)-(14,16.2) + 旗 (12.2,13)→(14,11.8)；
+   - 文件：ui/components/ControlIcons.kt。
+
+3) 媒体播放卡片（MiniPlayer）新增/重排按钮，左右对称
+   - 播放顺序切换（左）与喜欢（右）关于中部播放/暂停对称；
+   - 实测中心 x：播放模式 644.5 / 播放·暂停 757 / 喜欢 870.5，
+     左右距播放暂停 112.5 与 113.5 px，视觉完全对称；
+   - 文件：ui/components/PlayerComposables.kt。
+
+4) 取消切换按钮的着色 / 状态色，统一中性表现
+   - PlayModeIconButton：active = true → false，不再套主色高亮、淡主色底，
+     与其它控制按钮同一色阶（onSurfaceVariant 中性灰），当前顺序由图标形状区分；
+   - 移除 MiniPlayer 播放/暂停按钮上无效的 activeTint = scheme.primary 死参数；
+   - 实测播放模式按钮区域：主色紫 0 px / 中性灰 3844 px；
+   - 收藏红心作为「收藏标记」保留（非控件状态色），如也需中性化可再调；
+   - 文件：ui/components/PlayerComposables.kt。
+
+三、构建
+- assembleDebug + testDebugUnitTest + assembleRelease 全绿；
+- 单测 35 个（0 failures / 0 errors），ControlIconsTest 仍强制构造全部图标验证路径合法；
+- 环境：AGP 8.5.2 / Kotlin 2.0.21 / Gradle 8.7 / JDK 17 / compileSdk 34 / minSdk 26。
+
+四、真机验证（emulator-5554 / Pixel_API34，debug 包，曲库 3 首 40s 测试音）
+- 图标（ASCII 字符画还原，阈值化验证）：
+    顺序播放 = 圆角长方形框 + 右上箭头朝下 + 左下箭头朝上 + 左右两处断口空隙 ✓；
+    随机播放 = 两条交叉曲线 + 右端上下双向箭头 ✓；
+    单曲循环 = 同长方形框 + 两箭头 + 空隙 + 中央「1」 ✓；
+- MiniPlayer 按钮顺序与对称性：见上「二.3」实测坐标；
+- 中性着色：播放模式按钮区域主色紫 0 px、中性灰 3844 px；
+- 队列浮层：内容仅剩标题 + 3 首歌曲列表 + 三个控制按钮，
+    content-desc 集合 = {上一首, 播放/暂停, 下一首}，无「关闭」「移除」；
+- 队列浮层播放/暂停：dumpsys media_session PLAYING → PAUSED 确认生效；
+- 下一首按钮点击正常，浮层可下滑关闭；
+- 播放页底部四按钮区（播放模式 + 上一首/播放暂停/下一首 + 播放队列）保持不变；
+- logcat FATAL EXCEPTION 计数 = 0，全程无崩溃。
+
+五、签名与哈希
+- apksigner verify -v：v2 scheme = true（v1/v3/v4=false）；
+- SHA-256:
+    universal : b753916608116c64971cff049ff6364701965c75c5d19d581d469dd791e5fed9
+    arm64-v8a : 9211cb8a86cd2c2026ab1b4cf83454b3eaad9ac0200516e8dcfe19fbdfd68085
+
+六、交付物
+- dist/PureTone-v1.2.0-universal-release.apk   （76.6 MB，含全部 ABI，推荐）
+- dist/PureTone-v1.2.0-arm64-v8a-release.apk   （16.5 MB，64 位设备）
+- dist/v1.2.0_delivery_2026-10-23.txt          （本文件）
+- dist/verify_v1.2.0/                          （miniplayer / 三态图标 / 队列浮层截图）
+- tools/repeat-icons-proposal-v1.2.0.svg       （图标设计稿，本次改动的依据）
+- v1.1.9 及更早旧包保留在 dist/ 备查。

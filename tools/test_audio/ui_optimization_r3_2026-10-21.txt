@@ -1,0 +1,76 @@
+# PureTone v1.0.4 第三轮优化 —— 测试证据（2026-10-21）
+
+## 一、需求与实现对照（用户 3 条）
+
+| # | 需求 | 实现要点 | 验证 |
+|---|---|---|---|
+| 1 | 设置页行高与布局调整，整屏完整展示全部内容、无需/极少滚动 | 压缩外边距与组间距（外层 12→8dp、组间距 12→8dp）；Card 内边距 `horizontal 12 / vertical 10→8`、组内间距 6→4dp；组标题 `titleMedium→labelLarge`；移除外观组冗余「主题模式」标题（分段控件自解释）；倍速/睡眠定时标签 `labelLarge→bodySmall`；主题分段竖向 10→8dp、Chip 竖向 6→4dp、均衡器行竖向 6→4dp；品牌行上方留白 4→2dp | ✅ 1080×2340 单屏完整显示 外观/播放/音效 + 品牌/版本，底部有富余（`r3_settings_single_screen_debug.png`、`r3_settings_single_screen_release.png`）；对照旧版被裁（`r3_settings_old_cut.png`） |
+| 2 | 修复"扫描结果全是录音"，正确过滤、仅扫描音乐文件 | **根因**：`MusicRepository.syncLibrary()` 把"应删除的路径集合"（removed=录音）传给 `SongDao.deleteByPathNotIn`，SQL 语义反了（`DELETE … WHERE path NOT IN(录音)`）→ 音乐被删光、录音全部留下。**修复**：新增 `deleteByPathIn(paths)`（`DELETE … WHERE path IN (:paths)`），只删 removed 集合；加"空扫描不清库"安全闸；`MediaStoreScanner` 双层过滤（SQL：`IS_MUSIC!=0 AND DURATION>=30s AND DATA NOT LIKE 排除目录 AND MIME NOT IN 录音MIME`；Kotlin 侧 `isNonMusic()` 大小写不敏感兜底） | ✅ debug 库内 5 首全在 `/Music/`、旧录音行(id5)已删、收藏保留；Browse 显示"共 5 首"无录音；release 同样"共 5 首"（`r3_browse_scan_debug.png`、`r3_browse_scan_release.png`） |
+| 3 | 取消顶部居中"PureTone · 纯净之音"+副标，改到版本号前 | 移除顶部居中品牌头（headlineSmall + "纯净音乐 · 纯粹聆听"副标）；底部先居中「PureTone · 纯净之音」(primary/bodyMedium)，再居中版本号「vX · 构建 N」(bodySmall) | ✅ 两构建底部均为"PureTone · 纯净之音" + "v1.0.4(-debug) · 构建 5"（见设置页截图） |
+
+## 二、扫描过滤根因与修复（第 2 项细节）
+
+**症状**：扫描结果全是录音；库里音乐消失。
+
+**根因**：`syncLibrary()` 中 `removed = existingPaths - scannedPaths` = 录音等"本次未扫到"的路径，
+却被传给了 `deleteByPathNotIn(removed)`，其 SQL 为 `DELETE FROM songs WHERE path NOT IN (:paths)`，
+即"删除所有不在录音集合里的行"= 把整库音乐删光，只剩录音。
+
+**修复后关键代码**（SongDao / MusicRepository）：
+```kotlin
+// SongDao：删除"指定集合内"的行（这些文件已不在本次扫描结果中）
+@Query("DELETE FROM songs WHERE path IN (:paths)")
+suspend fun deleteByPathIn(paths: List<String>)
+
+// MusicRepository.syncLibrary()
+if (scanned.isEmpty()) return SyncResult(0, 0, existing.size, scan.skippedNonMusic) // 安全闸
+val removed = existingPaths - scannedPaths           // 应删除者（录音/已删）
+val entities = scanned.map { it.toEntity(byPath[it.path]?.id ?: 0L, byPath[it.path]?.favorite ?: false) }
+songDao.upsertAll(entities)
+removed.toList().chunked(500).forEach { songDao.deleteByPathIn(it) }
+```
+
+**过滤规则**（`MediaStoreScanner`）：
+1. `IS_MUSIC != 0`；
+2. `DURATION >= 30000ms`；
+3. `DATA NOT LIKE '%/<dir>/%'`，`EXCLUDED_DIRS` = Ringtones / Notifications / Alarms / Recordings /
+   Recorder / VoiceRecorder / Sounds / CallRecordings / "Call Recorder" / "WhatsApp Voice Notes" /
+   "Telegram Audio" / "Audio Recorder" / "Sound Recordings"；
+4. `MIME_TYPE NOT IN (audio/amr, audio/amr-wb, audio/3gpp, audio/gsm)`；
+5. Kotlin 侧 `isNonMusic()` 兜底：路径大小写不敏感命中排除目录 / 录音扩展名(.amr/.awb/.3gp/.gsm/.evrc/.qcp/.dcs) / 录音 MIME。
+
+**skip 统计**：`skippedNonMusic = countCandidates()`（IS_MUSIC!=0 且 ≥30s 的总条数）`- songs.size`。
+状态行在 `skipped > 0` 时显示「共 N 首 · 已跳过 M 个录音等非音乐文件」。
+
+## 三、验证环境与结果
+
+| 项 | 结果 |
+|---|---|
+| 编译 | `assembleDebug` / `assembleRelease` 均 BUILD SUCCESSFUL |
+| 单元测试 | `testDebugUnitTest` **26/26 通过**（22 原有 + 4 新增：`MediaStoreScannerTest` 2 例、`MusicRepositorySyncTest` 2 例） |
+| 运行环境 | x86_64 模拟器 Android 14（1080×2340，density 440，dp≈851） |
+| 设备媒体库 | 5 个音乐（is_music=1，≥31s）+ `Recordings/fake_call.amr`（is_music=0, NULL） |
+| debug v1.0.4 | 设置页单屏完整； Browse「共 5 首」无录音；库内 id1,2,3,4,6 全在 /Music/，旧录音行 id5 已删，收藏保留 |
+| release v1.0.4 | 装机运行正常、无 R8 裁类崩溃；设置页单屏完整「v1.0.4 · 构建 5」；Browse「共 5 首」无录音；签名有效 |
+
+## 四、产物签名与 SHA-256
+
+`apksigner verify` 有效（Signer CN=PureTone，exit 0）。
+
+| 文件 | SHA-256 |
+|---|---|
+| PureTone-v1.0.4-universal-release.apk | f008d827a550287b1c8c3e413382381e4fee4aaca5e9a27537fb4f7799a4f097 |
+| PureTone-v1.0.4-arm64-v8a-release.apk | 1fe61eaa683880616cf3f1f5c7150c15431a2eb8498cc5d03fdf39db80a08279 |
+| PureTone-v1.0.4-armeabi-v7a-release.apk | 60fa5ba541ee6a340d2821a15abee866f0dfb5965c72b9acd3a9d745754c7634 |
+| PureTone-v1.0.4-x86-release.apk | bcd9f424949df533c38af8bf601bf7cd5d04ca175669c7d4d8b070e0ff1c6ced |
+| PureTone-v1.0.4-x86_64-release.apk | 51da4f25493aec636e320a91ae6b5463bf3b558daea74608c2bb722c75879cf7 |
+
+universal 体积 76,426,207 字节（≈76MB）。
+
+## 五、备注
+
+- debug 变体包名 `com.puretone.player.debug`，release 包名 `com.puretone.player`；两者可共存安装。
+- 设备媒体库中 `Recordings/` 下的文件被系统自身标记 `is_music=0`，故本机 skip 计数为 0（状态行显示"共 5 首"）；
+  在个别把录音误标 `is_music=1` 的机型上，路径/扩展名/MIME 兜底会生效并计入「已跳过」。
+- 新增回归测试：`app/src/test/java/com/puretone/player/data/media/MediaStoreScannerTest.kt`、
+  `app/src/test/java/com/puretone/player/data/repository/MusicRepositorySyncTest.kt`。

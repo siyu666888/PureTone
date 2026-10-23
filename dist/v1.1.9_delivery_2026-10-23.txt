@@ -1,0 +1,79 @@
+================================================================
+PureTone v1.1.9 交付证据（2026-10-23）
+================================================================
+
+一、版本
+- versionName : 1.1.9
+- versionCode : 15
+- 唯一来源    : app/build.gradle.kts 的 appVersionName / appVersionCode
+
+二、本次改动（「马上做」象限：列表 key + 歌曲行长按菜单）
+1) 歌曲列表项加 key（修隐患）
+   - BrowseScreen `itemsIndexed(list)` → `itemsIndexed(list, key = { _, song -> song.id })`；
+   - 原来缺 key 时，批量选择 / 删除 / 切换排序会让 Compose 无法追踪条目，
+     表现为选中态串位、动画跳变；加 key 后按 id 稳定追踪。
+   - 文件：ui/screens/BrowseScreen.kt。
+
+2) 新增歌曲长按操作面板（SongActionSheet）
+   - 列表行（SongRow）新增可选 `onLongClick`，用 combinedClickable；
+   - 「多选」态下长按不弹面板（保留勾选语义）；普通态长按弹出 ModalBottomSheet，
+     顶部展示封面缩略 + 曲名/歌手·专辑确认目标，下方 5 项：
+       下一首播放 / 加入队列 / 加入歌单 / 收藏·取消收藏 / 歌曲信息
+   - 「歌曲信息」复用播放页的 SongInfoSheet（查看编辑 + iTunes 联网匹配 + LRCLIB 歌词）。
+   - 文件：ui/screens/BrowseScreen.kt（SongActionSheet / ActionItem）、
+           ui/components/PlayerComposables.kt（SongRow 加 onLongClick、FavoriteRed 提为共享）。
+
+3) 播放引擎新增「下一首播放」
+   - PlaybackManager.playNext(songs)：插到 queueIndex + 1（ExoPlayer addMediaItems(index, …)）；
+     队列为空或尚未起播时退化为 setQueueAndPlay，保证首次操作也能出声；
+   - PlayerViewModel.playNext(song) 暴露给 UI。
+   - 文件：playback/PlaybackManager.kt、ui/PlayerViewModel.kt。
+
+4) 收藏状态改为 Room 实时派生（修跨入口不同步）
+   - 原 `_favorite` 只在 currentSongId 变化时 `repo.isFavorite()` 查一次，
+     导致「列表长按改收藏」后播放页 / MiniPlayer 的红心不跟着变；
+   - 新增 SongDao.observeFavorite(id) + MusicRepository.observeFavorite(id)，
+     PlayerViewModel.favorite 改为 `uiState.map{currentSongId}.distinctUntilChanged()
+     .flatMapLatest{ repo.observeFavorite(it) }.stateIn(...)`，Room 成为唯一真源；
+   - toggleFavorite 去掉乐观更新/回滚（由 Room 推送），新增 LibraryViewModel.setFavorite 供列表用。
+   - 文件：data/local/dao/SongDao.kt、data/repository/MusicRepository.kt、
+           ui/PlayerViewModel.kt、ui/LibraryViewModel.kt。
+
+三、构建
+- assembleDebug + testDebugUnitTest + assembleRelease 全绿；单测 35 个（0 failures / 0 errors）；
+- 依赖说明：material-icons-extended 早已在 build.gradle.kts 中引用，本次新增的
+  PlaylistPlay / PlaylistAdd（AutoMirrored）/ Info 等语义图标无需改动依赖；
+- 环境：AGP 8.5.2 / Kotlin 2.0.21 / Gradle 8.7 / JDK 17 / compileSdk 34 / minSdk 26。
+
+四、真机验证（emulator-5554 / Pixel_API34，debug 包，曲库 3 首 40s 测试音）
+- 长按歌曲行 → 面板弹出，5 项齐全，顶部曲名与目标行一致（无串位）；
+- 「取消收藏」→ DB favorite 1→0，列表红心消失；再「收藏」→ 0→1，红心回来；
+- 「歌曲信息」→ SongInfoSheet 正常打开（歌名/歌手/专辑输入、保存修改、联网匹配、下载歌词）；
+- 「下一首播放」→ 队列 [tone40, qtest_a, qtest_b]（当前 index=0）
+  对第 3 首执行后变为 [tone40, qtest_b, qtest_a, qtest_b]，**插入到当前曲之后** ✓；
+- 「加入队列」→ 队列 4 首 → 5 首，目标曲追加到**末尾** ✓；
+- 收藏跨入口同步（本次修复点）：
+    列表长按改收藏 → MiniPlayer 心形立即同步（单命令内 收藏→取消收藏 互逆验证通过）；
+    MiniPlayer 按钮改 → 自身立即更新，列表红心同步出现；
+- 「多选」态长按 → 不弹面板，转为勾选，「已选 1 首 / 已选 1 / 3」计数正确、无串位；
+- logcat FATAL EXCEPTION 计数 = 0，全程无崩溃。
+
+五、签名与哈希
+- apksigner verify -v：v2 scheme = true（v1/v3/v4=false）；
+- SHA-256:
+    universal : 0dc55f3f7ef3cbc25614929d842f5f87346733df4b3753580b44dfee1371afd9
+    arm64-v8a : 30c6706a7ccdec2faa49804eb223f018fa9657e9911fd5f7bf7bd15d9b79e1df
+
+六、交付物
+- dist/PureTone-v1.1.9-universal-release.apk   （76.6 MB，含全部 ABI，推荐）
+- dist/PureTone-v1.1.9-arm64-v8a-release.apk   （16.5 MB，64 位设备）
+- dist/v1.1.9_delivery_2026-10-23.txt          （本文件）
+- dist/verify_v1.1.9/actionsheet.png           （长按操作面板截图）
+- v1.1.8 及更早旧包保留在 dist/ 备查。
+
+七、验证方法学备注（本次新增）
+- 「下一首播放」这类依赖当前曲目的功能，务必在**单条命令内**完成 播放→长按→点击，
+  否则测试曲（40s）播完会自动切歌，导致实际操作对象与预期不符
+  （本次就因间隔过长误判过一次同步失效，实为已切到第 3 首）；
+- shell 解析 uiautomator bounds 时不能用 `tr -d '[]'` —— `[160,1471][388,1535]` 中间的
+  `][` 被删会让 1471 与 388 粘连成 1471388，必须先把 `][` 替换成逗号再切分。

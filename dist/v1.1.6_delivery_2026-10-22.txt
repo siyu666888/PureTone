@@ -1,0 +1,54 @@
+================================================================
+PureTone v1.1.6 交付证据（2026-10-22）
+================================================================
+
+一、版本
+- versionName : 1.1.6
+- versionCode : 12
+- 唯一来源    : app/build.gradle.kts 的 appVersionName / appVersionCode
+
+二、本次改动（播放控制图标重设计）
+- 将播放控制图标统一为自绘线形家族（ui/components/ControlIcons.kt）：
+  上一首 / 下一首：双 chevron 收拢尖角（等宽折线、圆头圆角）
+  播放：实心圆角三角（描边柔化尖角）
+  暂停：两条圆头竖条（较粗 4.2）
+  播放队列：三条横线 + 右侧两个圆点
+  顺序循环 🔁 / 单曲循环 🔂：正圆环（arcTo）+ 两端箭头，单曲额外中央「1」
+  随机播放 🔀：两条交叉折线 + 右端双向箭头
+- 风格：线性等宽（线宽 2.4）、圆角端点，中性色由 Icon(tint=) 着色（支持封面取色/主题色）
+- 移除 Material Icons.Outlined 的旧 Repeat/RepeatOne/Shuffle，改为同家族自绘图标
+- PlayerScreen / PlayerComposables 的引用已切换至 ControlIcons.*
+
+三、构建
+- 命令：clean assembleRelease assembleDebug testDebugUnitTest
+- 结果：BUILD SUCCESSFUL
+- 编译环境：AGP 8.5.2 / Kotlin 2.0.21 / Gradle 8.7 / JDK 17 / compileSdk 34 / minSdk 26
+- 关键修复：本项目 Compose 的 PathBuilder 不支持 cubicTo / quadraticBezierTo，
+  随机播放曲线改用 lineTo 等宽折线（与其他图标风格一致），RepeatAll/Queue 圆用 arcTo。
+
+四、测试
+- 既有单元测试（33 个）全绿
+- 新增 ControlIconsTest（2 个）：强制构造全部 8 枚图标，验证构建期无异常、路径数据合法
+- 合计 35 个测试全绿
+
+五、签名与哈希
+- apksigner verify：Verified using v2 scheme (APK Signature Scheme v2): true
+  （v1=false, v3=false）证书 DN: CN=PureTone, OU=Dev, O=PureTone, C=CN
+- SHA-256:
+    universal : f9f63eecf793709df0a0ed0a51324ed31441102ed0b7a84c9b99c67855b3a69b
+    arm64-v8a : be9b0c9623090d0f07ae7bbcc04660942c53fbb92fe9832c8acbfcf3860c1bc3
+
+六、真机冒烟验证（emulator-5554 / Pixel_API34）
+- 安装 debug 包成功；授予 READ_MEDIA_AUDIO / POST_NOTIFICATIONS
+- am start 启动 MainActivity 无报错；进程存活（无 FATAL EXCEPTION / 无崩溃日志）
+- 图标构造测试已在 JVM 单测层面覆盖，SVG 预览（tools/icon_preview_v1.1.6.svg）与代码坐标一致
+
+七、交付物
+- dist/PureTone-v1.1.6-universal-release.apk   （76.5 MB，含全部 ABI，推荐多数设备）
+- dist/PureTone-v1.1.6-arm64-v8a-release.apk   （16.5 MB，64 位设备）
+- dist/v1.1.6_delivery_2026-10-22.txt          （本文件）
+- tools/icon_preview_v1.1.6.svg               （8 枚图标预览图）
+
+八、说明
+- v1.1.5 旧包已保留在 dist/ 备查；本次未删除旧版。
+- 其余 ABI 包（armeabi-v7a / x86 / x86_64）在 app/build/outputs/apk/release/ 中。

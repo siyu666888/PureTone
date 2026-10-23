@@ -1,0 +1,53 @@
+# PureTone v1.0.3 第二轮 UI/交互优化 —— 测试证据（2026-10-21）
+
+## 一、需求与实现对照（用户 7 条）
+
+| # | 需求 | 实现要点 | 验证 |
+|---|---|---|---|
+| 1 | 正在播放页点击封面显示歌词 | `SwipeableCover` 新增 `onTap`；`awaitEachGesture` 内单击延迟 300ms 执行、双击到来时 cancel，避免与「双击暂停」冲突；歌词面板从底部展开并自动滚底 | ✅ 点封面 → 歌词面板弹出（`r2_lyrics.png`） |
+| 2 | 播放控制按钮尺寸调大 | 主播放钮 76→**84dp**（阴影/按压反馈保留）；上一首/下一首 40dp→**56dp 容器/40dp 图标**；循环 30dp→**56dp/30dp**；副行（随机/收藏/歌词）SpaceEvenly 均分 | ✅ 截图对比（`r2_player.png`） |
+| 3 | 曲库扫描移到浏览页，自动跳过录音类 | 扫描按钮移至 Browse 顶栏（Refresh/扫描中转圈）；空库自动扫描；状态行「共 N 首 · 已跳过录音等非音乐文件」；`MediaStoreScanner` 扩充排除目录 + 录音 MIME 黑名单 | ✅ 顶栏扫描入口 + 状态行（`r2_browse_scan.png`） |
+| 4 | 左右切换后封面不自动居中（bug） | 根因：`springBackFrom` 只 snap/动画了 `Animatable`，未把 `dragAccum` 归零，而 `offset = dragAccum + offsetAnim`，松手后停在 `dragAccum` 位置。修复：coroutine 内同帧先 `dragAccum = 0f` 再 `snapTo(value)`→`animateTo(0f, spring)` | ✅ 短划（60px，未过切歌阈值）后封面回正（`r2_cover_centered.png`） |
+| 5 | 迷你播放器高度与字体调大 | 封面 48dp、内边距 10dp、按钮 44dp/图标 26dp、标题 titleMedium / 副标题 bodyMedium、进度线 3dp | ✅ 底部迷你条明显增高（`r2_miniplayer.png`） |
+| 6 | 精简设置布局，主题单行切换、选中着色 | 主题 4 个 RadioButton 行 → **单行 4 段式分段控件**（系统/浅色/深色/纯黑），选中段 primaryContainer 底 + onPrimaryContainer 文字，`animateColorAsState` 220ms 过渡；移除冗余「AMOLED 纯黑表面」开关（`THEME_BLACK` 已强制纯黑）；倍速 chip 横向内边距 16→10dp 使 5 项单行不折行 | ✅ 分段控件选中态着色 + 切换深色生效（`r2_settings_segment.png`、`r2_settings_dark.png`、`r2_settings_version_chips.png`） |
+| 7 | 设置显示版本号，品牌居中 | 顶部居中「PureTone · 纯净之音」主色标题 + 「纯净音乐 · 纯粹聆听」副标；底部居中版本号（`packageManager.getPackageInfo` 读 versionName/versionCode，runCatching 兜底） | ✅ 顶部品牌居中、底部「PureTone v1.0.3-debug · 构建 4」（`r2_settings_segment.png`、`r2_settings_version_chips.png`） |
+
+## 二、扫描排除规则（第 3 项细节）
+
+`MediaStoreScanner` 查询条件：
+1. `IS_MUSIC != 0`
+2. `DURATION >= 30000ms`
+3. `DATA NOT LIKE '%/<dir>/%'`，`EXCLUDED_DIRS =`
+   Ringtones / Notifications / Alarms / Recordings / Recorder / VoiceRecorder /
+   Sounds / CallRecordings / "Call Recorder" / "WhatsApp Voice Notes" /
+   "Telegram Audio" / "Audio Recorder" / "Sound Recordings"
+4. `MIME_TYPE NOT IN (audio/amr, audio/amr-wb, audio/3gpp, audio/gsm)`
+   —— 录音即便落在普通目录也一律跳过
+
+均走 `Dispatchers.IO`，不阻塞主线程；`IS_MUSIC`/`DURATION` 为 API 21+ 稳定列，minSdk 26 无需为 API 29+ 专用列做版本分支。
+
+## 三、验证环境与结果
+
+| 项 | 结果 |
+|---|---|
+| 编译 | `assembleDebug` / `assembleRelease` 均 BUILD SUCCESSFUL |
+| 单元测试 | `testDebugUnitTest` **22/22 通过**（0 失败 0 错误） |
+| 运行环境 | x86_64 模拟器 Android 14（1080×2340，density 440） |
+| debug v1.0.3 | 7 项逐条实测通过（截图见 `tools/test_audio/r2_*.png`） |
+| release v1.0.3 | 装机运行正常、无 R8 裁类崩溃；设置页版本号「PureTone v1.0.3 · 构建 4」（`r2_release_settings.png`）；`apksigner verify`：**v2 scheme = true**（minSdk 26 无需 v1） |
+
+产物 SHA-256（universal release）：
+`bae9ef7e3c66ddf91fb0ac8ade3e64516b4f9d697b425b6c0e67e170f9c7b461  PureTone-v1.0.3-universal-release.apk`
+
+## 四、控件坐标备忘（1080×2340）
+
+- 底部导航：浏览 (164,1993) / 我的 (540,1993) / 设置 (903,1993)
+- 设置主题分段控件（y≈680）：系统 x≈197 / 浅色 x≈428 / 深色 x≈659 / 纯黑 x≈884
+- 播放页封面中心：(540, 867)；主播放钮 (540, ~1790)
+- 迷你播放条点击区：(400, 1885)
+
+## 五、遗留/说明
+
+- debug 版本号显示 `v1.0.3-debug`（AGP 自动加 `-debug` 后缀）；release 为 `v1.0.3`。
+- 移除设置页 AMOLED 开关后，`PureToneSettings.amoledBlack` 字段与 `setAmoledBlack` 保留为休眠能力（不再暴露 UI），主题纯黑统一由 `THEME_BLACK` 驱动，避免与纯黑分段语义重复。
+- 封面单击采用 300ms 延迟以规避与双击暂停的手势冲突；双击仍即时响应。

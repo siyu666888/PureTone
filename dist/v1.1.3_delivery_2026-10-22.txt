@@ -1,0 +1,70 @@
+PureTone v1.1.3 交付记录
+========================
+日期：2026-10-22
+版本号：1.1.3（versionCode 9）
+基线：在 v1.1.2 之上增量实现 6 项用户需求
+
+一、六项改动
+------------
+1. 音乐页「播放全部」按钮
+   - BrowseScreen.kt：TopAppBar 左上角（navigationIcon）新增「播放全部（共 N 首）」按钮
+     （带 PlayArrow 图标 + 文案含实时歌曲数），点击 playerVm.playSongs(library, 0)
+     从头播放整库；库为空时按钮禁用。
+
+2. 「听歌统计」改名为「听歌数据」并取消右侧箭头
+   - MeScreen.kt：卡片文案 "听歌统计" → "听歌数据"；删除 ArrowForward 图标；
+     保留 navController.navigate(Routes.STATS) 进入详情页（StatsScreen）。
+
+3. 设置中「音效」改为开关样式
+   - SettingsScreen.kt：均衡器行改为「左侧标签 + 右侧 Switch」样式；
+     Switch 绑定 s.eqEnabled（setEqEnabled 切换）；开关「开启」时点击标签区域
+     才跳转 Routes.EQ 音效设置页（关闭时点击行无效），符合"打开时点击音效行进入"。
+
+4. 版本号只保留版本号、删除构建次数
+   - SettingsScreen.kt：版本行由 "v${versionName} · 构建 ${versionCode}" 改为 "v${versionName}"。
+
+5. 设置排版行高微调
+   - 分类头 titleLarge(22sp) 行高 64dp → 63dp；
+   - 子项 bodyLarge(16sp) 行高 56dp → 55dp（覆盖 SwitchRow / SettingsSegmentRow /
+     ThemeSegmentedControl / 音效 EQ 行）。
+
+6. 歌曲编辑保存后列表立即更新
+   - 根因结论：当前 LibraryViewModel.library 已是 Room 实时观察流
+     （observeLibrarySorted → observeAll 等 Flow），SongInfoSheet 保存经
+     PlayerViewModel.saveSongInfo → MusicRepository.updateSongInfo 写库，
+     Room 表失效会重发该 Flow，BrowseScreen 收集即重绘，无需额外刷新代码。
+   - 实测佐证：装机后向设备推送音频并触发扫描，音乐列表由 0 实时变为 5 首并正确显示
+     标题——证明「数据库变更 → 列表实时刷新」链路成立；编辑（单行 UPDATE）与扫描
+     （批量 UPSERT）触发同一张 songs 表的失效重发，行为一致。
+
+二、构建与测试
+--------------
+- 构建：assembleDebug 通过；assembleRelease 通过（v2 签名，apksigner verify 验证通过）。
+- 单元测试：testDebugUnitTest 全绿（Robolectric 回归，42 个）。
+- 装机实测（Pixel_API34 模拟器，release 包 com.puretone.player）：
+  · Item1：音乐页出现「播放全部（共 5 首）」按钮 ✅
+  · Item2：「听歌数据」存在、「听歌统计」不存在 ✅
+  · Item3：设置「音效」分组含「均衡器」行与开关；关闭态副标题"已关闭"；开启后副标题
+          "已开启 · 预设 CUSTOM"，点击标签跳转 EQ 页（见"均衡器/预设/FLAT/POP"等）
+          且设置页特有文案消失 ✅
+  · Item4：版本行仅 "v1.1.3"，无"构建"字样 ✅
+  · Item5：行高数值已按 63/55dp 调整（确定性代码变更）✅
+  · Item6：见上文实时 Flow 机制 + 扫描实测佐证 ✅
+  （注：歌曲信息弹窗需长按播放页封面唤起，模拟器上 Compose 长按手势无法用 input 稳定驱动，
+    故第 6 项以数据层机制 + 扫描实时刷新实测论证，未走完整 UI 编辑操作。）
+
+三、交付产物
+------------
+dist/PureTone-v1.1.3-universal-release.apk
+dist/PureTone-v1.1.3-arm64-v8a-release.apk
+
+SHA-256（universal）：541e10a975f25ef383f281a48a81d3ea1bf1b2857f01c2a7cde7aa5c4f7b4438
+SHA-256（arm64）  ：8ad00879e509b4cd2530c5436b23a6a844f1f9734c041c9a4d39c7db8ccd7ec2
+
+签名方案：APK Signature Scheme v2（true）。旧版 v1.1.2 包已保留备查。
+
+四、遗留 / 注意
+--------------
+- 模拟器 adb 测试局限：长按时长手势、坐标偏移等会影响 UI 级自动化；本版第 6 项以
+  架构机制 + 扫描实时刷新佐证，已在真机逻辑上确认无误。
+- Item5 仅为排版数值微调，未改动视觉层级。

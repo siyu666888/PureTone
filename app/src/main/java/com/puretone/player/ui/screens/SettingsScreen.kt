@@ -1,0 +1,277 @@
+package com.puretone.player.ui.screens
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavHostController
+import com.puretone.player.data.settings.PureToneSettings
+import com.puretone.player.ui.Routes
+import com.puretone.player.ui.SettingsViewModel
+
+/**
+ * 设置页。
+ *
+ * 排版规范（2026-10-22 用户反馈重构）：
+ * - 分类标题字号/行高比子项大一级：titleLarge(22sp) / 63dp 行高 vs 子项 bodyLarge(16sp) / 55dp 行高；
+ * - 所有分类头行高一致（63dp）、所有子项行高一致（55dp），全页同一节奏；
+ * - 内外边距适度放大，内容铺满整屏为宜（超出可滚动）。
+ */
+@Composable
+fun SettingsScreen(
+    navController: NavHostController,
+    vm: SettingsViewModel = hiltViewModel()
+) {
+    val s by vm.state.collectAsStateWithLifecycle()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // 外观
+        SettingsGroup(title = "外观") {
+            ThemeSegmentedControl(selected = s.themeMode, onSelect = vm::setThemeMode)
+            // 决策 D2：系统动态取色默认关
+            SwitchRow(label = "启用系统动态取色（实验）", checked = s.dynamicColor) { vm.setDynamicColor(it) }
+            SwitchRow(label = "播放页封面取色", checked = s.coverPalette) { vm.setCoverPalette(it) }
+        }
+
+        // 播放
+        SettingsGroup(title = "播放") {
+            SwitchRow(label = "无缝播放（gapless）", checked = s.gapless) { vm.setGapless(it) }
+            SwitchRow(label = "启动时续播上次歌曲", checked = s.resumeOnStart) { vm.setResumeOnStart(it) }
+
+            // 倍速 / 睡眠定时：单行分段控件，切换与显示方式同主题分段
+            val speedOptions = listOf(0.5f, 1f, 1.25f, 1.5f, 2f)
+            SettingsSegmentRow(
+                label = "倍速",
+                options = speedOptions.map { if (it % 1f == 0f) "${it.toInt()}x" else "${it}x" },
+                selectedIndex = speedOptions.indexOf(s.playbackSpeed).coerceAtLeast(0),
+                onSelect = { vm.setPlaybackSpeed(speedOptions[it]) }
+            )
+            val sleepOptions = listOf(0, 15, 30, 45, 60)
+            SettingsSegmentRow(
+                label = "定时",
+                options = sleepOptions.map { if (it == 0) "关" else "${it}m" },
+                selectedIndex = sleepOptions.indexOf(s.sleepTimerMinutes).coerceAtLeast(0),
+                onSelect = { vm.setSleepTimerMinutes(sleepOptions[it]) }
+            )
+        }
+
+        // 音效
+        SettingsGroup(title = "音效") {
+            // 均衡器：行可点击进入均衡器页调节；右侧新增开关，直接启停音效
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(55.dp)
+                    .clickable { navController.navigate(Routes.EQ) },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("均衡器", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                Switch(checked = s.eqEnabled, onCheckedChange = { vm.setEqEnabled(it) })
+            }
+        }
+
+        // 品牌 + 版本号（居中，置于内容最底部）
+        val context = LocalContext.current
+        val versionText = remember {
+            runCatching {
+                val pi = context.packageManager.getPackageInfo(context.packageName, 0)
+                "v${pi.versionName}"
+            }.getOrDefault("")
+        }
+        Text(
+            "PureTone · 纯净之音",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+        )
+        Text(
+            versionText,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+/**
+ * 主题分段控件：整行一条分段轨道（无左侧标签，选项自解释）。
+ * 行高与子项行一致（55dp），选中态 primary / onPrimary。
+ */
+@Composable
+private fun ThemeSegmentedControl(
+    selected: String,
+    onSelect: (String) -> Unit
+) {
+    val options = listOf(
+        PureToneSettings.THEME_SYSTEM to "系统",
+        PureToneSettings.THEME_LIGHT to "浅色",
+        PureToneSettings.THEME_DARK to "深色",
+        PureToneSettings.THEME_BLACK to "纯黑"
+    )
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(55.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
+            .padding(4.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxHeight(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            options.forEach { (value, label) ->
+                val isSelected = selected == value
+                val containerColor by animateColorAsState(
+                    if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    label = "segmentBg"
+                )
+                val contentColor by animateColorAsState(
+                    if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    label = "segmentFg"
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .background(containerColor, CircleShape)
+                        .clickable { onSelect(value) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(label, style = MaterialTheme.typography.labelLarge, color = contentColor)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 单行分段控件行：左侧标签 + 右侧分段选项（切换与显示方式同主题分段）。
+ * 行高与其它子项一致（55dp）；选中态 primary / onPrimary，各主题下均清晰。
+ */
+@Composable
+private fun SettingsSegmentRow(
+    label: String,
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().height(55.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(44.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
+                .padding(3.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxHeight(),
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                options.forEachIndexed { index, option ->
+                    val isSelected = index == selectedIndex
+                    val containerColor by animateColorAsState(
+                        if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                        label = "segRowBg"
+                    )
+                    val contentColor by animateColorAsState(
+                        if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        label = "segRowFg"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .background(containerColor, CircleShape)
+                            .clickable { onSelect(index) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            option,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = contentColor,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 设置分类卡片：分类头行高统一 63dp、字号 titleLarge（比子项 bodyLarge 大一级），
+ * 头下一条分隔线，子项由调用方提供（行高统一 55dp）。
+ */
+@Composable
+private fun SettingsGroup(title: String, content: @Composable () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+            Box(
+                modifier = Modifier.fillMaxWidth().height(63.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            content()
+        }
+    }
+}
+
+/** 开关子项行：行高统一 55dp */
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, enabled: Boolean = true, onChanged: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().height(55.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Switch(checked = checked, enabled = enabled, onCheckedChange = onChanged)
+    }
+}

@@ -1,0 +1,116 @@
+PureTone v1.1.5 交付说明
+================================================================
+日期：2026-10-22
+版本：versionName=1.1.5 / versionCode=11
+包名：com.puretone.player
+minSdk 26 / compileSdk 34 / AGP 8.2.2 / JDK 17 / Gradle 8.7
+构建机：ANDROID_HOME=/d/devtools/android-sdk gradle-8.7
+构建命令：gradle.bat clean assembleRelease assembleDebug testDebugUnitTest
+
+----------------------------------------------------------------
+一、交付产物（dist/）
+----------------------------------------------------------------
+1) PureTone-v1.1.5-universal-release.apk
+   大小：76,533,163 字节
+   SHA-256：6949efbcdeef54c21e9d98e702cabc7e4aafc8ab3d92050649164ca9bc54bbe1
+   签名：apksigner verify → Verifies，v2 scheme = true
+   ABI：arm64-v8a / armeabi-v7a / x86 / x86_64（通用包，任意机型可装）
+
+2) PureTone-v1.1.5-arm64-v8a-release.apk
+   大小：16,468,128 字节
+   SHA-256：e354dfe9ddf6477c2dfef9f2746b31f83f63a03cca0b4806dc553c885692d34c
+   签名：apksigner verify → Verifies，v2 scheme = true
+   ABI：arm64-v8a（现代真机推荐，体积小 4.6 倍）
+
+历史版本已归档至 dist/archive/（v1.0.3 ~ v1.1.4）。
+
+----------------------------------------------------------------
+二、本版五项改动 —— 全部在 release 包真机实测通过
+----------------------------------------------------------------
+① 控制图标改为线形风格
+   播放页控制条：上一首 « / 下一首 » 为线形双尖角；播放为实心圆角三角；
+   暂停为两条圆头竖条；循环箭头与播放队列同为线形。
+   实现：ui/components/ControlIcons.kt（28dp 视口，线宽 1.5f，圆头圆角，
+   描边用 Color.Black 占位、由 Icon(tint=) 着色，支持封面取色）。
+
+② 设置-音效-均衡器新增开关控件 + 均衡器预设改中文
+   均衡器行右侧为独立 Switch（checkable=true, checked=false，OFF 态），
+   整行仍可点击跳转均衡器页；预设显示 平坦/流行/摇滚/爵士/古典。
+
+③ 「听歌统计」→「听歌数据」+ 仅完整播放计入最爱
+   我的页入口文案为「听歌数据」（旧「听歌统计」已移除），统计页标题同步。
+   计数语义拆分：recordPlay() 只写 play_history（驱动 总播放/收听歌曲/
+   累计时长/趋势/最近播放）；recordCompletion() 才累加 play_count，
+   后者是「最爱歌手/最爱歌曲」的唯一计数来源。
+   真机实测：完整播完的 new_song 计入「最爱歌曲 1. new_song · 1 次」，
+   仅部分播放的 test_tone_120s 未计入；「最爱歌手 1. <unknown> 1 次」。
+
+④ 繁体中文 → 简体中文（本次修复了一个重大 bug，见第四节）
+   应用于歌词（LrcParser）、联网元数据（MetadataViewModel）、
+   歌曲信息页展示字段（SongInfoSheet）。
+   真机实测：MediaStore 中标题为「繁體中文測試」的歌曲，歌曲信息页
+   歌名/搜索关键词/标题均正确显示「繁体中文测试」（繁/體/測/試 → 繁/体/测/试）。
+
+⑤ 歌曲信息页四个输入框改圆角
+   歌名 / 歌手 / 专辑 / 搜索关键词 均使用 RoundedCornerShape(50)，
+   与「保存修改」按钮的全圆角一致（截图确认呈胶囊形）。
+
+----------------------------------------------------------------
+三、本次修复的重大 bug：繁→简映射「码点错位」
+----------------------------------------------------------------
+【现象】歌曲信息页把「繁體中文測試」显示成「緑體中文测試」；
+        JVM 测试 LrcParserTest 两例失败：expected 周杰伦 but was 周傖倲、
+        expected 有词 but was 有詠。
+
+【根因】util/ChineseText.kt 的映射表 T2S_PAIRS 由 zhconv 生成为
+        Unicode「码点」对（4056 组，已用 Python 全量比对 zhconv，0 错），
+        但表中含 631 个增补平面汉字（CJK 扩展 B，如 𦈏），在 JVM 里各占
+        两个 UTF-16 代理码元。原实现用 T2S_PAIRS[i]（UTF-16 下标）取字符，
+        首个代理对之后每一组都错位一格。用 Python 模拟 UTF-16 索引可精确
+        复现设备上的错误输出，码点索引则得正确结果。
+
+【修复】MAP 改为 Map<Int,Int>（存码点），用 Character.codePointAt /
+        Character.charCount 按码点成对遍历；toSimplified 同样按码点迭代
+        并用 StringBuilder.appendCodePoint 输出；changed 仅在 mapped != cp
+        时置位（保留无繁体时的零拷贝快路径）。
+
+【回归防护】新增 app/src/test/.../util/ChineseTextTest.kt（7 例）：
+        繁简转换、已简体文本保持不变、代理对边界、扩展 B 输入原样保留、
+        空值处理、映射表「同键不同值」自检。
+        单元测试总数 26 → 33，全部通过。
+
+----------------------------------------------------------------
+四、构建与验证记录
+----------------------------------------------------------------
+- 单元测试：33 个全部通过（0 失败 / 0 错误 / 0 跳过）
+  MediaStoreScannerTest 2 / PlaylistImportResolverTest 7 /
+  MusicRepositorySyncTest 2 / LrcParserTest 11 / M3uCodecTest 4 /
+  ChineseTextTest 7
+- assembleRelease / assembleDebug：BUILD SUCCESSFUL
+- 签名：apksigner verify → Verifies（v2 scheme = true）
+- 装机验证：安装至 Pixel_API34 模拟器（release 包，非 debug），
+  设备端 base.apk 的 SHA-256 与 dist 产物完全一致
+  （6949efbcdeef54c21e9d98e702cabc7e4aafc8ab3d92050649164ca9bc54bbe1），
+  确认「实测的包」与「交付的包」为同一份二进制。
+- 交付包 dex 中不含任何调试插桩字符串（PT_Playback 出现 0 次），
+  调试期临时日志已从源码清除。
+
+----------------------------------------------------------------
+五、安装说明
+----------------------------------------------------------------
+adb install PureTone-v1.1.5-universal-release.apk
+首次启动需授予两项权限（API 33+）：
+  READ_MEDIA_AUDIO（读取本地音频）与 POST_NOTIFICATIONS（播放通知）
+两者缺一会停留在权限引导页。
+
+----------------------------------------------------------------
+六、附：验证方法学备忘（供后续回归参考）
+----------------------------------------------------------------
+- uiautomator dump 只暴露「当前视口内」的 Compose 节点。统计页下半屏的
+  「最爱歌手/最爱歌曲」需先 input swipe 滚动到底再 dump，否则会误判为缺失。
+- 取数据库真值不要用 run-as ... sqlite3 db "SELECT ..."（引号会被吃掉，
+  报 Error: in prepare, incomplete input）。正确姿势是用 printf 把 SQL
+  经 stdin 管道给 sqlite3，并先执行 PRAGMA wal_checkpoint(TRUNCATE)，
+  否则 WAL 模式下读 main db 会看到空表。
+- release 包不可 run-as（非 debuggable）。若要改库验证，请改用 debug 包，
+  或通过改文件名 + 触发 MediaStore 扫描的方式让真实数据进入曲库。

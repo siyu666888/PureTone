@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="620" height="380" viewBox="0 0 620 380">
+  <rect width="620" height="380" fill="#fafafa"/>
+  <text x="20" y="34" font-family="sans-serif" font-size="20" font-weight="bold" fill="#222">PureTone 播放控制图标 · v1.1.8</text>
+  <text x="20" y="52" font-family="sans-serif" font-size="12" fill="#888">顺序播放=双箭头圆形收尾相连；单曲循环=圆+中央1；播放顺序三态循环(顺序→随机→单曲)，无黄点</text>
+
+  <!-- 上一首 -->
+  <g transform="translate(36.8,76.8) scale(3.8)" stroke="#222" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 11.5 6 L 6 14 L 11.5 22 M 17.5 6 L 12 14 L 17.5 22"/>
+  </g>
+  <text x="90" y="210" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#555">上一首</text>
+
+  <!-- 下一首 -->
+  <g transform="translate(186.8,76.8) scale(3.8)" stroke="#222" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 16.5 6 L 22 14 L 16.5 22 M 10.5 6 L 16 14 L 10.5 22"/>
+  </g>
+  <text x="240" y="210" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#555">下一首</text>
+
+  <!-- 播放 -->
+  <g transform="translate(336.8,76.8) scale(3.8)" fill="#222" stroke="#222" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M 21 14 L 9 8 L 9 20 Z"/>
+  </g>
+  <text x="390" y="210" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#555">播放</text>
+
+  <!-- 暂停 -->
+  <g transform="translate(486.8,76.8) scale(3.8)" stroke="#222" stroke-width="3.4" stroke-linecap="round" fill="none">
+    <path d="M 10.5 7 L 10.5 21 M 17.5 7 L 17.5 21"/>
+  </g>
+  <text x="540" y="210" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#555">暂停</text>
+
+  <!-- 播放队列 -->
+  <g transform="translate(36.8,226.8) scale(3.8)" stroke="#222" stroke-width="1.8" stroke-linecap="round" fill="none">
+    <path d="M 7 9 L 15.5 9 M 7 14 L 15.5 14 M 7 19 L 15.5 19"/>
+  </g>
+  <g transform="translate(36.8,226.8) scale(3.8)" fill="#222">
+    <circle cx="19.5" cy="9" r="1.7"/>
+    <circle cx="19.5" cy="19" r="1.7"/>
+  </g>
+  <text x="90" y="360" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#555">播放队列</text>
+
+  <!-- 顺序播放（双箭头圆形收尾相连） -->
+  <g transform="translate(186.8,226.8) scale(3.8)" stroke="#222" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 7 14 A 7 7 0 0 1 21 14 M 21 16.4 L 18.8 13.9 M 21 16.4 L 23.2 13.9 M 21 14 A 7 7 0 0 1 7 14 M 7 11.6 L 4.8 14.1 M 7 11.6 L 9.2 14.1"/>
+  </g>
+  <text x="240" y="360" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#555">顺序播放</text>
+
+  <!-- 单曲循环（圆 + 中央1） -->
+  <g transform="translate(336.8,226.8) scale(3.8)" stroke="#222" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 7 14 A 7 7 0 0 1 21 14 M 21 16.4 L 18.8 13.9 M 21 16.4 L 23.2 13.9 M 21 14 A 7 7 0 0 1 7 14 M 7 11.6 L 4.8 14.1 M 7 11.6 L 9.2 14.1 M 14 11.2 L 14 16.8 M 11.9 12.5 L 14 11.2"/>
+  </g>
+  <text x="390" y="360" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#555">单曲循环</text>
+
+  <!-- 随机播放（交叉曲线箭头） -->
+  <g transform="translate(486.8,226.8) scale(3.8)" stroke="#222" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 4 10 L 9 10 L 12.5 12 L 15 15 L 18 18 L 20.5 18 M 18.3 16.4 L 20.5 18 L 18.3 19.6 M 4 18 L 9 18 L 12.5 16 L 15 13 L 18 10 L 20.5 10 M 18.3 8.4 L 20.5 10 L 18.3 11.6"/>
+  </g>
+  <text x="540" y="360" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#555">随机播放</text>
+</svg>

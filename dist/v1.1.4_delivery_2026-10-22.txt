@@ -1,0 +1,210 @@
+================================================================================
+PureTone v1.1.4 交付说明
+================================================================================
+版本号    : 1.1.4        (versionCode 10)
+构建日期  : 2026-10-22
+应用 ID   : com.puretone.player
+最低系统  : Android 8.0 (API 26)   目标/编译: API 34
+包名/签名 : release 签名，APK Signature Scheme v2 (minSdk≥24 无需 v1)
+
+--------------------------------------------------------------------------------
+一、本版本 4 项改动
+--------------------------------------------------------------------------------
+
+【Item 1】控制按钮图标更换为指定的新图标样式
+--------------------------------------------------------------------------------
+新建文件  app/src/main/java/com/puretone/player/ui/components/ControlIcons.kt
+
+按设计图重绘为统一细线（线形）视觉语言，自绘 ImageVector：
+  · SkipPrevious «  双左尖角，描边 1.9f，圆头圆角
+  · SkipNext    »  双右尖角，描边 1.9f，圆头圆角
+  · Play        ▶  实心圆角三角（fill + 同色描边 2f 柔化尖角）
+  · Pause       ‖  两条圆头竖条，描边 2.8f
+描边色用 Color.Black 占位，实际颜色由 Icon(tint=...) 统一着色，
+因此天然支持封面取色 / 主题色。
+
+辅助图标统一改用 Material Outlined 细线系列（原为 Rounded 粗体）：
+  Equalizer / Repeat / RepeatOne / Shuffle          -> Icons.Outlined.*
+  QueueMusic                                      -> Icons.AutoMirrored.Outlined.*
+
+替换范围：
+  PlayerComposables.kt  PlayPauseButton / RepeatModeButton / MiniPlayer
+  PlayerScreen.kt       均衡器、上一首、下一首、队列、播放模式
+  （MiniPlayer 播放/暂停与下一首同样换成新线形图标）
+
+--------------------------------------------------------------------------------
+【Item 2】设置页「音效」分组 — 删除均衡器下方的开关状态控件
+--------------------------------------------------------------------------------
+文件  app/src/main/java/com/puretone/player/ui/screens/SettingsScreen.kt
+
+原结构（Column + 状态文字 + Switch）：
+    均衡器
+    已开启 / 已关闭            [ Switch ]
+
+现结构（单行可点击入口）：
+    均衡器                          -> 点击跳转 Routes.EQ
+
+已删除：状态文字「已开启/已关闭」、Switch 开关。
+音效分组内其余项（无缝播放 gapless、倍速、定时、动态取色等）保持不变。
+注意：Switch import 仍保留 —— 设置页其它分组（外观等）仍在使用。
+
+--------------------------------------------------------------------------------
+【Item 3】音乐页「播放全部」按钮下移 + 移除「共 N 首」数量文字
+--------------------------------------------------------------------------------
+文件  app/src/main/java/com/puretone/player/ui/screens/BrowseScreen.kt
+
+改动前：
+  TopAppBar.navigationIcon: [TextButton "播放全部（共 N 首）"]
+  内容区:  统计文字「共 N 首」
+
+改动后：
+  TopAppBar.navigationIcon: 移除（TopAppBar 只剩标题「音乐」）
+  内容区顶部: Row { FilledTonalButton [▶ 播放全部]  +  扫描中提示 }
+  统计文字「共 N 首」: 整段删除
+
+  · 按钮改为 FilledTonalButton（Material 3 填充色调按钮），带 PlayArrow 图标
+  · 按钮不再显示歌曲数量，固定文案「播放全部」
+  · enabled = library.isNotEmpty()，空库时置灰
+  · 点击行为不变：playerVm.playSongs(library, 0)
+  · 「正在扫描本地音乐…」提示保留在同行右侧
+
+--------------------------------------------------------------------------------
+【Item 4】播放页旋转 CD 封面（新增实现）
+--------------------------------------------------------------------------------
+文件  app/src/main/java/com/puretone/player/ui/screens/PlayerScreen.kt
+
+视觉结构（CoverFace 内，自外向内）：
+  1. 深色盘体      Color(0xFF161616)，圆形，fillMaxSize(0.96f)
+  2. 内圈高光边框  1.dp 白色 10% 透明，fillMaxSize(0.93f)
+  3. 圆形专辑封面  AsyncImage，fillMaxSize(0.86f)，clip(CircleShape)
+  4. 中心孔        scheme.background，fillMaxSize(0.16f)  —— 模拟打通
+  5. 中心芯        Color(0xFF161616)，fillMaxSize(0.05f)
+
+旋转实现：
+  · val discAngle = remember { Animatable(0f) }
+    置于 SwipeableCover 作用域，跨 entry 变化保持同一实例 -> 切歌不重置
+  · LaunchedEffect(isPlaying, flipped) {
+        if (isPlaying && !flipped) {
+            while (true) {
+                discAngle.animateTo(discAngle.value + 360f,
+                                    tween(durationMillis = 14000, easing = LinearEasing))
+            }
+        }
+    }
+    - 播放中：匀速持续旋转（LinearEasing，14 秒一圈 = 25.7 度/秒）
+    - 暂停  ：isPlaying=false -> 循环退出，停在当前角度（不跳回 0）
+    - 翻面  ：flipped=true -> 暂停渲染旋转（歌词面朝上时无意义）
+  · 渲染：graphicsLayer { rotationZ = discAngle.value }
+  · SwipeableCover 新增 isPlaying 参数，由 PlayerScreen 传 state.isPlaying
+
+--------------------------------------------------------------------------------
+二、构建与测试
+--------------------------------------------------------------------------------
+构建命令：
+  cd /d/PureTone && ANDROID_HOME=/d/devtools/android-sdk \
+    /d/devtools/gradle-8.7/bin/gradle.bat assembleRelease
+
+  assembleDebug      BUILD SUCCESSFUL
+  testDebugUnitTest  BUILD SUCCESSFUL  （26/26 单元测试全绿）
+  assembleRelease    BUILD SUCCESSFUL  （4m40s，53 actionable tasks）
+
+版本常量已同步更新（app/build.gradle.kts）：
+  val appVersionName = "1.1.4"
+  val appVersionCode = 10
+
+产物文件名由 archivesName 统一派生，不会与版本号漂移。
+
+--------------------------------------------------------------------------------
+三、交付产物
+--------------------------------------------------------------------------------
+dist/PureTone-v1.1.4-universal-release.apk        76,516,783 字节
+dist/PureTone-v1.1.4-arm64-v8a-release.apk        16,451,748 字节
+
+SHA-256：
+  universal  f40e5286cb6a16db06e16ef0dd83314ce5ecc0e48f4b1c66934d5726ea178285
+  arm64-v8a  d845d2c7e49e50931921a0f3425083daa7c7b2b1efa910755e8b391afdd6f568
+
+签名校验（apksigner verify --verbose，build-tools 34.0.0）：
+  universal  v1=false  v2=true  v3=false  v3.1=false  v4=false
+  arm64-v8a  v1=false  v2=true  v3=false  v3.1=false  v4=false
+  => v2 签名有效，minSdk 26 无需 v1(JAR) 签名。
+
+安装说明：
+  adb install -r PureTone-v1.1.4-universal-release.apk
+  或直接拷贝到手机点击安装（需允许「安装未知来源应用」）。
+  首次启动需授予「音乐访问权限」READ_MEDIA_AUDIO，
+  否则会停留在权限引导页（这是预期行为，非缺陷）。
+  旧版本可直接覆盖安装（applicationId 未变，签名一致）。
+
+--------------------------------------------------------------------------------
+四、真机/模拟器验证（Pixel_API34, API 34, 1080x2340）
+--------------------------------------------------------------------------------
+安装的是 dist/ 内的实际交付包（非临时构建）：
+  adb uninstall com.puretone.player
+  adb install -r D:/PureTone/dist/PureTone-v1.1.4-universal-release.apk
+  -> Success
+  dumpsys package: versionName=1.1.4  versionCode=10  ✔
+
+【Item 1】控制图标
+  · 上一首 / 下一首 按钮区域做像素前景占比分析：暗色前景 24.3%，
+    呈双尖角线形（ASCII 轮廓渲染确认为两个「<」/「>」尖角空心线形）✔
+  · 播放按钮：ASCII 轮廓渲染为实心右指三角形（尖端朝右）✔
+  · 暂停按钮：ASCII 轮廓渲染为两条竖直圆头条（等宽、垂直、上下留白）✔
+  · 均衡器 12.0% / 播放队列 16.6% 前景占比 —— 细线风格 ✔
+  · 播放页 content-desc 清单：上一首/下一首/均衡器/播放模式/播放队列/收藏/暂停/返回
+
+【Item 2】设置页均衡器
+  · 设置页 UI dump：文本集合中已无「已开启」「已关闭」（grep 计数 = 0）✔
+  · 「均衡器」行 bounds=[88,1919][226,1983]，为单行 TextView
+  · 音效分组内无可勾选控件（页面内 checkable=true 的 4 个 View 全部位于
+    「外观」分组的分段选择器 y=517~1333，与均衡器行无关）✔
+
+【Item 3】音乐页
+  · UI dump 文本含「播放全部」，且不含任何 text="共…首"（grep 为空）✔
+  · 「播放全部」bounds=[177,498][332,553]
+  · TopAppBar 标题「音乐」bounds=[44,316][164,403]
+    => 按钮 y=498 位于标题 y=316~403 下方，确认已下移至内容区顶部 ✔
+
+【Item 4】旋转 CD
+  a) 圆形度（像素级）：
+     深色盘体水平直径 735px、垂直直径 745px，圆度偏差 1.34% -> 正圆 ✔
+     包围盒四角均为背景色（非深色），排除矩形 ✔
+     中心孔 + 中心芯结构在 ASCII 轮廓中可见（中央深色小圆 + 浅色环）✔
+  b) 播放中旋转：连续两帧 MD5 不同 -> 画面在变化 ✔
+     角度实测 137.7° -> 224.8°，间隔约 3.4s，速率 25.6°/s
+     与设计值 360°/14s = 25.7°/s 吻合 ✔
+  c) 暂停停转：暂停后连拍两帧 MD5 完全相同（54757ef2... == 54757ef2...）✔
+     暂停后按钮 content-desc 由「暂停」变为「播放」，状态正确 ✔
+     暂停瞬间角度保持在 0.1°，未跳回 0 —— 停而不复位 ✔
+  d) 切歌不重置（关键项，用双红封面同专辑曲目做 A/B 对照）：
+     - 播放位置实测 4970ms -> 0 -> 1522ms，确认确实切到了下一首
+     - 切歌点角度残差仅 -3.7°，与其它帧残差区间（-15.3° ~ +14.6°）一致
+     - 角度序列 332.9 -> 66.0 -> 186.8 -> 274.5 -> 346.5 -> 95.3 -> 198.1
+       连续无跳变 => 旋转角未复位，切歌不重置 ✔
+  e) 全部 4 项改动均未破坏既有功能：进度条/时间/歌词/队列/设置等页面正常。
+
+--------------------------------------------------------------------------------
+五、本次新增/修改文件清单
+--------------------------------------------------------------------------------
+新增：
+  app/src/main/java/com/puretone/player/ui/components/ControlIcons.kt
+修改：
+  app/src/main/java/com/puretone/player/ui/components/PlayerComposables.kt
+  app/src/main/java/com/puretone/player/ui/screens/PlayerScreen.kt
+  app/src/main/java/com/puretone/player/ui/screens/SettingsScreen.kt
+  app/src/main/java/com/puretone/player/ui/screens/BrowseScreen.kt
+  app/build.gradle.kts   (版本号 1.1.3/9 -> 1.1.4/10)
+
+--------------------------------------------------------------------------------
+六、已知说明
+--------------------------------------------------------------------------------
+· 播放页顶栏标题固定为「正在播放」（页面级文案），非播放状态指示器；
+  实际播放/暂停状态由主控按钮图标（▶ / ‖）与 content-desc 表达。
+· 旋转 CD 仅在未翻面（歌词面朝下）时渲染旋转；翻到歌词面时静止，
+  翻回后从暂停处的角度继续。
+· 历史版本 APK 已归档至 dist/archive/（v1.0.3 ~ v1.1.3），
+  dist/ 根目录仅保留最新 v1.1.4 两个包与各版本交付说明文档。
+· 构建产物中另有 armeabi-v7a / x86 / x86_64 三个 ABI 包位于
+  app/build/outputs/apk/release/，如需特殊机型可自行取用。
+
+================================================================================

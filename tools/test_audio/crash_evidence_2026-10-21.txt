@@ -1,0 +1,76 @@
+PureTone「播放约 30s 后闪退（全格式）」——崩溃根因与修复记录
+=========================================================
+测试日期：2026-10-21
+测试环境：Windows + Android Emulator (Pixel_API34, Android 14 / API 34, x86_64, AEHD 加速)
+测试包：PureTone-v1.0.0-x86_64-debug.apk（修复前复现 / 修复后验证）
+
+一、崩溃现象（修复前）
+-------------------------------------------------
+1. 安装 APK，授予 READ_MEDIA_AUDIO + POST_NOTIFICATIONS
+2. 推送 3 个 >30s 测试音频到 /sdcard/Music（45s WAV / 75s MP3 / 120s M4A）
+3. 点击播放，约 27 秒后进程被杀（与用户反馈「约 30s」吻合）
+4. 崩溃日志（adb run-as ... cat files/crash_last.txt）：
+
+   android.app.RemoteServiceException$ForegroundServiceDidNotStartInTimeException:
+   Context.startForegroundService() did not then call Service.startForeground():
+   ServiceRecord{... com.puretone.player.debug/com.puretone.player.playback.PlaybackService}
+   Caused by: Last startServiceCommon() call for this service was made here
+       at com.puretone.player.playback.PlaybackManager.ensureServiceStarted(PlaybackManager.kt:476)
+       at com.puretone.player.playback.PlaybackManager$playerListener$1.onIsPlayingChanged(PlaybackManager.kt:128)
+       at androidx.media3.exoplayer.ExoPlayerImpl.updatePlaybackInfo(...)
+
+二、根因（已通过 Media3 1.4.1 字节码分析确认）
+-------------------------------------------------
+1. PlaybackManager 在多处调用 ContextCompat.startForegroundService() 启动
+   PlaybackService（onIsPlayingChanged/play/setQueueAndPlay 等 8 处）。
+   Android 8+ 规定：startForegroundService() 后 5 秒内服务必须调用
+   Service.startForeground()，否则系统抛 ForegroundServiceDidNotStartInTimeException
+   直接杀进程。
+2. PlaybackService 是 Media3 MediaSessionService，前台化由 Media3 自行管理：
+   MediaNotificationManager.updateNotification() → shouldRunInForeground()
+   → getConnectedControllerForSession() != null 时才调用 startForeground()。
+3. getConnectedControllerForSession() 依赖 controllerMap，而 controllerMap 仅在
+   MediaSessionService.addSession(session) 被调用时填充内部控制器。
+   addSession() 只在两种路径被自动调用：
+   a) onStartCommand 收到 android.intent.action.MEDIA_BUTTON；
+   b) 外部以 android.media.browse.MediaBrowserService 兼容方式绑定。
+   本 App 用「无 action 的裸 Intent」startForegroundService()，两条路径都不触发。
+4. 结论：startForegroundService() 的 5 秒炸弹被 arm，而 Media3 永远不可能
+   调用 startForeground() 拆弹 → 必炸。且此前媒体通知从未显示过
+   （shouldShowNotification 同样依赖该控制器）。
+5. 时间线：播放开始 ~27s 时 onIsPlayingChanged(true) 再次触发
+   ensureServiceStarted()（缓冲/焦点事件导致 isPlaying false→true），
+   5 秒后炸弹爆炸。
+
+三、修复（3 处代码改动）
+-------------------------------------------------
+1. PlaybackService.onCreate：创建 session 后调用 addSession(session)
+   （幂等，已注册则跳过）→ Media3 通知管理器获得内部控制器，
+   shouldRunInForeground/shouldShowNotification 正常工作，
+   媒体通知恢复、Media3 自行按需转前台（自带 mediaPlayback 类型）。
+2. PlaybackManager.ensureServiceStarted()：startForegroundService() →
+   startService()（无 5 秒时限，永不因此崩溃）。
+3. PlaybackManager：删除播放中/恢复时的冗余 ensureServiceStarted()
+   （onIsPlayingChanged / doSetQueueAndPlay 尾部 / play() 尾部），
+   仅保留 player == null（服务未启动）的冷启动兜底。
+
+四、验证结果（修复后）
+-------------------------------------------------
+debug 包：
+- 连续播放 90s 无崩溃（此前 27s 必崩），位置正常推进
+- 120s 播完自动切歌（无缝播放正常）
+- 媒体通知出现（category=transport，3 个控制按钮）
+- 按 Home 后台播放：服务 isForeground=true, types=00000002(mediaPlayback)，
+  播放持续，通知可见
+- 暂停/恢复后继续 65s 无崩溃
+- 队列播完 + 应用空闲后系统正常回收服务（无崩溃）
+release 包（R8 裁剪后）：播放 50s 无崩溃，0 条 FATAL 日志
+
+五、复现方法
+-------------------------------------------------
+1. 生成测试音频（>30s，绕过 MediaStore 时长过滤）：
+   ffmpeg -f lavfi -i "sine=frequency=440:duration=45" -ac 2 test.wav
+2. adb push 到 /sdcard/Music，再广播 MEDIA_SCANNER_SCAN_FILE 触发扫描
+3. adb install debug/release 包；pm grant READ_MEDIA_AUDIO + POST_NOTIFICATIONS
+4. am start 启动；uiautomator dump 取歌曲行坐标；input tap 播放
+5. 循环 pidof 监控进程存活；logcat -s PureToneCrash 抓崩溃

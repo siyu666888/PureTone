@@ -1,0 +1,58 @@
+# PureTone v1.1.1 五项优化 —— 实现与测试证据（2026-10-21/22）
+
+版本：versionName 1.1.1 / versionCode 7（app/build.gradle.kts）
+测试：testDebugUnitTest 26/26 通过（0 failures / 0 errors）
+交付：dist/PureTone-v1.1.1-arm64-v8a-release.apk（16MB）、dist/PureTone-v1.1.1-universal-release.apk（73MB）
+签名：apksigner verify 全部通过（v2 scheme；minSdk=26 无需 v1）
+
+## 一、五项需求与实现对照
+
+| # | 需求 | 实现要点 | 验证 |
+|---|---|---|---|
+| 1 | 播放倍速/睡眠定时改单行，切换和显示方式同主题 | 删除原来的「标签文字 + chips 两行」布局；新增 `SettingsSegmentRow`（左紧凑标签 + 右侧分段条，选中态动画变色），倍速 5 档（0.5x/1x/1.25x/1.5x/2x）、定时 5 档（关/15m/30m/45m/60m）；分段视觉与主题分段控件一致（surfaceVariant 轨道 + 圆角分段） | ✅ 设置页截图：倍速/定时各占一行，分段样式同主题（`_shot_v111_settings3.png`、release `_shot_rel_v111_set.png`） |
+| 2 | 歌曲信息页增加搜索自动填充 + 下载歌词 | ① `MetadataViewModel.autoFill(artist,title)`：按当前表单搜索并自动套用首个候选（信息+封面），回调同步表单字段；② 新增 `LyricsProvider` 接口 + `LrcLibLyricsProvider`（lrclib.net 免 key，优先 syncedLyrics，纯文本按歌曲时长均排为伪 LRC）+ Hilt 绑定；③ `downloadLyrics` 抓取后经 `LyricsStore` 存入 App 外部目录（免写权限）；④ `PlayerViewModel.loadLyrics` 查找顺序：歌曲同目录 .lrc → App 下载目录；⑤ 套用候选后同步表单（修复旧版「套用后保存会把修改覆盖回旧值」的问题） | ✅ 自动填充实测：表单填 The Beatles/Let It Be → 点「自动填充」→ DB 写入 title/artist/album/封面（user_edited=1），表单字段+封面预览同步刷新；✅ 下载歌词实测：歌词面显示「Let It Be」歌词、当前行高亮（纯文本已均排为伪 LRC） |
+| 3 | 补全缺失封面移至音乐页，自动补全该页缺失封面 | MeScreen 移除「补全缺失封面」卡片；BrowseScreen 顶栏新增 AutoFixHigh 入口（运行中显示进度圈），统计行区域展示「正在补全封面 x/y …」与结果提示（2.6s 自动消失）；**根因修复**：扫描器原来只要 albumId>0 就写入 albumart 占位 URI（无内嵌封面时解析不出图），导致「缺失」永远判不中、封面显示空白——现在按 albumId 校验 URI 真能解析出图（带缓存），解析不了置 null；**次因修复**：syncLibrary 会用扫描结果覆盖 coverUri 把补全的封面清掉——现在保留已有远程封面（仅清理失效的旧占位 URI）；**三因修复**：冷启动时 library StateFlow 初始 empty 被误判为空库触发全库重扫——改为直接查库计数（`countSongs`） | ✅ 重扫后 4 首正确识别为缺失（DB cover_uri=NULL）；✅ 补全实测：Let It Be 匹配到 iTunes 封面，列表/播放页显示专辑图；✅ 冷启动（force-stop+重启）后封面完整保留；✅ 我的页已无补全卡片 |
+| 4 | 音乐列表右侧 + 删除 | BrowseScreen SongRow 移除 trailing IconButton(Add)（原「加入播放队列」无实际用途），清理 import | ✅ 列表截图：歌曲行右侧无 + 按钮（`_shot_v111_browse.png`、release `_shot_rel_v111.png`） |
+| 5 | 浅色主题选中着色太浅，重新设计各主题选中着色 | 选中态从发白的 `primaryContainer/onPrimaryContainer` 改为 `primary/onPrimary`（各主题自动取各自色板）：浅色=品牌蓝紫填充+白字，深色/纯黑=亮薰衣草填充+深字；主题分段、倍速/定时分段统一应用，带 animateColorAsState 过渡 | ✅ 浅色下选中段为饱和蓝紫（清晰可见）；✅ 深色下选中段为亮薰衣草+深字（`_shot_v111_dark2.png`） |
+
+## 二、关键坑与修复（细节）
+
+### 1. 「补全封面像没实现」的三个叠加根因
+1. **扫描器占位 URI**：`MediaStoreScanner` 原来 `coverUri = if (albumId > 0) "content://media/external/audio/albumart/$albumId" else null`——无内嵌封面的专辑也会生成该 URI，但实际打不开。后果：列表/播放页封面空白；`getSongsMissingCover`（`WHERE cover_uri IS NULL OR = ''`）永远判不中。修复：`albumArtExists(albumId, cache)` 用 `openInputStream` + 读 1 字节校验，按 albumId 缓存。
+2. **syncLibrary 覆盖封面**：`toEntity` 直接拿扫描结果的 coverUri，upsert(REPLACE) 把补全的远程封面清掉。修复：扫描无封面时保留 existing.coverUri（非空且非 albumart 占位前缀）；用户编辑行（user_edited）本就整行保留。
+3. **冷启动误触发全库重扫**：`library.isEmpty()` 读的是初始值为 emptyList 的 StateFlow，首次组合时尚未加载 → 每次冷启动都全库重扫（慢且反复重写数据）。修复：`LibraryViewModel.autoScanIfEmpty()` 直接 `repo.countSongs()` 查库。
+
+### 2. 歌词下载的存储位置（权限约束）
+App 只有读权限（READ_MEDIA_AUDIO/READ_EXTERNAL_STORAGE），Android 11+ 无法写 /sdcard 任意目录 → 下载歌词统一写 App 外部目录 `getExternalFilesDir(null)/lyrics/<歌曲名>_<路径MD5前8位>.lrc`（`LyricsStore`，免权限、随卸载清理）；`loadLyrics` 查找顺序：歌曲同目录同名 .lrc（用户手动放置）优先，其次下载目录。
+
+### 3. Hilt/KSP 坑
+`@ApplicationContext` 的包名是 `dagger.hilt.android.qualifiers`（复数）——写成单数 `qualifier` 时 KSP 报 `error.NonExistentClass` 而非普通的 unresolved import，极易误判。
+
+### 4. 纯文本歌词的可用化
+LRCLIB 很多歌曲只有 plainLyrics（无时间轴）。`plainToLrc` 按歌曲时长均排（每行 durationMs/lines，兜底 3.5s/行）生成伪 LRC，保证播放页高亮可用；有 syncedLyrics 时优先原样使用。
+
+### 5. adb 测试经验（本次踩坑记录）
+- `input text "The Beatles"` 的空格会被设备 shell 吞掉 → 用 `%s` 转义（`input text "The%sBeatles"`）。
+- 连续 `input keyevent 67`（DEL）会丢事件 → 设备侧循环 `adb shell 'i=0; while [ $i -lt 30 ]; do input keyevent 67; i=$((i+1)); done'`，并先 `keyevent 123`（MOVE_END）再删。
+- 软键盘弹出会推着 ModalBottomSheet 内容位移，点击坐标要先 dump 再点。
+- 早前误判的「长按切歌」假象：实为 45s/75s 短测试曲播完自然自动切歌；暂停播放后长按，弹窗歌曲与当前一致，手势无问题。
+
+## 三、交付物与 SHA-256
+
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| dist/PureTone-v1.1.1-arm64-v8a-release.apk | 16MB | cbc1b98c75f3724a03cc17d24cdd462ffabe6083c1188796448de99e239d5be3 |
+| dist/PureTone-v1.1.1-universal-release.apk | 73MB | 93be667eada970b6aecced25d92c00210cf446b1e66459329d90665d9914e52a |
+
+另（构建输出目录 app/build/outputs/apk/release/）：
+| PureTone-v1.1.1-armeabi-v7a-release.apk | 30MB | f1ccbc5591f869bb6c6223eb48bc73c595afb79e2cf30d31b461e30ff666a03b |
+| PureTone-v1.1.1-x86-release.apk | 17MB | 6c6091bd94b9ebb2d2a76c7de7744a4e2fffd78eb0a04a9ece247f28edf2a480 |
+| PureTone-v1.1.1-x86_64-release.apk | 21MB | bc15f1dac3de55accb426dad2ce94ec5ea20ee8778814e3e573e5945346bc2d2 |
+
+旧版：v1.1.0 两个包已移入 dist/archive/ 备查。
+
+## 四、装机实测（模拟器 x86_64）
+
+- debug（com.puretone.player.debug）：五项全部实测通过——设置页单行分段+选中配色（浅/深两主题）、歌曲信息弹窗自动填充（DB+表单+封面预览同步）、下载歌词（歌词面显示+高亮）、音乐页补全入口（进度 0/4 → iTunes 匹配成功 → 封面显示 → 冷启动后保留）、列表无 + 按钮。
+- release（com.puretone.player，装 universal）：versionName=1.1.1/code 7；音乐页共 6 首、无 + 按钮、补全图标在、Let It Be 封面显示；设置页单行分段与选中着色正常（`_shot_rel_v111.png`、`_shot_rel_v111_set.png`）。
+- 联网路径说明：本机沙盒与模拟器均可访问 itunes.apple.com 与 lrclib.net（iTunes 试听段下载后打 ID3 标签造了一首真实测试曲），成功路径已实测；真机无网时代码优雅降级（返回空/提示，不崩溃）。

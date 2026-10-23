@@ -1,0 +1,62 @@
+# PureTone v1.1.0 产品优化六大模块 —— 实现与测试证据（2026-10-21）
+
+版本：versionName 1.1.0 / versionCode 6（app/build.gradle.kts：appVersionName="1.1.0", appVersionCode=6）
+构建：assembleRelease 全 ABI 分包（arm64-v8a / armeabi-v7a / x86 / x86_64 + universal），release 签名核验通过（APK Signature Scheme v2，minSdk=26 无需 v1）。
+测试：testDebugUnitTest 26/26 通过（0 failures / 0 errors）。
+交付：dist/PureTone-v1.1.0-arm64-v8a-release.apk（16MB）、dist/PureTone-v1.1.0-universal-release.apk（73MB）。
+
+## 一、六大模块需求与实现对照
+
+| # | 需求 | 实现要点 | 验证 |
+|---|---|---|---|
+| 1 | 播放页布局与交互重构 | 底部统一四核心按钮：左=播放模式（单曲/循环/随机 OFF/ALL/ONE/SHUFFLE），中=上一首/播放暂停/下一首严格对称（Row weight 1f + Arrangement.SpaceEvenly），右=播放列表浮层（ModalBottomSheet，含队列 N 首与移除）；移除右上角三按钮；音效入口（Equalizer）移到进度条上方左侧、收藏（FavoriteButton）移到进度条上方右侧；长按封面弹歌曲信息半模态（SongInfoSheet：查看/编辑/联网匹配） | ✅ 截图：`_shot_player_v11.png`（播放页）、`_shot_queue_v11.png`（队列浮层）、`_shot_longpress_v11.png` / `_shot_info_v11.png`（长按信息弹窗）；release 装机复验 `_shot_rel_player3_v11.png`（四按钮布局，无右上角按钮组） |
+| 2 | 封面翻转歌词 | 点击封面 3D Flip（容器 graphicsLayer rotationY + cameraDistance，正面 rotationY=0 / 背面 rotationY=180，按角度切 alpha）；歌词支持滚动（LazyColumn）、字号调节（RemoveCircleOutline/AddCircleOutline 12–30sp）、进度高亮联动（当前行高亮 + 自动滚动） | ✅ 截图：`_shot_player_flip_v11.png`（翻转中）、`_shot_player_lyrics_v11.png`（歌词背面）、`_shot_flip2_v11.png` ~ `_shot_flip4_v11.png`（翻回序列） |
+| 3 | 左右滑切歌动画 | 层叠视差：AnimatedContent + slideIntoContainer/slideOutContainer + scaleIn/scaleOut + fade；当前封面缩小淡出、新封面侧边滑入放大；tanh 阻尼（damp(drag)=maxDrag*tanh(drag/maxDrag)），阈值 ±90px 切歌否则 spring 回弹；全程 GPU 合成层 | ✅ 真实左滑切歌生效（DB 佐证 current_song_id 变化：new_song→sh3，`_shot_swipe_v11.png`） |
+| 4 | 「浏览」更名「音乐」+ 列表优化 | 底部导航与页标题「浏览」→「音乐」；列表底部仅保留「共 N 首」（删"已跳过"）；右上角排序图标（SwapVert）弹出排序菜单：添加时间/歌手/专辑/标题/时长/播放次数，当前项打勾 | ✅ 截图：`_shot_music_v11.png`（共 5 首）、`_shot_music_sort_v11.png` ~ `_shot_music_sort3_v11.png`（排序菜单 6 项弹出、打勾） |
+| 5 | 自动获取封面与信息 | SongMetadataProvider 接口 + ItunesMetadataProvider（iTunes Search API 免 key，HttpURLConnection 8s 超时 + Dispatchers.IO，异常吞掉返回空列表优雅降级）；封面 artworkUrl100→600x600bb 高清；歌曲信息弹窗内联网匹配（搜索 + 结果列表"使用"）；「我的」页一键批量补全缺失封面（MetadataViewModel.backfillMissingCovers，进度 done/total） | ✅ 代码编译 + 无网环境优雅降级不崩溃（`_shot_meta_search_v11.png`）；编辑保存持久化 DB 验证 user_edited=1；⚠️ 联网匹配成功路径需有外网设备实测（本模拟器无外网，Google probe 失败） |
+| 6 | 新增听歌统计 | Room v2→v3 迁移（songs 加 play_count/last_played_at/user_edited；play_history 加 duration_ms）；StatsDao 只读聚合（SUM/COUNT/GROUP BY + date()/strftime() 本地时区）；StatsViewModel 嵌套 combine 7 流；StatsScreen 图表看板：累计时长/总播放/收听歌曲/活跃天数/日均时长/最勤时段 6 卡片 + 每日听歌（近 14 天）Canvas 柱状图 + 时段分布（0–23 时）柱状图 + 最爱歌手/最爱歌曲 + 趣味标签（最爱歌手/日常常听/近 30 天听歌天数）；「我的」页入口 | ✅ 截图：`_shot_stats_v11.png`（总览+日趋势）、`_shot_stats2_v11.png`（时段分布+最爱歌手/歌曲）、`_shot_stats3_v11.png`（趣味标签） |
+
+## 二、关键技术坑与修复（细节）
+
+### 1. Room v2→v3 迁移与列名
+- `MIGRATION_2_3`：`ALTER TABLE songs ADD COLUMN play_count INTEGER NOT NULL DEFAULT 0`（另 last_played_at、user_edited），`ALTER TABLE play_history ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0`。
+- **POJO 查询列名必须与字段名完全一致**（Room 不自动 snake_case→camelCase）：SQL 用 `AS dayKey` / `AS listenMs` 别名，否则编译报 `columns [day_key,listen_ms] does not have fields [dayKey,listenMs]`。
+
+### 2. userEdited 保护（防止 MediaStore 覆盖用户/联网修正）
+- `syncLibrary` upsert(REPLACE) 时对 `existing.userEdited` 为 true 的行整行保留；`updateSongInfo` 置 `user_edited=1`。
+
+### 3. Kotlin combine 上限
+- `combine` 同名多流命中 vararg 重载 → 7 流拆嵌套 combine（CoreStats 3 流 + ListStats 4 流，再合并两者）。
+
+### 4. Hilt 接口绑定
+- `SongMetadataProvider` 接口需 `MetadataModule`（`@Module @Binds`）绑到 `ItunesMetadataProvider`，否则 `hiltJavaCompileDebug` 报 `is injected` 失败。
+
+### 5. Compose 手势冲突（播放页交互全失效根因）
+- ① 同一节点挂多个 pointerInput（tap + detectHorizontalDragGestures）互相抢占（drag 的 onDragStart 立即 consume down）→ 合并为单一 `awaitEachGesture`；
+- ② 堆叠的两个面中透明(alpha=0)背面仍命中测试并**拦截手势** → 按 `flipped` 状态重排子节点顺序，让交互面恒在最上层（CoverFace/LyricsBackFace 独立 composable + interactive 门控）。
+
+### 6. adb 实测坐标坑
+- `input tap` 坐标要用 uiautomator dump 实测：封面真实中心 y≈850（非 400）；`input swipe x y x y 700` 模拟长按会顺带切歌（注入位移的测试假象，已用 DB 验证真实功能）。
+
+## 三、交付物与 SHA-256
+
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| dist/PureTone-v1.1.0-arm64-v8a-release.apk | 16MB | 3d3c8dc4970c534c35938c1087f9b7c434b42a99135e1eff53d7703959116211 |
+| dist/PureTone-v1.1.0-universal-release.apk | 73MB | 6c9247b29ca934d13b70d8039be4273a0f6ead82f2d1852ebbcf3bd8ae9ae5d6 |
+
+另（构建输出目录 app/build/outputs/apk/release/）：
+| PureTone-v1.1.0-armeabi-v7a-release.apk | 30MB | 2231d5f64df2473bfa8150d9a9cb30ad02c2639bf64303f7afc0411a32c57119 |
+| PureTone-v1.1.0-x86-release.apk | 17MB | 66acf806f9c4c1d1bc5835eb47ffbab749730a8b62c02fe32db1667a0e354ff4 |
+| PureTone-v1.1.0-x86_64-release.apk | 21MB | 36ca15b1fccd8d1170a05b12087e5cbc4f46fd9060e5fae81bf89f8dd4383a2a |
+
+签名：apksigner verify 全部通过（v2 scheme true；minSdk=26 ≥ 24，AGP 默认不签 v1，属正确行为）。
+旧版：v1.0.4 两个包已移入 dist/archive/ 备查。
+
+## 四、装机实测（模拟器 x86_64，装 universal release）
+
+- 安装：`adb install -r dist/PureTone-v1.1.0-universal-release.apk` → Success；dumpsys 确认 versionName=1.1.0 / versionCode=6 / minSdk=26 / targetSdk=34。
+- 音乐页：`_shot_rel_v11.png`（「音乐」、共 5 首、按标题排序、APE 徽标）。
+- 播放页：`_shot_rel_player3_v11.png`（新布局：无右上角按钮组、EQ 左/收藏右在进度条上方、底部四按钮对称）。
+- 统计看板：`_shot_stats_v11.png` / `_shot_stats2_v11.png` / `_shot_stats3_v11.png`（6 卡片、双柱状图、最爱歌手/歌曲、趣味标签全部正常渲染）。
+- 已知限制：模拟器无外网，Item5 联网匹配仅验证"无网优雅降级不崩溃"，成功路径需有网设备复测。

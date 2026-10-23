@@ -1,0 +1,59 @@
+# PureTone v1.1.2 两项功能 —— 实现与测试证据（2026-10-22）
+
+版本：versionName 1.1.2 / versionCode 8（app/build.gradle.kts）
+测试：testDebugUnitTest 26/26 通过（0 failures / 0 errors）
+交付：dist/PureTone-v1.1.2-arm64-v8a-release.apk（16MB）、dist/PureTone-v1.1.2-universal-release.apk（73MB）
+签名：apksigner verify 全部通过（v2 scheme；minSdk=26 无需 v1）
+另构建：armeabi-v7a(30MB) / x86(17MB) / x86_64(21MB) 见构建输出目录
+
+## 一、两项需求与实现对照
+
+| # | 需求 | 实现要点 | 验证 |
+|---|---|---|---|
+| 1 | 设置中主题/播放/音效等分类字号和行号比子项大一号；各分类和子项高度保持一致；设置页以铺满整屏为宜 | `SettingsScreen.kt` 整体重写：分类头 `titleLarge`(22sp)/行高 64dp vs 子项 `bodyLarge`(16sp)/行高 56dp；所有分类头行高统一 64dp、所有子项行统一 56dp（开关行/分段行/均衡器导航行同高）；分段选项 `labelLarge`(14sp)；主题分段整行 56dp；倍速/定时分段行 56dp（内轨 44dp）；页面 padding 16/12dp、组间距 12dp、Card 内 padding 16/4dp；底部品牌+版本行居中 | ✅ 浅色主题：三大卡片铺满首屏、分类标题明显大一级、行高一致（`_shot_v112_settings.png`）；滚动后可见「v1.1.2 · 构建 8」（`_shot_v112_settings2.png`）；✅ 深色主题：选中段亮薰衣草填充+深字，清晰可辨（`_shot_v112_dark.png`） |
+| 2 | 左右滑动切换歌曲改为上滑/下滑切换歌曲；滑动时前后过渡要衔接自然 | ① `CoverFace` 手势检测 X→Y 轴（dragY 累加、slop 按 y 判定、上滑位移为负）；② `SwipeableCover` 容器 `translationX`→`translationY`；③ `AnimatedContent` 过渡方向 `Left/Right`→`Up/Down`：上滑=下一首（新封面自底部滑入、旧封面向上滑出），下滑=上一首（相反），滑入滑出方向与手势方向一致；④ 松手过阈值时容器位移从当前阻尼位置以 `tween(380)`（与过渡同时长）归位，替代原 `snapTo(0f)` 硬重置——消除过渡起始帧的整卡瞬移跳变 | ✅ 正式包实测：上滑 sh3→120s、下滑 120s→sh3 往返正确（UI dump 前后曲名/播放位置对比）；✅ 插桩日志验证：单次手势只产生一次 endDrag、一次 next()/previous()，无重复触发；✅ 自动切歌后立即上滑同样正确；✅ 队尾上滑为 no-op 不崩溃 |
+
+## 二、关键实现细节
+
+### 1. 设置页排版规范（本次新增）
+- 分类头：`titleLarge`(22sp) 主色、行高 64dp，头下一条 `HorizontalDivider`(outlineVariant 40%)；
+- 子项行：统一 56dp / `bodyLarge`(16sp)，`SwitchRow`、`SettingsSegmentRow`、均衡器导航行同行高同节奏；
+- 分段控件：选中态 `primary`/`onPrimary`（各主题自适应，延续 v1.1.1 浅色发白修复）；倍速 5 档（0.5x/1x/1.25x/1.5x/2x）、定时 5 档（关/15m/30m/45m/60m）单行展示；
+- 布局节奏：页面 16/12dp、组间距 12dp、卡片内 16/4dp → 三组卡片约 660dp，主流手机一屏放不下、刚好铺满并可滚动，符合「以铺满整屏为宜」。
+
+### 2. 垂直切歌的过渡衔接设计
+- 拖动中：封面 `translationY` 跟手（tanh 阻尼，max 240px）+ 缩放到 0.88 + 淡出到 0.45；
+- 过阈值切歌：`slideIntoContainer/slideOutOfContainer(Up|Down, tween(380))` + `fadeIn/Out` + `scaleIn/Out(0.82)`，方向与手势一致；同时容器位移 `animateTo(0f, tween(380))` 续接归位；
+- 未过阈值：`springBack`(dampingRatio 0.55 / StiffnessLow) 从阻尼位移弹回中线；
+- 阈值 ±90px；`endDrag` 符号语义未变（total>90 上一首 / total<-90 下一首），仅视觉轴与过渡方向改变。
+
+## 三、测试过程中的坑（测试方法学记录，非产品缺陷）
+
+### 1. 「一次滑动切了两首歌」的假异常
+插桩日志（`SwipeDbg`：DOWN/endDrag/分支/播放器调用）证明手势管线正确：单次 DOWN → 单次 endDrag → 单分支 → 单次 `next()`/`previous()`。此前观察到的「同曲重播」假象根因均为测试方法问题：
+1. **短曲自然播完**：adb 命令间隔含数分钟思考时间，15s/45s/75s 测试曲在此期间播完并自动切歌，滑动瞬间的实际曲目与假设不符；
+2. **前台应用被切换**：debug/release 双包共存时长间隔中前台会漂移到另一个应用（输入事件发错了 app）；
+3. **模拟器截图工具遮挡**：该模拟器每次 `screencap` 后会弹出截图编辑器盖住界面；
+4. **`input swipe` 注入特性**：起始坐标有约 470px 系统性偏移（命令 750 → 实际落点 280），且事件批量投递（拖动态视觉拍不到），需按实测落点反推坐标。
+改用「单条命令内完成 播放→滑动→dump→日志」的确定性方法复测：上滑/下滑、稳定态/自动切歌后/队尾边界全部正确。插桩代码已在正式构建前移除。
+
+## 四、交付物与 SHA-256
+
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| dist/PureTone-v1.1.2-arm64-v8a-release.apk | 16MB | 508c893400f6d89d7fbf57583ddf691078e9b866cdcc646a6a23fb2b3386a4d3 |
+| dist/PureTone-v1.1.2-universal-release.apk | 73MB | 9031576e0c42e03dfbb9abf1d4f2f6051c7d23c53fc16922404dd43ecac1e8be |
+
+另（构建输出目录 app/build/outputs/apk/release/）：
+| PureTone-v1.1.2-armeabi-v7a-release.apk | 30MB | 9a421ce485427e7beb9562e12e4b0ca955dcb4a942233734328e0f35726008e3 |
+| PureTone-v1.1.2-x86-release.apk | 17MB | f3b79c60c8ca65a779c996a9fb3034936d3fee325b12c7793a0f3e2160f5cfe1 |
+| PureTone-v1.1.2-x86_64-release.apk | 21MB | f4e2b2dc76a9f20db69af87240d89d60864ea8b2ca03365e576456f1745acf44 |
+
+旧版：v1.1.0 / v1.1.1 四个包已移入 dist/archive/ 备查。
+
+## 五、装机实测（模拟器 x86_64，正式包 com.puretone.player）
+
+- 版本：versionName=1.1.2 / versionCode=8，安装升级正常（Room 无 schema 变更，数据保留）；
+- 设置页：分类标题大一号、子项行高统一 56dp、三组卡片铺满首屏可滚动、底部版本号正确；深色主题选中着色清晰；
+- 播放页切歌：上滑=下一首、下滑=上一首往返验证通过（sh3 → 120s → sh3，dump 曲名与位置前后一致）；
+- 说明：真实触摸为流式事件（拖动跟手无延迟）；`adb input swipe` 注入事件为批量投递，拖动态视觉在注入场景不可见，属测试工具特性而非应用问题。

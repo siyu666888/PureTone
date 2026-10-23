@@ -1,0 +1,65 @@
+================================================================
+PureTone v1.1.7 交付证据（2026-10-22）
+================================================================
+
+一、版本
+- versionName : 1.1.7
+- versionCode : 13
+- 唯一来源    : app/build.gradle.kts 的 appVersionName / appVersionCode
+
+二、本次改动（4 项用户需求）
+1) 播放控制按钮还原上一版 + 循环/随机改曲线箭头
+   - 上一首/下一首/播放/暂停/播放队列：还原 v1.1.5 细线观感
+     (« » 双尖角、线宽 1.5、实心圆角播放三角、暂停双圆头竖条 3.4、队列三线两圆点)；
+   - 顺序循环 🔁 / 单曲循环 🔂 / 随机播放 🔀：改为曲线箭头
+     (顺序/单曲 = 约 300° 圆弧 + 顶端箭头，单曲额外中央「1」；随机 = 两条交叉曲线 + 右端双向箭头)；
+   - 文件：ui/components/ControlIcons.kt。
+   - 注：本项目 Compose PathBuilder 无 cubicTo/quadraticBezierTo，曲线用 arcTo + lineTo。
+
+2) 设置页选中着色改圆弧形过渡
+   - ThemeSegmentedControl / SettingsSegmentRow 选中块背景由 shapes.small 改为 CircleShape
+     (全圆角胶囊)，颜色过渡沿用 animateColorAsState；
+   - 文件：ui/screens/SettingsScreen.kt。
+
+3) 歌曲标记喜欢后显示红心
+   - SongRow 收藏图标着色由主题主色改为红心色 FavoriteRed = Color(0xFFE53935)；
+   - 文件：ui/components/PlayerComposables.kt。
+
+4) 歌单：创建歌单 + 歌曲后加号加入 + 批量选择
+   - LibraryViewModel 增 addToPlaylist / createPlaylistAndAdd；
+   - BrowseScreen：右上角「多选」进入批量选择（标题显示已选 N、全选/取消全选、加入歌单动作条），
+     歌曲行尾「+」打开「加入歌单」弹窗（可新建并加入 / 选择已有歌单）；
+   - MeScreen 歌单区新增「新建歌单」入口（命名弹窗）；
+   - AddToPlaylistDialog：新建输入框 + 已有歌单列表（显示歌曲数）；
+   - 文件：ui/LibraryViewModel.kt、ui/screens/BrowseScreen.kt、ui/screens/MeScreen.kt、
+           ui/components/PlayerComposables.kt(SongRow 增 selectionMode/selected)。
+
+三、构建
+- clean assembleRelease assembleDebug testDebugUnitTest：编译/单测/debug 全绿；
+- assembleRelease 首次在 shrinkReleaseRes 因 resources.txt 瞬时文件锁(拒绝访问)失败，
+  增量重试 BUILD SUCCESSFUL（环境问题，非代码）；
+- 新增 ControlIconsTest（2 例，强制构造 8 枚图标验证路径合法），随 testDebugUnitTest 通过；
+- 环境：AGP 8.5.2 / Kotlin 2.0.21 / Gradle 8.7 / JDK 17 / compileSdk 34 / minSdk 26。
+
+四、真机验证（emulator-5554 / Pixel_API34，debug 包）
+- 推送 40s 测试音频（扫描器要求 ≥30s）→ 曲库有歌；
+- 「多选」按钮、歌曲行尾「+」（加入歌单）、多选动作条（已选 N / 全选 / 加入歌单）均正常；
+- 「+」→ 弹窗（新建歌单名称 / 新建 / 选择已有歌单）正常；
+- 新建歌单「MyList」并把歌曲加入：DB 校验 playlists=1|MyList、playlist_songs=1|1|0；
+- 批量多选 → 加入已有歌单：幂等（playlist_songs 仍 1 行，不重复），加入后自动退出多选态；
+- MeScreen「新建歌单」入口 + 歌单卡片（MyList / 1 首 / 播放 / 删除）正常；
+- 红心：置 favorite=1 后音乐页该行出现「已收藏」图标；
+- 全程无 FATAL / 无崩溃日志。
+
+五、签名与哈希
+- apksigner verify：v2 scheme = true（v1/v3=false），证书 CN=PureTone；
+- SHA-256:
+    universal : 85aa9953db9a6d8dc46e76ca0629cff9ea878bb2eae45b91a6daea95267c09d4
+    arm64-v8a : 598f6d9d3e719efe992f085d91e5e9c6675cf9008c89a686425a4c5ea546bd49
+
+六、交付物
+- dist/PureTone-v1.1.7-universal-release.apk   （76.5 MB，含全部 ABI，推荐）
+- dist/PureTone-v1.1.7-arm64-v8a-release.apk   （16.5 MB，64 位设备）
+- dist/v1.1.7_delivery_2026-10-22.txt          （本文件）
+- tools/icon_preview_v1.1.7.svg               （8 枚新版图标预览图）
+- v1.1.6 旧包保留在 dist/ 备查。

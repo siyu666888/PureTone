@@ -1,0 +1,84 @@
+================================================================
+PureTone v1.1.8 交付证据（2026-10-22）
+================================================================
+
+一、版本
+- versionName : 1.1.8
+- versionCode : 14
+- 唯一来源    : app/build.gradle.kts 的 appVersionName / appVersionCode
+
+二、本次改动（3 项用户需求）
+1) 所有被标记喜欢的地方都显示红心
+   - 收藏展示共 4 处，统一走 FavoriteRed = Color(0xFFE53935)：
+     a) 音乐页歌曲行（SongRow，仅 favorite 时显示红心 + 「已收藏」）；
+     b) MiniPlayer 收藏按钮（FavoriteButton，activeTint=FavoriteRed，v1.1.8 新增）；
+     c) 播放页收藏按钮（PlayerScreen，同上组件）；
+     d) 「我的 → 我喜欢」列表（复用 SongRow，自动生效）。
+   - 文件：ui/components/PlayerComposables.kt、ui/screens/PlayerScreen.kt、
+           ui/PureToneApp.kt（MiniPlayer 接线）。
+
+2) 播放页左侧播放顺序：默认三态循环 + 重设计图标 + 取消黄点
+   - 新增共享枚举 playback/PlayMode.kt：SEQUENTIAL / SHUFFLE / REPEAT_ONE
+     （无 OFF），toPlayMode() 由 PlaybackUiState(shuffle, repeatMode) 派生，
+     next() 循环 顺序→随机→单曲→顺序；
+   - PlayerViewModel.cyclePlayMode()：映射回 setRepeatMode(ALL/ONE) + setShuffle；
+   - 顺序播放图标重设计：两个箭头圆形收尾相连
+     （上下两个半圆合成整圆 + 右侧箭头朝下 + 左侧箭头朝上，arcTo+lineTo 实现）；
+   - 单曲循环：同一圆环 + 中央数字「1」；
+   - 取消选中态黄点：PlayModeIconButton 不传 showActiveDot；
+   - 播放页 / MiniPlayer 共用 PlayModeIconButton（content-desc「播放模式：xxx」）；
+   - 文件：playback/PlayMode.kt（新）、ui/components/ControlIcons.kt、
+           ui/components/PlayerComposables.kt、ui/screens/PlayerScreen.kt、
+           ui/PlayerViewModel.kt、ui/PureToneApp.kt。
+   - 注：本项目 Compose PathBuilder 无 cubicTo/quadraticBezierTo，圆环用 arcTo。
+
+3) 卡片（MiniPlayer）等播放状态显示播放顺序切换 + 喜欢按钮且可操作
+   - MiniPlayer 新增 PlayModeIconButton（40dp）与 FavoriteButton（40dp），
+     播放/暂停、下一首相应缩小为 42dp；
+   - onPlayMode = playerVm::cyclePlayMode，onFavorite = playerVm::toggleFavorite；
+   - 删除已无引用 RepeatModeButton（死代码）与 RepeatMode import。
+
+三、构建
+- clean assembleRelease assembleDebug testDebugUnitTest：编译/单测/debug 全绿；
+- 33 个单测全绿（含 ControlIconsTest 强制构造 8 枚图标验证路径合法）；
+- 环境：AGP 8.5.2 / Kotlin 2.0.21 / Gradle 8.7 / JDK 17 / compileSdk 34 / minSdk 26。
+
+四、真机验证（emulator-5554 / Pixel_API34，debug 包，曲库 1 首 40s 测试音）
+需求 1（红心）：
+- 音乐页歌曲行：content-desc「已收藏」；播放页收藏位红色像素 549（bbox x928-984）；
+- MiniPlayer 收藏位红色像素 397（bbox x730-778, y1864-1906）；
+- MiniPlayer 收藏按钮点击切换：取消收藏→收藏→取消收藏，DB 校验 songs.favorite=1；
+- 取消收藏后列表行红心节点消失（设计即仅收藏时显示），符合预期。
+
+需求 2（三态 + 新图标 + 无黄点）：
+- 播放页连点 3 次：顺序播放→随机播放→单曲循环→顺序播放（content-desc 逐次变化）；
+- MiniPlayer 连点 3 次：单曲→顺序→随机→单曲，往返一致；
+- ASCII 字符画还原图标形状：顺序=双箭头圆环（右↓左↑收尾相连）、
+  随机=交叉双曲线、单曲=圆环+中央「1」；
+- 三态截屏全图黄色像素 = 0（黄点已取消）。
+
+需求 3（卡片可操作）：
+- MiniPlayer 暴露「播放模式：顺序播放」「取消收藏」两个新按钮，点击均生效
+  （模式三态循环、收藏 DB 落库）；点击 MiniPlayer 主体可正常打开播放页；
+- 全程无 FATAL / 无崩溃日志。
+
+五、签名与哈希
+- apksigner verify -v：v2 scheme = true（v1/v3/v4=false），证书 CN=PureTone；
+- SHA-256:
+    universal : ff9e121484d2ca53335fd2c5e42980dbb9789a849e90339dee1f6850e200dc46
+    arm64-v8a : d11212aea41794802f1a54124a4d68ef3fde1d1ffcd3670d597330f64ac537ad
+
+六、交付物
+- dist/PureTone-v1.1.8-universal-release.apk   （76.6 MB，含全部 ABI，推荐）
+- dist/PureTone-v1.1.8-arm64-v8a-release.apk   （16.5 MB，64 位设备）
+- dist/v1.1.8_delivery_2026-10-22.txt          （本文件）
+- dist/verify_v1.1.8/                          （三态播放页 + MiniPlayer 验证截图）
+- tools/icon_preview_v1.1.8.svg               （8 枚新版图标预览图）
+- v1.1.7 旧包保留在 dist/ 备查。
+
+七、验证方法学备注（本次新发现）
+- adb shell screencap -p 经 Git Bash 文本流转运会破坏 PNG（CRLF 污染），
+  必须改用 adb exec-out screencap -p > file.png（二进制安全）；
+- uiautomator dump 只在动画稳定后取坐标：MiniPlayer 入场动画中按钮坐标会漂移
+  （本次先后相差约 660px），盲点会误触主体打开播放页；
+- 图片读取失败时按既有方法学用 Pillow 阈值化 ASCII 字符画还原图标形状。
