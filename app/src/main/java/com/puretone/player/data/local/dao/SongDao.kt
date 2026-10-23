@@ -101,6 +101,30 @@ interface SongDao {
     @Query("SELECT * FROM songs WHERE favorite = 1 ORDER BY title COLLATE NOCASE ASC")
     fun observeFavorites(): Flow<List<SongEntity>>
 
+    /**
+     * 某专辑下的全部歌曲（用于专辑二级详情页）。
+     * albumId > 0 按专辑 id 精确匹配；未知专辑（albumId<=0）退化为按专辑名匹配，
+     * 避免把多张「未知专辑」错误合并。
+     */
+    @Query(
+        """
+        SELECT * FROM songs
+        WHERE (:albumId > 0 AND album_id = :albumId)
+           OR (:albumId <= 0 AND album = :album)
+        ORDER BY track_number ASC, title COLLATE NOCASE ASC
+        """
+    )
+    fun getSongsByAlbum(albumId: Long, album: String): Flow<List<SongEntity>>
+
+    /** 某歌手下的全部歌曲（用于歌手详情） */
+    @Query(
+        """
+        SELECT * FROM songs WHERE artist = :artist
+        ORDER BY album COLLATE NOCASE ASC, track_number ASC, title COLLATE NOCASE ASC
+        """
+    )
+    fun getSongsByArtist(artist: String): Flow<List<SongEntity>>
+
     /** 幂等 upsert：按 path 冲突则替换（mediaStoreId 可能变化） */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(songs: List<SongEntity>)

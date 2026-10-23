@@ -76,6 +76,20 @@ class MusicRepository @Inject constructor(
     fun observeRecentlyPlayed(limit: Int = 50): Flow<List<SongEntity>> =
         songDao.observeRecentlyPlayed(limit)
 
+    // ---------- 专辑 / 歌手 / 文件夹分组详情 ----------
+
+    /** 某专辑下的歌曲（专辑二级详情页） */
+    fun observeSongsByAlbum(albumId: Long, album: String): Flow<List<SongEntity>> =
+        songDao.getSongsByAlbum(albumId, album)
+
+    /** 某歌手下的歌曲 */
+    fun observeSongsByArtist(artist: String): Flow<List<SongEntity>> =
+        songDao.getSongsByArtist(artist)
+
+    /** 某文件夹下的歌曲（文件夹由 path 父目录派生） */
+    fun observeSongsByFolder(folder: String): Flow<List<SongEntity>> =
+        observeLibrary().map { list -> list.filter { folderOf(it.path) == folder } }
+
     suspend fun getSong(id: Long): SongEntity? = songDao.getById(id)
 
     suspend fun getSongs(ids: List<Long>): List<SongEntity> = songDao.getByIds(ids)
@@ -288,6 +302,16 @@ class MusicRepository @Inject constructor(
     companion object {
         const val UNKNOWN_ARTIST = "未知艺术家"
         const val UNKNOWN_ALBUM = "未知专辑"
+
+        /**
+         * 由文件绝对路径取所在文件夹（父目录）。
+         * Android MediaStore 路径统一用 '/' 分隔，故按最后一次 '/' 切分即可，
+         * 与平台无关（不依赖 File 的 separator）。
+         */
+        fun folderOf(path: String): String {
+            val idx = path.lastIndexOf('/')
+            return if (idx > 0) path.substring(0, idx) else path
+        }
 
         /** MediaStore albumart 占位 URI 前缀（无内嵌封面的专辑也会生成，实际解析不出图） */
         const val ALBUM_ART_URI_PREFIX = "content://media/external/audio/albumart/"

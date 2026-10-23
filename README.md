@@ -20,6 +20,9 @@
 ## ✨ 功能特性
 
 - **本地媒体扫描**：基于 `MediaStore` 自动扫描设备音乐，经 Room 持久化，支持按歌曲/专辑/歌手/文件夹多维浏览与排序。
+- **音乐页四页签**：歌曲 / 专辑 / 歌手 / 文件夹一键切换；专辑页为方形封面**网格墙**，歌手为圆形头像列表，文件夹按目录聚合。
+- **二级详情页**：专辑 / 歌手 / 文件夹均可进入详情页（封面 + 标题 + 首数 + 播放全部），列表项支持单击播放、长按操作菜单、加入歌单。
+- **常驻迷你播放条**：仅保留「上一首 / 播放暂停 / 下一首」三枚按钮，左右对称，底部细进度线。
 - **沉浸式播放页**
   - 封面 3D 翻转露出实时歌词；
   - 旋转 CD 唱盘（封面取色作为主题色）；
@@ -111,8 +114,8 @@ keyPassword=你的密钥口令
 
 ```bash
 ./gradlew assembleRelease
-# 产物：app/build/outputs/apk/release/PureTone-v1.2.0-universal-release.apk
-#       app/build/outputs/apk/release/PureTone-v1.2.0-arm64-v8a-release.apk
+# 产物：app/build/outputs/apk/release/PureTone-v1.3.0-universal-release.apk
+#       app/build/outputs/apk/release/PureTone-v1.3.0-arm64-v8a-release.apk
 ```
 
 > `dist/` 目录存放各版本已签名的发布包与交付证据（SHA-256 / apksigner 校验记录）。
@@ -149,6 +152,7 @@ keyPassword=你的密钥口令
 | v1.1.8 | 三态循环、红心收藏、移除多余状态色 |
 | v1.1.9 | 列表 `key` 防串位、长按操作菜单、收藏跨入口实时同步（Room 派生真源） |
 | v1.2.0 | 播放队列浮层精简、循环图标圆角重设计、播放卡片新增「播放顺序/喜欢」对称按钮、切换按钮中性化 |
+| v1.3.0 | 迷你播放条精简为三按钮；音乐页新增 歌曲/专辑/歌手/文件夹 四页签；专辑方形封面网格墙；专辑/歌手/文件夹二级详情页 |
 
 ---
 

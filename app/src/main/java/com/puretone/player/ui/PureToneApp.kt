@@ -24,17 +24,21 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import androidx.navigation.NavType
 import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.playback.toPlayMode
 import com.puretone.player.ui.components.MiniPlayer
 import com.puretone.player.ui.screens.BrowseScreen
 import com.puretone.player.ui.screens.EqScreen
+import com.puretone.player.ui.screens.GroupDetailScreen
 import com.puretone.player.ui.screens.MeScreen
 import com.puretone.player.ui.screens.PlayerScreen
 import com.puretone.player.ui.screens.SettingsScreen
 import com.puretone.player.ui.screens.StatsScreen
 import com.puretone.player.ui.theme.PureToneTheme
 import com.puretone.player.ui.theme.PureToneThemeMode
+import java.net.URLDecoder
 
 /** 导航路由 */
 object Routes {
@@ -44,6 +48,11 @@ object Routes {
     const val PLAYER = "player"
     const val EQ = "eq"
     const val STATS = "stats"
+    const val GROUP_DETAIL = "group/{type}/{key}"
+
+    /** 分组二级详情页路由（type ∈ {album, artist, folder}，key 经 URL 编码） */
+    fun groupDetail(type: String, key: String): String =
+        "group/$type/${java.net.URLEncoder.encode(key, "UTF-8")}"
 }
 
 /** 应用根：主题 + 底部导航 + 迷你播放条 + 导航宿主 */
@@ -53,7 +62,6 @@ fun PureToneApp() {
     val settingsVm: SettingsViewModel = hiltViewModel()
 
     val playerState by playerVm.state.collectAsStateWithLifecycle()
-    val favorite by playerVm.favorite.collectAsStateWithLifecycle()
     val settings by settingsVm.state.collectAsStateWithLifecycle()
 
     val nav = rememberNavController()
@@ -73,13 +81,10 @@ fun PureToneApp() {
                         if (playerState.currentSongId != null) {
                             MiniPlayer(
                                 state = playerState,
-                                playMode = playerState.toPlayMode(),
-                                favorite = favorite,
                                 onOpen = { nav.navigate(Routes.PLAYER) },
                                 onToggle = playerVm::togglePlay,
-                                onNext = playerVm::next,
-                                onPlayMode = playerVm::cyclePlayMode,
-                                onFavorite = playerVm::toggleFavorite
+                                onPrev = playerVm::prev,
+                                onNext = playerVm::next
                             )
                         }
                         NavigationBar {
@@ -121,6 +126,18 @@ fun PureToneApp() {
                 composable(Routes.PLAYER) { PlayerScreen(navController = nav) }
                 composable(Routes.EQ) { EqScreen(navController = nav) }
                 composable(Routes.STATS) { StatsScreen(navController = nav) }
+                composable(
+                    route = Routes.GROUP_DETAIL,
+                    arguments = listOf(
+                        navArgument("type") { type = NavType.StringType },
+                        navArgument("key") { type = NavType.StringType }
+                    )
+                ) { backStackEntry ->
+                    val gType = backStackEntry.arguments?.getString("type") ?: "album"
+                    val gKey = backStackEntry.arguments?.getString("key")
+                        ?.let { URLDecoder.decode(it, "UTF-8") } ?: ""
+                    GroupDetailScreen(navController = nav, type = gType, key = gKey)
+                }
             }
         }
     }

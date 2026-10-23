@@ -521,18 +521,20 @@ fun PlayerProgressBar(
     }
 }
 
-/** 迷你播放条（显示在底部导航之上） */
+/**
+ * 迷你播放条（显示在底部导航之上）。
+ *
+ * 控制按钮仅保留三枚：上一首 / 播放-暂停 / 下一首（对称居中排布）。
+ * 播放顺序切换与「喜欢」仅在完整播放页提供，避免迷你条信息过载。
+ */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun MiniPlayer(
     state: PlaybackUiState,
-    playMode: PlayMode,
-    favorite: Boolean,
     onOpen: () -> Unit,
     onToggle: () -> Unit,
+    onPrev: () -> Unit,
     onNext: () -> Unit,
-    onPlayMode: () -> Unit,
-    onFavorite: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val entry = state.currentEntry ?: return
@@ -620,13 +622,13 @@ fun MiniPlayer(
                     }
                 }
 
-                // 播放顺序切换（左）与喜欢（右）关于中部播放/暂停对称布置，
-                // 全部中性着色，当前播放顺序由图标形状区分
-                PlayModeIconButton(
-                    mode = playMode,
-                    onClick = onPlayMode,
-                    buttonSize = 40.dp,
-                    iconSize = 22.dp
+                // 仅三枚控制按钮，关于中部播放/暂停对称：上一首（左）/ 播放暂停（中）/ 下一首（右）
+                ControlIconButton(
+                    icon = ControlIcons.SkipPrevious,
+                    contentDescription = "上一首",
+                    onClick = onPrev,
+                    buttonSize = 42.dp,
+                    iconSize = 24.dp
                 )
                 ControlIconButton(
                     icon = if (state.isPlaying) ControlIcons.Pause else ControlIcons.Play,
@@ -634,12 +636,6 @@ fun MiniPlayer(
                     onClick = onToggle,
                     buttonSize = 42.dp,
                     iconSize = 24.dp
-                )
-                FavoriteButton(
-                    favorite = favorite,
-                    onClick = onFavorite,
-                    buttonSize = 40.dp,
-                    iconSize = 22.dp
                 )
                 ControlIconButton(
                     icon = ControlIcons.SkipNext,

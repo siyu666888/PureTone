@@ -11,11 +11,44 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+
+/** 专辑分组汇总（封面网格墙 / 二级详情页用） */
+data class AlbumSummary(
+    val albumId: Long,
+    val album: String,
+    val artist: String,
+    val coverUri: String?,
+    val songs: List<SongEntity>
+) {
+    val songCount: Int get() = songs.size
+}
+
+/** 歌手分组汇总 */
+data class ArtistSummary(
+    val artist: String,
+    val coverUri: String?,
+    val songs: List<SongEntity>
+) {
+    val songCount: Int get() = songs.size
+}
+
+/** 文件夹分组汇总（文件夹由 path 父目录派生） */
+data class FolderSummary(
+    val folder: String,
+    val songs: List<SongEntity>
+) {
+    val songCount: Int get() = songs.size
+    /** 展示名：取路径最后一段 */
+    val name: String
+        get() = folder.substringAfterLast('/').ifBlank { folder }
+}
 
 /**
  * 曲库视图模型：暴露歌曲/最近播放/歌单流，封装扫描与播放动作。
@@ -68,6 +101,36 @@ class LibraryViewModel @Inject constructor(
     val favorites = repo.observeFavorites()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** 专辑分组（封面网格墙 / 二级详情页） */
+    val albums: StateFlow<List<AlbumSummary>> = repo.observeLibrary()
+        .map { groupAlbums(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** 歌手分组 */
+    val artists: StateFlow<List<ArtistSummary>> = repo.observeLibrary()
+        .map { groupArtists(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** 文件夹分组 */
+    val folders: StateFlow<List<FolderSummary>> = repo.observeLibrary()
+        .map { groupFolders(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * 分组详情页取歌：type ∈ {album, artist, folder}，key 为分组标识。
+     * album 的 key 形如 "albumId|album"（未知专辑 albumId=0）。
+     */
+    fun observeGroupSongs(type: String, key: String): Flow<List<SongEntity>> = when (type) {
+        "album" -> {
+            val seg = key.split("|", limit = 2)
+            val albumId = seg.firstOrNull()?.toLongOrNull() ?: 0L
+            val album = seg.getOrNull(1) ?: ""
+            repo.observeSongsByAlbum(albumId, album)
+        }
+        "artist" -> repo.observeSongsByArtist(key)
+        else -> repo.observeSongsByFolder(key)
+    }
+
     fun setSearchQuery(q: String) { _searchQuery.value = q }
 
     fun scan() = viewModelScope.launch {
@@ -115,4 +178,45 @@ class LibraryViewModel @Inject constructor(
         val id = repo.createPlaylist(name.trim().ifBlank { "新建歌单" })
         if (songIds.isNotEmpty()) repo.addToPlaylist(id, songIds)
     }
+}
+
+/** 按专辑分组：albumId>0 用 id 精确归类，未知专辑（id<=0）退化为按专辑名归类 */
+private fun groupAlbums(songs: List<SongEntity>): List<AlbumSummary> {
+    return songs.groupBy { s -> s.albumId.takeIf { it > 0 } ?: s.album }
+        .map { (_, group) ->
+            val first = group.first()
+            AlbumSummary(
+                albumId = first.albumId,
+                album = first.album,
+                artist = first.artist,
+                coverUri = group.firstNotNullOfOrNull { it.coverUri },
+                songs = group.sortedWith(compareBy({ it.trackNumber }, { it.title.lowercase() }))
+            )
+        }
+        .sortedBy { it.album.lowercase() }
+}
+
+/** 按歌手分组 */
+private fun groupArtists(songs: List<SongEntity>): List<ArtistSummary> {
+    return songs.groupBy { it.artist }
+        .map { (artist, group) ->
+            ArtistSummary(
+                artist = artist,
+                coverUri = group.firstNotNullOfOrNull { it.coverUri },
+                songs = group.sortedWith(compareBy({ it.album.lowercase() }, { it.trackNumber }, { it.title.lowercase() }))
+            )
+        }
+        .sortedBy { it.artist.lowercase() }
+}
+
+/** 按文件夹（path 父目录）分组 */
+private fun groupFolders(songs: List<SongEntity>): List<FolderSummary> {
+    return songs.groupBy { MusicRepository.folderOf(it.path) }
+        .map { (folder, group) ->
+            FolderSummary(
+                folder = folder,
+                songs = group.sortedWith(compareBy({ it.album.lowercase() }, { it.title.lowercase() }))
+            )
+        }
+        .sortedBy { it.folder.lowercase() }
 }

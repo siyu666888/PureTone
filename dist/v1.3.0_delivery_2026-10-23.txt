@@ -1,0 +1,143 @@
+PureTone v1.3.0 交付说明
+================================================================
+日期：2026-10-23
+版本：versionName=1.3.0 / versionCode=17
+包名：com.puretone.player
+技术栈：Kotlin 2.0.21 / Jetpack Compose（BOM 2024.09.00）/ Hilt 2.51.1 /
+        Room 2.6.1 / Media3 1.4.1 / AGP 8.5.2 / Gradle 8.7 / JDK 17
+SDK：compileSdk 34 / minSdk 26 / targetSdk 34
+构建机：ANDROID_HOME=/d/devtools/android-sdk  gradle-8.7
+构建命令：gradle.bat clean testDebugUnitTest assembleRelease
+
+----------------------------------------------------------------
+一、交付产物（dist/）
+----------------------------------------------------------------
+1) PureTone-v1.3.0-universal-release.apk
+   大小：76,602,031 字节
+   SHA-256：3a5aca12f0d39d7952623da49cb503f273a602025e76b3462c0e775dc0658165
+   签名：apksigner verify --print-certs → 通过（v2 scheme = true）
+         CN=PureTone, OU=Dev, O=PureTone, L=Unknown, ST=Guangdong, C=CN
+   ABI：arm64-v8a / armeabi-v7a / x86 / x86_64（通用包，任意机型可装）
+
+2) PureTone-v1.3.0-arm64-v8a-release.apk
+   大小：16,536,996 字节
+   SHA-256：22874c3599e004544431ea803aed4264edc8db85bd5fca81690977666b722204
+   签名：apksigner verify → 通过（v2 scheme = true）
+   ABI：arm64-v8a（现代真机推荐，体积约为通用包 1/4.6）
+
+另产出 armeabi-v7a / x86 / x86_64 三个分 ABI 包（未入库，需可现构）。
+历史版本（v1.1.0 ~ v1.2.0）保留在 dist/，更早版本归档于 dist/archive/。
+
+----------------------------------------------------------------
+二、本版改动
+----------------------------------------------------------------
+① 常驻迷你播放条：控制按钮精简为三枚
+   位置：ui/components/PlayerComposables.kt → MiniPlayer
+   布局：仅保留 上一首（«）/ 播放暂停（⏸▶）/ 下一首（»），三枚均
+         buttonSize=42dp、iconSize=24dp，以中键为轴左右对称。
+   移除：播放顺序按钮（PlayModeIconButton）与收藏按钮（FavoriteButton）在
+        迷你条中的调用；两组件本身保留，播放页仍在使用。
+   数据绑定：PureToneApp.kt 传入 onPrev=playerVm::prev、onToggle=::togglePlay、
+            onNext=::next，并删除迷你条对 favorite 的收集。
+
+② 音乐页新增四个页签：歌曲 / 专辑 / 歌手 / 文件夹
+   位置：ui/screens/BrowseScreen.kt
+   实现：TabRow(selectedTabIndex = tab.ordinal) + 4 个 Tab，
+        enum MusicTab { SONGS, ALBUMS, ARTISTS, FOLDERS }；
+        TopAppBar 标题随页签切换（音乐/专辑/歌手/文件夹，多选态仍显示「已选 N 首」）；
+        扫描曲库、补全封面两个动作对所有页签可用；
+        多选、排序、搜索仅在「歌曲」页签显示（避免与网格布局冲突）。
+
+③ 专辑页签：封面网格墙
+   实现：LazyVerticalGrid(GridCells.Adaptive(minSize = 118.dp))，
+        封面 1:1 方形（aspectRatio(1f)）+ 专辑名 + 「歌手 · N 首」副标题。
+   排序：按专辑名 COLLATE NOCASE 升序。
+
+④ 歌手页签：圆形封面列表
+   圆形头像（CircleShape）+ 歌手名 + 「N 首」。
+
+⑤ 文件夹页签：文件夹图标列表
+   Folder 图标 + 文件夹名 + 「N 首」。
+
+⑥ 专辑 / 歌手 / 文件夹 三个二级详情页
+   位置：ui/screens/GroupDetailScreen.kt（新建），路由 group/{type}/{key}
+   头部：封面（专辑方形 / 歌手圆形 / 文件夹图标）+ 标题 + 副标题
+        （专辑显示歌手、文件夹显示完整路径）+ 「N 首」+「播放全部」按钮。
+   列表：复用 SongRow —— 单击 playSongs(songs, index) 替换播放队列，
+        长按弹出 SongActionSheet，行尾 + 号加入歌单（AddToPlaylistDialog）。
+   路由参数：key 用 URLEncoder 编码（文件夹 key 为 /sdcard/Music/xxx 含 '/'），
+            NavType.StringType 接收后用 URLDecoder 还原。
+
+⑦ 数据层：专辑 / 歌手 / 文件夹聚合
+   位置：ui/LibraryViewModel.kt
+   新增：AlbumSummary / ArtistSummary / FolderSummary（含 songCount、名称派生），
+        albums / artists / folders 三个 StateFlow（observeLibrary().map{ 分组 }
+        .stateIn(WhileSubscribed)），observeGroupSongs(type, key) 供详情页使用。
+   分组规则（关键）：
+     - 专辑：albumId > 0 时按 albumId 归类；albumId <= 0（未知专辑）时退化为
+             按专辑名归类，避免多张「未知专辑」被错误合并成一张。
+     - 歌手：按 artist 字段归类。
+     - 文件夹：由 path 的父目录派生（MusicRepository.folderOf：取最后一个 '/' 之前）。
+   DAO 新增：getSongsByAlbum(albumId, album)、getSongsByArtist(artist)，均返回 Flow。
+   仓库新增：observeSongsByAlbum / observeSongsByArtist / observeSongsByFolder。
+
+----------------------------------------------------------------
+三、真机（模拟器）实测 —— 全部通过
+----------------------------------------------------------------
+测试环境：Android 模拟器 API 34（x86_64），安装 x86_64 release 包，
+         READ_MEDIA_AUDIO + POST_NOTIFICATIONS 已授权。
+
+测试数据：3 张专辑 / 3 位歌手 / 3 个文件夹 / 7 首 M4A（含内嵌 PNG 封面）
+  晨光（林夏）3 首：晨光序曲 / 溪边 / 远山
+  夜航（陈默）2 首：夜航船 / 灯火
+  夏雨（苏晴）2 首：夏日午后 / 雨停
+  文件分别置于 /sdcard/Music/晨光|夜航|夏雨，时长 41–53s（>扫描阈值 30s）。
+
+实测结论（截图见 dist/verify_v1.3.0/）：
+  02_songs.png          歌曲页签：7 首全部入库，行左侧显示内嵌彩色封面缩略图，
+                        副标题为「歌手 · 专辑」，顺序与扫描一致。
+  03_albums.png         专辑页签：2 列网格墙，3 张方形封面卡片
+                        （夏雨·苏晴·2 首 / 夜航·陈默·2 首 / 晨光·林夏·3 首）。
+  04_album_detail.png   专辑详情：头部封面+夏雨+苏晴+2 首+播放全部，下列 2 首
+                        （夏日午后、雨停）。
+  05_artists.png        歌手页签：3 位歌手圆形头像 + 首数（林夏 3 / 苏晴 2 / 陈默 2）。
+  06_artist_detail.png  歌手详情：林夏圆形头像+3 首+播放全部，下列 3 首。
+  07_folders.png        文件夹页签：夏雨 2 首 / 夜航 2 首 / 晨光 3 首。
+  08_folder_detail.png  文件夹详情：头部路径 /storage/emulated/0/Music/夏雨 + 2 首，
+                        说明含 '/' 的 key 经 URL 编解码后正确还原。
+  09_miniplayer.png     播放中迷你条：仅 上一首 / 暂停 / 下一首 三枚按钮，
+                        左侧封面+歌名「夏日午后」+歌手「苏晴」，底部细进度线。
+                        同时 media_session 显示 state=PLAYING(3)，
+                        position 28s / buffered 41s，可证播放态。
+
+单元测试：testDebugUnitTest → 35 个用例，0 失败，BUILD SUCCESSFUL。
+
+----------------------------------------------------------------
+四、已知问题与说明（非功能性缺陷）
+----------------------------------------------------------------
+1) 本机模拟器为纯软件渲染（EGL app_time_stats 平均帧耗时可达 6.5s/帧），
+   在连续截图与高频点击时曾出现「PureTone/System UI isn't responding」弹窗。
+   抓取 ANR trace 可见主线程栈位于 MessageQueue.nativePollOnce → Looper.loop，
+   即主线程空闲等待消息，非应用代码死锁；ANR Reason 为
+   「Input dispatching timed out ... Waited 5188ms for MotionEvent」，
+   属渲染过慢导致的输入超时。功能本身（播放、页签切换、详情页跳转）均正常。
+   真机（硬件渲染）不会出现该现象，建议在真机上复验一次滑动与列表滚动流畅度。
+
+2) 模拟器测试数据为本版临时生成（tools 之外，不随包发布）；App 实际使用
+   仍以用户 MediaStore 曲库为准。
+
+----------------------------------------------------------------
+五、文件变更清单
+----------------------------------------------------------------
+修改：
+  app/src/main/java/com/puretone/player/ui/components/PlayerComposables.kt
+  app/src/main/java/com/puretone/player/ui/PureToneApp.kt
+  app/src/main/java/com/puretone/player/ui/screens/BrowseScreen.kt
+  app/src/main/java/com/puretone/player/ui/LibraryViewModel.kt
+  app/src/main/java/com/puretone/player/data/repository/MusicRepository.kt
+  app/src/main/java/com/puretone/player/data/local/dao/SongDao.kt
+  app/build.gradle.kts（versionName 1.3.0 / versionCode 17）
+新增：
+  app/src/main/java/com/puretone/player/ui/screens/GroupDetailScreen.kt
+  dist/verify_v1.3.0/（8 张验证截图）
+  dist/v1.3.0_delivery_2026-10-23.txt（本文件）

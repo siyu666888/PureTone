@@ -11,11 +11,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -31,6 +36,8 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SwapVert
@@ -51,6 +58,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -73,12 +82,19 @@ import coil.compose.AsyncImage
 import com.puretone.player.data.local.dao.PlaylistWithSongs
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.SongSortOrder
+import com.puretone.player.ui.AlbumSummary
+import com.puretone.player.ui.ArtistSummary
+import com.puretone.player.ui.FolderSummary
 import com.puretone.player.ui.LibraryViewModel
 import com.puretone.player.ui.MetadataViewModel
 import com.puretone.player.ui.PlayerViewModel
 import com.puretone.player.ui.components.FavoriteRed
 import com.puretone.player.ui.components.SongRow
+import com.puretone.player.ui.Routes
 import kotlinx.coroutines.delay
+
+/** 音乐页页签 */
+enum class MusicTab { SONGS, ALBUMS, ARTISTS, FOLDERS }
 
 /**
  * 音乐页（原"浏览"）：搜索 + 全曲库列表 + 曲库扫描入口 + 排序 + 封面补全。
@@ -107,6 +123,9 @@ fun BrowseScreen(
     val backfill by metadataVm.backfill.collectAsStateWithLifecycle()
     val metaMessage by metadataVm.message.collectAsStateWithLifecycle()
     val playlists by libVm.playlists.collectAsStateWithLifecycle()
+    val albums by libVm.albums.collectAsStateWithLifecycle()
+    val artists by libVm.artists.collectAsStateWithLifecycle()
+    val folders by libVm.folders.collectAsStateWithLifecycle()
 
     var searching by remember { mutableStateOf(false) }
     var sortMenuOpen by remember { mutableStateOf(false) }
@@ -120,7 +139,17 @@ fun BrowseScreen(
     // 歌曲信息浮层目标（null=关闭）
     var infoSheetSong by remember { mutableStateOf<SongEntity?>(null) }
 
+    // 当前页签（歌曲 / 专辑 / 歌手 / 文件夹）
+    var tab by remember { mutableStateOf(MusicTab.SONGS) }
+
     val list = if (searching && searchQuery.isNotBlank()) searchResults else library
+
+    val tabTitle = when (tab) {
+        MusicTab.SONGS -> if (selecting) "已选 ${selectedIds.size} 首" else "音乐"
+        MusicTab.ALBUMS -> "专辑"
+        MusicTab.ARTISTS -> "歌手"
+        MusicTab.FOLDERS -> "文件夹"
+    }
 
     // 曲库为空且本次启动还没扫过：自动扫描一次（授权后首次进入即建库）
     LaunchedEffect(Unit) {
@@ -139,22 +168,12 @@ fun BrowseScreen(
         TopAppBar(
             title = {
                 Text(
-                    if (selecting) "已选 ${selectedIds.size} 首" else "音乐",
+                    tabTitle,
                     style = MaterialTheme.typography.headlineSmall
                 )
             },
             actions = {
-                // 多选模式开关
-                IconButton(onClick = {
-                    selecting = !selecting
-                    selectedIds.clear()
-                }) {
-                    Icon(
-                        imageVector = if (selecting) Icons.Rounded.Close else Icons.Rounded.Checklist,
-                        contentDescription = if (selecting) "退出多选" else "多选"
-                    )
-                }
-                // 扫描：旋转刷新图标；扫描中显示进度圈
+                // 扫描：旋转刷新图标；扫描中显示进度圈（全库操作，所有页签可用）
                 IconButton(
                     onClick = libVm::scan,
                     enabled = !isScanning
@@ -168,7 +187,7 @@ fun BrowseScreen(
                         Icon(Icons.Rounded.Refresh, contentDescription = "扫描曲库")
                     }
                 }
-                // 补全缺失封面：一键联网补全本页缺失封面；运行中显示进度圈
+                // 补全缺失封面：一键联网补全（所有页签可用）
                 IconButton(
                     onClick = { metadataVm.backfillMissingCovers {} },
                     enabled = backfill == null
@@ -182,91 +201,49 @@ fun BrowseScreen(
                         Icon(Icons.Rounded.AutoFixHigh, contentDescription = "补全缺失封面")
                     }
                 }
-                // 排序：弹出排序选项菜单
-                IconButton(onClick = { sortMenuOpen = true }) {
-                    Icon(Icons.Rounded.SwapVert, contentDescription = "排序")
-                }
-                DropdownMenu(
-                    expanded = sortMenuOpen,
-                    onDismissRequest = { sortMenuOpen = false }
-                ) {
-                    SortOption("按标题", SongSortOrder.TITLE, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                    SortOption("按添加时间", SongSortOrder.DATE_ADDED, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                    SortOption("按歌手", SongSortOrder.ARTIST, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                    SortOption("按专辑", SongSortOrder.ALBUM, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                    SortOption("按时长", SongSortOrder.DURATION, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                    SortOption("按播放次数", SongSortOrder.PLAY_COUNT, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                }
-                IconButton(onClick = { searching = !searching }) {
-                    Icon(Icons.Rounded.Search, contentDescription = "搜索")
+                // 以下仅歌曲页签：多选 / 排序 / 搜索
+                if (tab == MusicTab.SONGS) {
+                    // 多选模式开关
+                    IconButton(onClick = {
+                        selecting = !selecting
+                        selectedIds.clear()
+                    }) {
+                        Icon(
+                            imageVector = if (selecting) Icons.Rounded.Close else Icons.Rounded.Checklist,
+                            contentDescription = if (selecting) "退出多选" else "多选"
+                        )
+                    }
+                    // 排序：弹出排序选项菜单
+                    IconButton(onClick = { sortMenuOpen = true }) {
+                        Icon(Icons.Rounded.SwapVert, contentDescription = "排序")
+                    }
+                    DropdownMenu(
+                        expanded = sortMenuOpen,
+                        onDismissRequest = { sortMenuOpen = false }
+                    ) {
+                        SortOption("按标题", SongSortOrder.TITLE, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                        SortOption("按添加时间", SongSortOrder.DATE_ADDED, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                        SortOption("按歌手", SongSortOrder.ARTIST, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                        SortOption("按专辑", SongSortOrder.ALBUM, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                        SortOption("按时长", SongSortOrder.DURATION, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                        SortOption("按播放次数", SongSortOrder.PLAY_COUNT, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                    }
+                    IconButton(onClick = { searching = !searching }) {
+                        Icon(Icons.Rounded.Search, contentDescription = "搜索")
+                    }
                 }
             }
         )
 
-        // 顶部操作区：多选模式=批量动作条；否则=播放全部 + 扫描状态
-        if (selecting) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "已选 ${selectedIds.size} / ${list.size}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = {
-                    if (selectedIds.size == list.size) selectedIds.clear()
-                    else {
-                        selectedIds.clear()
-                        selectedIds.addAll(list.map { it.id })
-                    }
-                }) {
-                    Text(if (selectedIds.isNotEmpty() && selectedIds.size == list.size) "取消全选" else "全选")
-                }
-                Spacer(Modifier.width(8.dp))
-                Button(
-                    onClick = { addDialogSongs = selectedIds.toList() },
-                    enabled = selectedIds.isNotEmpty()
-                ) {
-                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("加入歌单")
-                }
-            }
-        } else {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilledTonalButton(
-                    onClick = { playerVm.playSongs(library, 0) },
-                    enabled = library.isNotEmpty()
-                ) {
-                    Icon(
-                        Icons.Filled.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.size(6.dp))
-                    Text("播放全部", style = MaterialTheme.typography.labelLarge)
-                }
-                if (isScanning) {
-                    Spacer(Modifier.size(12.dp))
-                    Text(
-                        "正在扫描本地音乐…",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
+        // 页签：歌曲 / 专辑 / 歌手 / 文件夹
+        TabRow(selectedTabIndex = tab.ordinal) {
+            Tab(selected = tab == MusicTab.SONGS, onClick = { tab = MusicTab.SONGS }, text = { Text("歌曲") })
+            Tab(selected = tab == MusicTab.ALBUMS, onClick = { tab = MusicTab.ALBUMS }, text = { Text("专辑") })
+            Tab(selected = tab == MusicTab.ARTISTS, onClick = { tab = MusicTab.ARTISTS }, text = { Text("歌手") })
+            Tab(selected = tab == MusicTab.FOLDERS, onClick = { tab = MusicTab.FOLDERS }, text = { Text("文件夹") })
         }
 
-        // 封面补全进度 / 结果提示
+        // 封面补全进度 / 结果提示（库级，任何页签下都提示）
         val bf = backfill
         val msg = metaMessage
         if (bf != null || msg != null) {
@@ -278,63 +255,148 @@ fun BrowseScreen(
             )
         }
 
-        if (searching) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = libVm::setSearchQuery,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("搜索歌曲 / 艺术家 / 专辑") },
-                singleLine = true,
-                trailingIcon = {
-                    if (searchQuery.isNotBlank()) {
-                        IconButton(onClick = { libVm.setSearchQuery("") }) {
-                            Icon(Icons.Rounded.Close, contentDescription = "清空")
+        when (tab) {
+            MusicTab.SONGS -> {
+                // 顶部操作区：多选模式=批量动作条；否则=播放全部 + 扫描状态
+                if (selecting) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "已选 ${selectedIds.size} / ${list.size}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = {
+                            if (selectedIds.size == list.size) selectedIds.clear()
+                            else {
+                                selectedIds.clear()
+                                selectedIds.addAll(list.map { it.id })
+                            }
+                        }) {
+                            Text(if (selectedIds.isNotEmpty() && selectedIds.size == list.size) "取消全选" else "全选")
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = { addDialogSongs = selectedIds.toList() },
+                            enabled = selectedIds.isNotEmpty()
+                        ) {
+                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("加入歌单")
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilledTonalButton(
+                            onClick = { playerVm.playSongs(library, 0) },
+                            enabled = library.isNotEmpty()
+                        ) {
+                            Icon(
+                                Icons.Filled.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.size(6.dp))
+                            Text("播放全部", style = MaterialTheme.typography.labelLarge)
+                        }
+                        if (isScanning) {
+                            Spacer(Modifier.size(12.dp))
+                            Text(
+                                "正在扫描本地音乐…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
-            )
-        }
 
-        if (list.isEmpty()) {
-            EmptyState(
-                modifier = Modifier.fillMaxSize().weight(1f),
-                text = when {
-                    searching -> "未找到匹配的音乐"
-                    isScanning -> "正在扫描本地音乐…"
-                    else -> "曲库为空，点击右上角扫描按钮建立曲库"
-                }
-            )
-        } else {
-            // key = 歌曲 id：批量选择 / 删除 / 换排序时 Compose 才能正确追踪条目，避免选中态串位
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                itemsIndexed(list, key = { _, song -> song.id }) { index, song ->
-                    SongRow(
-                        song = song,
-                        onClick = {
-                            if (selecting) {
-                                if (song.id in selectedIds) selectedIds.remove(song.id)
-                                else selectedIds.add(song.id)
-                            } else {
-                                playerVm.playSongs(list, index)
-                            }
-                        },
-                        // 多选态下长按交给勾选语义，不弹操作面板
-                        onLongClick = if (selecting) null else { { songMenuSong = song } },
-                        selectionMode = selecting,
-                        selected = song.id in selectedIds,
-                        trailing = if (selecting) null else {
-                            {
-                                IconButton(onClick = { addDialogSongs = listOf(song.id) }) {
-                                    Icon(Icons.Rounded.Add, contentDescription = "加入歌单")
+                if (searching) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = libVm::setSearchQuery,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        placeholder = { Text("搜索歌曲 / 艺术家 / 专辑") },
+                        singleLine = true,
+                        trailingIcon = {
+                            if (searchQuery.isNotBlank()) {
+                                IconButton(onClick = { libVm.setSearchQuery("") }) {
+                                    Icon(Icons.Rounded.Close, contentDescription = "清空")
                                 }
                             }
                         }
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                }
+
+                if (list.isEmpty()) {
+                    EmptyState(
+                        modifier = Modifier.fillMaxSize().weight(1f),
+                        text = when {
+                            searching -> "未找到匹配的音乐"
+                            isScanning -> "正在扫描本地音乐…"
+                            else -> "曲库为空，点击右上角扫描按钮建立曲库"
+                        }
+                    )
+                } else {
+                    // key = 歌曲 id：批量选择 / 删除 / 换排序时 Compose 才能正确追踪条目，避免选中态串位
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        itemsIndexed(list, key = { _, song -> song.id }) { index, song ->
+                            SongRow(
+                                song = song,
+                                onClick = {
+                                    if (selecting) {
+                                        if (song.id in selectedIds) selectedIds.remove(song.id)
+                                        else selectedIds.add(song.id)
+                                    } else {
+                                        playerVm.playSongs(list, index)
+                                    }
+                                },
+                                // 多选态下长按交给勾选语义，不弹操作面板
+                                onLongClick = if (selecting) null else { { songMenuSong = song } },
+                                selectionMode = selecting,
+                                selected = song.id in selectedIds,
+                                trailing = if (selecting) null else {
+                                    {
+                                        IconButton(onClick = { addDialogSongs = listOf(song.id) }) {
+                                            Icon(Icons.Rounded.Add, contentDescription = "加入歌单")
+                                        }
+                                    }
+                                }
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        }
+                    }
                 }
             }
+            MusicTab.ALBUMS -> AlbumsTabContent(
+                albums = albums,
+                onAlbumClick = { album ->
+                    navController.navigate(Routes.groupDetail("album", "${album.albumId}|${album.album}"))
+                }
+            )
+            MusicTab.ARTISTS -> ArtistsTabContent(
+                artists = artists,
+                onArtistClick = { artist ->
+                    navController.navigate(Routes.groupDetail("artist", artist.artist))
+                }
+            )
+            MusicTab.FOLDERS -> FoldersTabContent(
+                folders = folders,
+                onFolderClick = { folder ->
+                    navController.navigate(Routes.groupDetail("folder", folder.folder))
+                }
+            )
         }
     }
 
@@ -540,7 +602,7 @@ private fun SortOption(
  * 「加入歌单」弹窗：可新建歌单并加入，或点选已有歌单加入。
  */
 @Composable
-private fun AddToPlaylistDialog(
+fun AddToPlaylistDialog(
     songIds: List<Long>,
     playlists: List<PlaylistWithSongs>,
     onAddTo: (Long) -> Unit,
@@ -620,3 +682,184 @@ private fun AddToPlaylistDialog(
 /** 行点击（无涟漪依赖的轻量封装） */
 private fun Modifier.clickableRow(onClick: () -> Unit): Modifier =
     this.then(Modifier.clickable(onClick = onClick))
+
+/** 专辑封面网格墙 */
+@Composable
+private fun AlbumsTabContent(
+    albums: List<AlbumSummary>,
+    onAlbumClick: (AlbumSummary) -> Unit
+) {
+    if (albums.isEmpty()) {
+        EmptyState(modifier = Modifier.fillMaxSize(), text = "暂无专辑")
+        return
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 118.dp),
+        modifier = Modifier.fillMaxSize().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(albums, key = { "${it.albumId}|${it.album}" }) { album ->
+            AlbumCard(album = album, onClick = { onAlbumClick(album) })
+        }
+    }
+}
+
+/** 专辑卡片：方形封面 + 专辑名 + 歌手·数量 */
+@Composable
+private fun AlbumCard(album: AlbumSummary, onClick: () -> Unit) {
+    Column(modifier = Modifier.clickable(onClick = onClick)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(10.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (album.coverUri != null) {
+                AsyncImage(
+                    model = album.coverUri,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Icon(
+                    Icons.Rounded.MusicNote,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(36.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            album.album,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            "${album.artist} · ${album.songCount} 首",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/** 歌手列表 */
+@Composable
+private fun ArtistsTabContent(
+    artists: List<ArtistSummary>,
+    onArtistClick: (ArtistSummary) -> Unit
+) {
+    if (artists.isEmpty()) {
+        EmptyState(modifier = Modifier.fillMaxSize(), text = "暂无歌手")
+        return
+    }
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        itemsIndexed(artists, key = { _, a -> a.artist }) { _, artist ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onArtistClick(artist) }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (artist.coverUri != null) {
+                        AsyncImage(
+                            model = artist.coverUri,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize().clip(CircleShape),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Icon(
+                            Icons.Rounded.Person,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        artist.artist,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "${artist.songCount} 首",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+        }
+    }
+}
+
+/** 文件夹列表 */
+@Composable
+private fun FoldersTabContent(
+    folders: List<FolderSummary>,
+    onFolderClick: (FolderSummary) -> Unit
+) {
+    if (folders.isEmpty()) {
+        EmptyState(modifier = Modifier.fillMaxSize(), text = "暂无文件夹")
+        return
+    }
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        itemsIndexed(folders, key = { _, f -> f.folder }) { _, folder ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onFolderClick(folder) }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Rounded.Folder,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        folder.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "${folder.songCount} 首",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+        }
+    }
+}
