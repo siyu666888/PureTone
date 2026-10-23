@@ -53,6 +53,7 @@ class MusicRepositorySyncTest {
             scope = CoroutineScope(Dispatchers.IO + Job())
         ) { settingsFile }
         repo = MusicRepository(
+            db = db,
             songDao = db.songDao(),
             playlistDao = db.playlistDao(),
             playHistoryDao = db.playHistoryDao(),

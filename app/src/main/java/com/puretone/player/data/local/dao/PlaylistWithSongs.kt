@@ -1,25 +1,15 @@
 package com.puretone.player.data.local.dao
 
-import androidx.room.Embedded
-import androidx.room.Junction
-import androidx.room.Relation
 import com.puretone.player.data.local.entity.PlaylistEntity
-import com.puretone.player.data.local.entity.PlaylistSongEntity
 import com.puretone.player.data.local.entity.SongEntity
 
-/** 歌单 + 歌曲多对多关联查询结果 */
+/**
+ * 歌单 + 歌曲的查询结果。
+ *
+ * [songs] 由 [PlaylistDao] 的显式 JOIN 查询按 `position` 排序后组装
+ * （替代旧版 @Relation——Room 生成的关联查询不保证 position 顺序）。
+ */
 data class PlaylistWithSongs(
-    @Embedded
     val playlist: PlaylistEntity,
-
-    @Relation(
-        parentColumn = "id",
-        entityColumn = "id",
-        associateBy = Junction(
-            value = PlaylistSongEntity::class,
-            parentColumn = "playlist_id",
-            entityColumn = "song_id"
-        )
-    )
     val songs: List<SongEntity>
 )

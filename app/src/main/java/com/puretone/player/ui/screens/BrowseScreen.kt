@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -172,6 +173,8 @@ fun BrowseScreen(
                     style = MaterialTheme.typography.headlineSmall
                 )
             },
+            // P1-7：状态栏 inset 由外层 Scaffold 统一负责，内层不再重复叠加
+            windowInsets = WindowInsets(0),
             actions = {
                 // 扫描：旋转刷新图标；扫描中显示进度圈（全库操作，所有页签可用）
                 IconButton(

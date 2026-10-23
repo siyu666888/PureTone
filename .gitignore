@@ -12,3 +12,4 @@ app/release/
 *.jks
 *.keystore
 *.apk
+.dsh-acl-recovery/

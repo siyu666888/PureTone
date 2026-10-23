@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.MusicRepository
+import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.lyrics.LrcParser
 import com.puretone.player.lyrics.LyricsStore
 import com.puretone.player.lyrics.ParsedLyrics
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -36,10 +38,27 @@ import javax.inject.Inject
 class PlayerViewModel @Inject constructor(
     private val playback: PlaybackManager,
     private val repo: MusicRepository,
-    private val lyricsStore: LyricsStore
+    private val lyricsStore: LyricsStore,
+    private val settings: SettingsRepository
 ) : ViewModel() {
 
     val state: StateFlow<PlaybackUiState> = playback.uiState
+
+    /**
+     * 是否持有当前曲目（离散字段，供根部决定迷你条显隐）。
+     *
+     * [state] 每 500ms tick 一次 position，根部直接订阅会以 2Hz 重组整棵导航树。
+     * 根部只收本字段（仅切歌/停止时变化），position 等高频字段的收集下沉到
+     * MiniPlayer / 播放页各自子树内部，把重组限制在迷你条范围内（P1-10）。
+     */
+    val hasCurrentSong: StateFlow<Boolean> = playback.uiState
+        .map { it.currentSongId != null }
+        .distinctUntilChanged()
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            playback.uiState.value.currentSongId != null
+        )
 
     /** 当前歌曲的解析后歌词（无歌词文件时为 null） */
     private val _lyrics = MutableStateFlow<ParsedLyrics?>(null)
@@ -64,6 +83,9 @@ class PlayerViewModel @Inject constructor(
     private val _currentSong = MutableStateFlow<SongEntity?>(null)
     val currentSong: StateFlow<SongEntity?> = _currentSong.asStateFlow()
 
+    /** 恢复会话只尝试一次（避免配置变化/重复组合时反复恢复） */
+    private var restoreAttempted = false
+
     init {
         // 只在当前歌曲变化时查库（uiState 每 500ms  tick 一次，必须去重）
         viewModelScope.launch {
@@ -73,6 +95,18 @@ class PlayerViewModel @Inject constructor(
                 .collect { id ->
                     _currentSong.value = id?.let { runCatching { repo.getSong(it) }.getOrNull() }
                 }
+        }
+        // P0-3：「启动时续播」接线。等曲库首帧到达（Room 已可查，无论空与否），
+        // 仅当设置开启时恢复上次会话；只尝试一次。恢复本身在 PlaybackManager 内
+        // 以 autoPlay=false 入队并暂停，不会打扰用户。
+        viewModelScope.launch {
+            runCatching { repo.observeLibrary().first() }
+            if (!restoreAttempted) {
+                restoreAttempted = true
+                if (settings.settings.first().resumeOnStart) {
+                    playback.restoreLastSession()
+                }
+            }
         }
     }
 
@@ -102,6 +136,9 @@ class PlayerViewModel @Inject constructor(
     fun dismissError() = playback.dismissError()
     fun playAtIndex(index: Int) = playback.playAtIndex(index)
     fun removeFromQueue(index: Int) = playback.removeFromQueue(index)
+
+    /** 清空播放队列（P2-4：队列浮层「清空」入口；保留播放模式/倍速等用户设置） */
+    fun clearQueue() = playback.clearQueue()
     fun enqueue(songs: List<SongEntity>) = playback.enqueue(songs)
 
     /** 插到当前曲目之后优先播放 */
@@ -119,13 +156,30 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    /** 保存歌曲信息编辑（标题/歌手/专辑/封面/年份），成功后刷新当前实体 */
-    fun saveSongInfo(title: String, artist: String, album: String, coverUri: String?, year: Int) {
-        val id = state.value.currentSongId ?: return
-        viewModelScope.launch {
-            runCatching { repo.updateSongInfo(id, title, artist, album, coverUri, year) }
-            _currentSong.value = runCatching { repo.getSong(id) }.getOrNull()
+    /**
+     * 保存歌曲信息编辑（标题/歌手/专辑/封面/年份）。
+     *
+     * @param songId 被编辑歌曲的 id——必须显式传入。旧实现用 [state].currentSongId：
+     *   在音乐页编辑 A 而正在播放 B 时，会把 B 覆盖成 A 的内容（P0-1 数据写错）；
+     *   无播放时又静默丢弃用户输入。现在调用方（SongInfoSheet）传弹窗里那首歌的 id。
+     * @return true = 写入成功；false = 失败（调用方应保留弹窗并提示，避免丢失编辑）。
+     */
+    suspend fun saveSongInfo(
+        songId: Long,
+        title: String,
+        artist: String,
+        album: String,
+        coverUri: String?,
+        year: Int
+    ): Boolean {
+        val ok = runCatching {
+            repo.updateSongInfo(songId, title, artist, album, coverUri, year)
+        }.isSuccess
+        // 编辑的正是当前播放曲时，顺手刷新弹窗上方的只读摘要（Room Flow 会驱动列表/播放页）
+        if (ok && songId == state.value.currentSongId) {
+            _currentSong.value = runCatching { repo.getSong(songId) }.getOrNull()
         }
+        return ok
     }
 
     /** 重新拉取当前歌曲实体（联网匹配应用后刷新用） */
@@ -142,6 +196,18 @@ class PlayerViewModel @Inject constructor(
      */
     fun playSongs(songs: List<SongEntity>, startIndex: Int = 0) =
         playback.setQueueAndPlay(songs, startIndex.coerceIn(0, (songs.size - 1).coerceAtLeast(0)))
+
+    /**
+     * 在完整曲库上下文中播放指定歌曲（使上一首/下一首可用）。
+     * 供统计页「最爱歌曲」跳转使用。
+     */
+    fun playSongById(id: Long) {
+        viewModelScope.launch {
+            val library = runCatching { repo.observeLibrary().first() }.getOrNull() ?: return@launch
+            val index = library.indexOfFirst { it.id == id }.coerceAtLeast(0)
+            playSongs(library, index)
+        }
+    }
 
     /**
      * 加载歌词。查找顺序：
@@ -172,7 +238,4 @@ class PlayerViewModel @Inject constructor(
             }
         }
     }
-
-    /** 启动时尝试恢复上次播放会话 */
-    fun tryRestore() = viewModelScope.launch { playback.restoreLastSession() }
 }

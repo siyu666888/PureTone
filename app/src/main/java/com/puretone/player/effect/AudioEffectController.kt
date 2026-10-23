@@ -4,8 +4,31 @@ import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
 import android.util.Log
+import com.puretone.player.data.settings.PureToneSettings
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** 音效可用性（审查报告 P2-1：设备不支持时 UI 必须给反馈，而不是无声滑动） */
+enum class EffectAvailability {
+    /** 无音频会话或效果器尚未创建，无法判定 */
+    UNKNOWN,
+
+    /** 效果器创建成功，调节会生效 */
+    SUPPORTED,
+
+    /** 设备/系统不支持音效（Equalizer 构造失败） */
+    UNSUPPORTED
+}
+
+/** 音效状态快照（可用性 + 设备实际段数） */
+data class EffectStatus(
+    val availability: EffectAvailability = EffectAvailability.UNKNOWN,
+    /** 设备 Equalizer 实际频段数（0 表示未知） */
+    val deviceBandCount: Int = 0
+)
 
 /**
  * 音效控制器：10 段均衡器 + 重低音 + 环绕声。
@@ -14,6 +37,12 @@ import javax.inject.Singleton
  * - 全部效果挂在 ExoPlayer 的 audioSessionId 上（非全局 0），避免影响其他应用；
  * - 播放器 session 变化（重建）时通过 [attachToSession] 重绑定并恢复设置；
  * - 单例同进程唯一，由播放服务挂接、UI 层经此调参；
+ * - **持久化接线**：[applySettings] 是 DataStore 设置 → 音效的唯一入口，
+ *   PlaybackManager 订阅设置流后调用它，冷启动/设置变更都能真正生效；
+ * - **段数自适应**：UI 固定 10 段，设备 [Equalizer.getNumberOfBands] 常见为 5。
+ *   直接对 band 0..9 调 setBandLevel 会在第一个越界 band 抛异常，
+ *   且 runCatching 包住整个循环导致后续频段全部静默丢失（历史 bug）。
+ *   这里改为「每个设备段取中心频率最接近的 UI 段增益」再下发，天然防越界；
  * - 所有 setter 在调用线程执行，均为本地快操作。
  */
 @Singleton
@@ -55,6 +84,9 @@ class AudioEffectController @Inject constructor() {
     private var bassStrength: Int = 0
     private var virtualizerStrength: Int = 0
 
+    private val _status = MutableStateFlow(EffectStatus())
+    val status: StateFlow<EffectStatus> = _status.asStateFlow()
+
     /** 当前是否可用（设备不支持音效时为 false） */
     val isAvailable: Boolean
         get() = sessionId != 0 && equalizer != null
@@ -68,11 +100,18 @@ class AudioEffectController @Inject constructor() {
         if (newSessionId == sessionId && (equalizer != null || !needsEffects())) return
         releaseEffects()
         sessionId = newSessionId
-        if (newSessionId == 0) return
+        if (newSessionId == 0) {
+            _status.value = EffectStatus()
+            return
+        }
         // 仅在确有音效需求时才创建原生 AudioEffect：
         // 部分机型对 Equalizer/BassBoost/Virtualizer 的实现有缺陷，
         // 无谓地持有实例会抬高 native 崩溃（SIGSEGV）风险。
-        if (needsEffects()) ensureEffects()
+        // session 重建后这里会把当前设置重新灌一遍，保证「换会话不丢音效」。
+        if (needsEffects()) ensureEffects() else {
+            _status.value = EffectStatus()
+            disableAllEffects()
+        }
     }
 
     /** 是否确实需要原生音效实例 */
@@ -102,16 +141,23 @@ class AudioEffectController @Inject constructor() {
         applyBands()
         applyBass()
         applyVirtualizer()
+        // P2-1：效果器创建成败即设备支持结论，推送给 UI 提示
+        _status.value = EffectStatus(
+            availability = if (equalizer != null) EffectAvailability.SUPPORTED
+            else EffectAvailability.UNSUPPORTED,
+            deviceBandCount = bandCount()
+        )
     }
 
     fun detach() {
         releaseEffects()
         sessionId = 0
+        _status.value = EffectStatus()
     }
 
     fun setEnabled(value: Boolean) {
         enabled = value
-        if (value) ensureEffects() else applyEnabled()
+        if (value) ensureEffects() else disableAllEffects()
     }
 
     fun setBandLevel(band: Int, levelMb: Int) {
@@ -147,25 +193,91 @@ class AudioEffectController @Inject constructor() {
     /** 当前 10 段增益（dB 的 100 倍，mB） */
     fun currentBandLevels(): List<Int> = bandLevels.toList()
 
+    /**
+     * 把持久化设置一次性灌入控制器（DataStore → 音效的唯一入口）。
+     *
+     * 由 PlaybackManager 订阅设置流后调用，覆盖冷启动恢复与用户改动两条路径；
+     * [com.puretone.player.ui.EqViewModel] 的单项操作同样落库，最终也流回这里，
+     * 保证「设置页显示的开关」与「实际听到的效果」永不脱节。
+     */
+    @Synchronized
+    fun applySettings(s: PureToneSettings) {
+        enabled = s.eqEnabled
+        bandLevels = normalizeBands(s.eqBandLevels)
+        bassStrength = s.bassBoostStrength.coerceIn(MIN_STRENGTH, MAX_STRENGTH)
+        virtualizerStrength = s.virtualizerStrength.coerceIn(MIN_STRENGTH, MAX_STRENGTH)
+        if (needsEffects()) ensureEffects() else disableAllEffects()
+    }
+
+    /** 把任意长度的频段列表归一为 10 段（长度不符时按比例取值/补零） */
+    private fun normalizeBands(levels: List<Int>): List<Int> {
+        if (levels.size == CENTER_FREQS.size) return levels
+        return List(CENTER_FREQS.size) { i ->
+            levels.getOrNull(i) ?: 0
+        }.map { it.coerceIn(MIN_LEVEL_MB, MAX_LEVEL_MB) }
+    }
+
+    /**
+     * 计算「设备段 → 增益」映射：每个设备段取中心频率最接近的 UI 段增益。
+     * 返回 null 表示设备不可用（无 equalizer 或读不到段数/中心频率）。
+     */
+    private fun deviceBandLevels(): List<Int>? {
+        val eq = equalizer ?: return null
+        val count = runCatching { eq.numberOfBands.toInt() }.getOrDefault(0)
+        if (count <= 0) return null
+        val deviceFreqHz = (0 until count).mapNotNull { b ->
+            // getCenterFreq 返回 milliHertz
+            runCatching { eq.getCenterFreq(b.toShort()) / 1000 }.getOrNull()
+        }
+        if (deviceFreqHz.size != count) return null
+        return deviceFreqHz.map { df ->
+            CENTER_FREQS.indices.minBy { kotlin.math.abs(CENTER_FREQS[it] - df) }
+                .let { bandLevels[it] }
+        }
+    }
+
     private fun applyEnabled() {
         runCatching { equalizer?.enabled = enabled }.onFailure { Log.w(TAG, "set eq enabled failed", it) }
     }
 
     private fun applyBands() {
         val eq = equalizer ?: return
+        val levels = deviceBandLevels() ?: return
+        val range = runCatching { eq.bandLevelRange }.getOrNull()
         runCatching {
-            bandLevels.forEachIndexed { band, level ->
-                eq.setBandLevel(band.toShort(), level.toShort())
+            levels.forEachIndexed { band, level ->
+                val clamped = if (range != null) {
+                    level.coerceIn(range.first().toInt(), range.last().toInt())
+                } else {
+                    level
+                }
+                eq.setBandLevel(band.toShort(), clamped.toShort())
             }
         }.onFailure { Log.w(TAG, "set band level failed", it) }
     }
 
     private fun applyBass() {
-        runCatching { bassBoost?.setStrength(bassStrength.toShort()) }.onFailure { Log.w(TAG, "bass failed", it) }
+        val bb = bassBoost ?: return
+        runCatching {
+            // 显式启停：强度 0 即关闭，避免「主开关关了重低音仍在按厂商默认生效」
+            bb.enabled = bassStrength > 0
+            if (bassStrength > 0) bb.setStrength(bassStrength.toShort())
+        }.onFailure { Log.w(TAG, "bass failed", it) }
     }
 
     private fun applyVirtualizer() {
-        runCatching { virtualizer?.setStrength(virtualizerStrength.toShort()) }.onFailure { Log.w(TAG, "virtualizer failed", it) }
+        val v = virtualizer ?: return
+        runCatching {
+            v.enabled = virtualizerStrength > 0
+            if (virtualizerStrength > 0) v.setStrength(virtualizerStrength.toShort())
+        }.onFailure { Log.w(TAG, "virtualizer failed", it) }
+    }
+
+    /** 主开关关闭时统一关闭三个效果（历史 bug：只关 Equalizer，重低音/环绕仍按厂商默认生效） */
+    private fun disableAllEffects() {
+        runCatching { equalizer?.enabled = false }.onFailure { Log.w(TAG, "disable eq failed", it) }
+        runCatching { bassBoost?.enabled = false }.onFailure { Log.w(TAG, "disable bass failed", it) }
+        runCatching { virtualizer?.enabled = false }.onFailure { Log.w(TAG, "disable virtualizer failed", it) }
     }
 
     private fun releaseEffects() {

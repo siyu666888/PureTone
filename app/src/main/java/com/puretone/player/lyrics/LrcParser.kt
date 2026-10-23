@@ -51,9 +51,11 @@ data class ParsedLyrics(
  * - 单行多时间戳 `[00:12.34][01:23.45]歌词`；
  * - 元信息标签 ti / ar / al / by / offset；
  * - 毫秒三位或厘秒两位小数；
- * - 编码回退 UTF-8 → GBK（见 [decode]）。
+ * - BOM：UTF-8 / UTF-16LE / UTF-16BE（见 [decode]）；
+ * - 编码回退链：BOM → 严格 UTF-8 → GBK → GB18030（见 [decode]）；
+ * - 增强型 LRC 逐字标签 `<0,120>` 解析时剥除（不显示给用户）。
  *
- * 增强型 LRC（逐字时间戳 `<0,120>字`）目前按普通文本保留，逐字高亮为后续能力。
+ * 增强型 LRC 的逐字高亮为后续能力，当前至少保证不把时间标签当正文显示。
  */
 object LrcParser {
 
@@ -61,8 +63,18 @@ object LrcParser {
     private val META_TAG = Regex("""^\s*\[(ti|ar|al|by|offset|re|ve|length)\s*:(.*)]\s*$""", RegexOption.IGNORE_CASE)
     private val LEADING_TAGS = Regex("""^((?:\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?])+)(.*)$""")
 
+    /** 增强型 LRC 逐字时间标签 `<偏移,时长>`（可带第三个标志位），展示前剥除 */
+    private val ENHANCED_TAG = Regex("""<\d+,\d+(?:,\d+)?>""")
+
+    /** UTF-8 BOM（部分编辑器保存 .lrc 时会带上） */
+    private const val BOM = "\uFEFF"
+
     fun parse(content: String): ParsedLyrics {
         if (content.isBlank()) return ParsedLyrics.Empty
+
+        // 直接传字符串的调用方（测试/未来入口）也可能带 BOM：
+        // 不剥掉的话第一行（常是 [ti:] 或第一句歌词）会被正则判为不匹配而丢弃
+        val body = content.removePrefix(BOM)
 
         var title: String? = null
         var artist: String? = null
@@ -70,8 +82,8 @@ object LrcParser {
         var offsetMs = 0L
         val lines = mutableListOf<LyricLine>()
 
-        content.lineSequence().forEach { rawLine ->
-            val line = rawLine.trimEnd('\r', ' ')
+        body.lineSequence().forEach { rawLine ->
+            val line = rawLine.trimEnd('\r', ' ').removePrefix(BOM)
 
             META_TAG.find(line)?.let { match ->
                 val key = match.groupValues[1].lowercase()
@@ -86,9 +98,11 @@ object LrcParser {
             }
 
             val leadMatch = LEADING_TAGS.find(line) ?: return@forEach
+            // 先剥增强型逐字标签再转简体：<0,120>你<120,90>好 → 你好
+            val stripped = ENHANCED_TAG.replace(leadMatch.groupValues[2], "")
             // 歌词正文统一转为简体（离线字符级映射）
-            val text = ChineseText.toSimplified(leadMatch.groupValues[2].trim()) ?: return@forEach
-            if (text.isEmpty()) return@forEach
+            val text = ChineseText.toSimplified(stripped.trim())
+            if (text.isNullOrEmpty()) return@forEach
 
             val times = TIME_TAG.findAll(leadMatch.groupValues[1]).map { match ->
                 val minutes = match.groupValues[1].toLong()
@@ -120,16 +134,40 @@ object LrcParser {
     }
 
     /**
-     * 歌词字节解码：优先 UTF-8（可严格校验），失败回退 GBK。
-     * 国内 .lrc 文件历史编码混杂，此为兼容兜底。
+     * 歌词字节解码（审查报告 P2-9）：
+     * 1. 有 BOM 按 BOM 判定（UTF-8 / UTF-16LE / UTF-16BE，Windows 编辑器常见）；
+     * 2. 无 BOM 依次尝试**严格**解码：UTF-8 → GBK。
+     *    严格模式（REPORT）保证解码失败就换下一个，不会用 REPLACE 产出乱码 '?'；
+     * 3. GB18030 覆盖全部字节序列，作为最终兜底（不会抛异常）。
+     *
+     * 已知取舍：GBK 与 Big5 的字节域大面积重叠（Big5 字节用 GBK 也能"解码成功"
+     * 但内容是错字），无统计模型无法可靠区分。本App用户面以简体为主，
+     * 故 GBK 优先；Big5 歌词会经 GBK/GB18030 兜底（可能乱码）——BOM 与
+     * UTF-8 路径覆盖绝大多数现代歌词文件。
      */
-    fun decode(bytes: ByteArray): String = try {
-        val decoder = java.nio.charset.Charset.forName("UTF-8").newDecoder()
+    fun decode(bytes: ByteArray): String {
+        // 1) BOM 判定
+        when {
+            bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte() ->
+                return String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+            bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() ->
+                return String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+            bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() ->
+                return String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+        }
+        // 2) 无 BOM：严格解码候选链
+        for (name in listOf("UTF-8", "GBK")) {
+            runCatching { strictDecode(bytes, name) }.getOrNull()?.let { return it }
+        }
+        // 3) GB18030 兜底（映射全部字节，不会失败）
+        return String(bytes, java.nio.charset.Charset.forName("GB18030"))
+    }
+
+    private fun strictDecode(bytes: ByteArray, charsetName: String): String {
+        val decoder = java.nio.charset.Charset.forName(charsetName).newDecoder()
             .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
             .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
-        decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString()
-    } catch (e: java.nio.charset.CharacterCodingException) {
-        String(bytes, java.nio.charset.Charset.forName("GBK"))
+        return decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString()
     }
 
     /** 毫秒转 LRC 时间戳（导出/调试用） */

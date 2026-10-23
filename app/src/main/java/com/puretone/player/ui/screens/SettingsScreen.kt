@@ -21,9 +21,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -33,9 +37,11 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import android.os.SystemClock
 import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.ui.Routes
 import com.puretone.player.ui.SettingsViewModel
+import kotlinx.coroutines.delay
 
 /**
  * 设置页。
@@ -64,7 +70,8 @@ fun SettingsScreen(
             ThemeSegmentedControl(selected = s.themeMode, onSelect = vm::setThemeMode)
             // 决策 D2：系统动态取色默认关
             SwitchRow(label = "启用系统动态取色（实验）", checked = s.dynamicColor) { vm.setDynamicColor(it) }
-            SwitchRow(label = "播放页封面取色", checked = s.coverPalette) { vm.setCoverPalette(it) }
+            // P2-5：AMOLED 纯黑开关（优先级高于动态取色，见 Theme.kt）
+            SwitchRow(label = "AMOLED 纯黑（省电）", checked = s.amoledBlack) { vm.setAmoledBlack(it) }
         }
 
         // 播放
@@ -87,6 +94,55 @@ fun SettingsScreen(
                 selectedIndex = sleepOptions.indexOf(s.sleepTimerMinutes).coerceAtLeast(0),
                 onSelect = { vm.setSleepTimerMinutes(sleepOptions[it]) }
             )
+            // P0-4：定时进行中时显示真实剩余时间（按「到期时刻」倒推，每秒刷新），
+            // 并提供「取消定时」。到期后 deadline 清零，本行自动消失。
+            if (s.sleepTimerDeadlineMs > 0L) {
+                var remainingMs by remember(s.sleepTimerDeadlineMs) {
+                    mutableStateOf(
+                        (s.sleepTimerDeadlineMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+                    )
+                }
+                LaunchedEffect(s.sleepTimerDeadlineMs) {
+                    while (remainingMs > 0L) {
+                        delay(1_000)
+                        remainingMs =
+                            (s.sleepTimerDeadlineMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(55.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "睡眠定时剩余 ${formatRemaining(remainingMs)}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { vm.setSleepTimerMinutes(0) }) { Text("取消定时") }
+                }
+            }
+        }
+
+        // 存储
+        SettingsGroup(title = "存储") {
+            // APE 转码缓存：按字节上限 LRU（见 ApeTranscoder），此处可查大小并一键清理
+            val cacheSize by vm.apeCacheSize.collectAsStateWithLifecycle()
+            LaunchedEffect(Unit) { vm.refreshApeCacheSize() }
+            Row(
+                modifier = Modifier.fillMaxWidth().height(55.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "APE 转码缓存" + if (cacheSize >= 0L) "（${formatBytes(cacheSize)}）" else "",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = { vm.clearApeCache() },
+                    enabled = cacheSize != 0L
+                ) { Text("清理") }
+            }
         }
 
         // 音效
@@ -274,4 +330,22 @@ private fun SwitchRow(label: String, checked: Boolean, enabled: Boolean = true, 
         Text(label, style = MaterialTheme.typography.bodyLarge)
         Switch(checked = checked, enabled = enabled, onCheckedChange = onChanged)
     }
+}
+
+/** 睡眠定时剩余时间：mm:ss，满 1 小时显示 h:mm:ss */
+private fun formatRemaining(ms: Long): String {
+    val totalSec = (ms / 1000).toInt()
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
+}
+
+/** 缓存大小的人类可读格式 */
+private fun formatBytes(bytes: Long): String = when {
+    bytes <= 0L -> "0 B"
+    bytes < 1024L -> "$bytes B"
+    bytes < 1024L * 1024 -> "%.1f KB".format(bytes / 1024.0)
+    bytes < 1024L * 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024))
+    else -> "%.2f GB".format(bytes / (1024.0 * 1024 * 1024))
 }

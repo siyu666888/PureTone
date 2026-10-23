@@ -1,5 +1,6 @@
 package com.puretone.player.ui
 
+import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -61,8 +62,13 @@ fun PureToneApp() {
     val playerVm: PlayerViewModel = hiltViewModel()
     val settingsVm: SettingsViewModel = hiltViewModel()
 
-    val playerState by playerVm.state.collectAsStateWithLifecycle()
+    // P1-10：根部只订阅离散字段 hasCurrentSong（state 含 500ms position tick，
+    // 根部直接订阅会 2Hz 重组整棵导航树）；高频进度收集下沉进 MiniPlayer 子树。
+    val hasCurrentSong by playerVm.hasCurrentSong.collectAsStateWithLifecycle()
     val settings by settingsVm.state.collectAsStateWithLifecycle()
+    // P0-8：迷你条的标题/歌手/封面取 Room 实时当前曲（编辑后立即刷新），
+    // 而不是 PlaybackUiState 里设置队列时构建的 QueueEntry 快照。
+    val currentSong by playerVm.currentSong.collectAsStateWithLifecycle()
 
     val nav = rememberNavController()
     val navBackStackEntry by nav.currentBackStackEntryAsState()
@@ -78,13 +84,16 @@ fun PureToneApp() {
             bottomBar = {
                 if (!onPlayer) {
                     Column {
-                        if (playerState.currentSongId != null) {
+                        if (hasCurrentSong) {
                             MiniPlayer(
-                                state = playerState,
+                                stateFlow = playerVm.state,
                                 onOpen = { nav.navigate(Routes.PLAYER) },
                                 onToggle = playerVm::togglePlay,
                                 onPrev = playerVm::prev,
-                                onNext = playerVm::next
+                                onNext = playerVm::next,
+                                liveTitle = currentSong?.title,
+                                liveArtist = currentSong?.artist,
+                                liveCoverUri = currentSong?.coverUri?.let { Uri.parse(it) }
                             )
                         }
                         NavigationBar {

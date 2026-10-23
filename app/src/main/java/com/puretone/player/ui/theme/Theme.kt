@@ -45,12 +45,14 @@ fun PureToneTheme(
     val useBlack = amoledBlack || themeMode == PureToneThemeMode.BLACK
 
     val colorScheme: ColorScheme = when {
+        // P2-5：纯黑（BLACK 模式或 AMOLED 开关）优先级高于系统动态取色，确保 OLED 省电生效
+        dark && useBlack -> PureToneColorSchemes.Black
+
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
 
-        dark && useBlack -> PureToneColorSchemes.Black
         dark -> PureToneColorSchemes.Dark
         else -> PureToneColorSchemes.Light
     }

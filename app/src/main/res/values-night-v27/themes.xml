@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- 深色 + API 27+：刘海屏短边延伸（父主题须与 values-night/themes.xml 一致，
+         否则 AAPT2 推断隐式父名「Theme」报错） -->
+    <style name="Theme.PureTone" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+
+</resources>

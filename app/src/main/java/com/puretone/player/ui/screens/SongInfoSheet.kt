@@ -33,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +49,7 @@ import com.puretone.player.ui.PlayerViewModel
 import com.puretone.player.ui.components.formatTime
 import com.puretone.player.util.ChineseText
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * 歌曲信息半模态弹窗：查看 / 编辑信息 + 联网匹配（Item 1 长按封面唤起，Item 5 手动修正）。
@@ -65,6 +67,9 @@ fun SongInfoSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     // 输入框圆角形状：与「保存修改」按钮（Material3 全圆角）一致的圆弧过渡
     val fieldShape = RoundedCornerShape(50)
+    val scope = rememberCoroutineScope()
+    var saving by remember { mutableStateOf(false) }
+    var saveFailed by remember { mutableStateOf(false) }
 
     var title by remember(song.id) { mutableStateOf(ChineseText.toSimplified(song.title) ?: song.title) }
     var artist by remember(song.id) { mutableStateOf(ChineseText.toSimplified(song.artist) ?: song.artist) }
@@ -86,6 +91,12 @@ fun SongInfoSheet(
     val metaSearching by metadataVm.searching.collectAsStateWithLifecycle()
     val lyricsDownloading by metadataVm.lyricsDownloading.collectAsStateWithLifecycle()
     val message by metadataVm.message.collectAsStateWithLifecycle()
+    val canUndo by metadataVm.canUndoAutoFill.collectAsStateWithLifecycle()
+
+    // P2-2：切歌时清空上一首的搜索候选，避免残留
+    LaunchedEffect(song.id) {
+        metadataVm.clearResults()
+    }
 
     // 提示展示片刻后自动消失；出现提示时同步刷新播放页当前歌曲（应用匹配成功后）
     LaunchedEffect(message) {
@@ -155,9 +166,26 @@ fun SongInfoSheet(
             OutlinedTextField(value = artist, onValueChange = { artist = it }, label = { Text("歌手") }, singleLine = true, shape = fieldShape, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = album, onValueChange = { album = it }, label = { Text("专辑") }, singleLine = true, shape = fieldShape, modifier = Modifier.fillMaxWidth())
             Button(
-                onClick = { playerVm.saveSongInfo(title, artist, album, coverUri, song.year); onDismiss() },
+                onClick = {
+                    // P0-1：传「弹窗里这首歌」的 id，保存成功才关闭；
+                    // 失败保留弹窗与已填内容，并提示（旧实现用 currentSongId 会写错歌/静默丢失）。
+                    scope.launch {
+                        saving = true
+                        val ok = playerVm.saveSongInfo(song.id, title, artist, album, coverUri, song.year)
+                        saving = false
+                        if (ok) onDismiss() else saveFailed = true
+                    }
+                },
+                enabled = !saving,
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("保存修改") }
+            ) { Text(if (saving) "保存中…" else "保存修改") }
+            if (saveFailed) {
+                Text(
+                    "保存失败，请重试（编辑内容已保留）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
 
             // 联网匹配
             Text("联网匹配（${metadataVm.providerName}）", style = MaterialTheme.typography.titleMedium)
@@ -214,6 +242,14 @@ fun SongInfoSheet(
                 }
             }
 
+            // P2-2：可撤销最近一次自动填充
+            if (canUndo) {
+                OutlinedButton(
+                    onClick = { metadataVm.undoAutoFill() },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("撤销自动填充") }
+            }
+
             // 搜索结果 / 提示
             val msg = message
             if (msg != null) {
@@ -244,7 +280,7 @@ fun SongInfoSheet(
                         }) { Text("使用") }
                     }
                 }
-                OutlinedButton(onClick = { metadataVm.setQuery(""); }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { metadataVm.clearResults() }, modifier = Modifier.fillMaxWidth()) {
                     Text("清空结果")
                 }
             } else if (!metaSearching) {

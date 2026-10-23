@@ -1,15 +1,19 @@
 package com.puretone.player.data.settings
 
+import android.os.SystemClock
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -29,8 +33,6 @@ data class PureToneSettings(
     val amoledBlack: Boolean = false,
     /** 系统壁纸动态取色（决策 D2：默认关） */
     val dynamicColor: Boolean = false,
-    /** 播放页封面取色（决策 D2：默认开） */
-    val coverPalette: Boolean = true,
 
     // ---------- playback_ ----------
     /** 无缝播放（MVP+） */
@@ -39,8 +41,14 @@ data class PureToneSettings(
     val playbackSpeed: Float = 1.0f,
     /** 启动时续播上次歌曲 */
     val resumeOnStart: Boolean = true,
-    /** 睡眠定时分钟数，0 = 关闭 */
+    /** 睡眠定时分钟数，0 = 关闭（仅用于 UI 分段选中态与设置展示） */
     val sleepTimerMinutes: Int = 0,
+    /**
+     * 睡眠定时「到期时刻」，基于 [SystemClock.elapsedRealtime]（毫秒），0 = 无定时。
+     * 存时刻而非分钟数：进程重建后仍可算出真实剩余时间，且触发后清零即可防止
+     * 「重启进程后定时复活」（旧实现只写分钟数，重启后 appliedSleepMin 归 -1 会重计时）。
+     */
+    val sleepTimerDeadlineMs: Long = 0L,
     /** 循环模式：OFF / ALL / ONE */
     val repeatMode: String = REPEAT_OFF,
     val shuffle: Boolean = false,
@@ -95,12 +103,12 @@ class SettingsRepository @Inject constructor(
         val themeMode = stringPreferencesKey("theme_mode")
         val amoledBlack = booleanPreferencesKey("theme_amoled_black")
         val dynamicColor = booleanPreferencesKey("theme_dynamic_color")
-        val coverPalette = booleanPreferencesKey("theme_cover_palette")
         // playback_
         val gapless = booleanPreferencesKey("playback_gapless")
         val playbackSpeed = floatPreferencesKey("playback_speed")
         val resumeOnStart = booleanPreferencesKey("playback_resume_on_start")
         val sleepTimerMinutes = intPreferencesKey("playback_sleep_timer_minutes")
+        val sleepTimerDeadline = longPreferencesKey("playback_sleep_timer_deadline")
         val repeatMode = stringPreferencesKey("playback_repeat_mode")
         val shuffle = booleanPreferencesKey("playback_shuffle")
         // eq_
@@ -111,38 +119,70 @@ class SettingsRepository @Inject constructor(
         val virtualizer = intPreferencesKey("eq_virtualizer")
     }
 
-    val settings: Flow<PureToneSettings> = dataStore.data.map { prefs ->
-        val defaults = PureToneSettings()
-        PureToneSettings(
-            themeMode = prefs[Keys.themeMode] ?: defaults.themeMode,
-            amoledBlack = prefs[Keys.amoledBlack] ?: defaults.amoledBlack,
-            dynamicColor = prefs[Keys.dynamicColor] ?: defaults.dynamicColor,
-            coverPalette = prefs[Keys.coverPalette] ?: defaults.coverPalette,
-            gapless = prefs[Keys.gapless] ?: defaults.gapless,
-            playbackSpeed = prefs[Keys.playbackSpeed] ?: defaults.playbackSpeed,
-            resumeOnStart = prefs[Keys.resumeOnStart] ?: defaults.resumeOnStart,
-            sleepTimerMinutes = prefs[Keys.sleepTimerMinutes] ?: defaults.sleepTimerMinutes,
-            repeatMode = prefs[Keys.repeatMode] ?: defaults.repeatMode,
-            shuffle = prefs[Keys.shuffle] ?: defaults.shuffle,
-            eqEnabled = prefs[Keys.eqEnabled] ?: defaults.eqEnabled,
-            eqPreset = prefs[Keys.eqPreset] ?: defaults.eqPreset,
-            eqBandLevels = decodeBands(prefs[Keys.eqBandLevels]) ?: defaults.eqBandLevels,
-            bassBoostStrength = prefs[Keys.bassBoost] ?: defaults.bassBoostStrength,
-            virtualizerStrength = prefs[Keys.virtualizer] ?: defaults.virtualizerStrength
-        )
-    }
+    /**
+     * 全量设置快照流。
+     *
+     * 兜底：DataStore 文件损坏 / 不可读时 `map` 抛 IOException 会让所有收集方
+     * （stateIn、collect）收到异常，直接表现为冷启动崩溃。这里 catch 后回退
+     * 到默认设置，保证 App 可用（用户改动丢失但不会打不开）。
+     */
+    val settings: Flow<PureToneSettings> = dataStore.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { prefs ->
+            val defaults = PureToneSettings()
+            PureToneSettings(
+                themeMode = prefs[Keys.themeMode] ?: defaults.themeMode,
+                amoledBlack = prefs[Keys.amoledBlack] ?: defaults.amoledBlack,
+                dynamicColor = prefs[Keys.dynamicColor] ?: defaults.dynamicColor,
+                gapless = prefs[Keys.gapless] ?: defaults.gapless,
+                playbackSpeed = prefs[Keys.playbackSpeed] ?: defaults.playbackSpeed,
+                resumeOnStart = prefs[Keys.resumeOnStart] ?: defaults.resumeOnStart,
+                sleepTimerMinutes = prefs[Keys.sleepTimerMinutes] ?: defaults.sleepTimerMinutes,
+                sleepTimerDeadlineMs = prefs[Keys.sleepTimerDeadline] ?: defaults.sleepTimerDeadlineMs,
+                repeatMode = prefs[Keys.repeatMode] ?: defaults.repeatMode,
+                shuffle = prefs[Keys.shuffle] ?: defaults.shuffle,
+                eqEnabled = prefs[Keys.eqEnabled] ?: defaults.eqEnabled,
+                eqPreset = prefs[Keys.eqPreset] ?: defaults.eqPreset,
+                eqBandLevels = decodeBands(prefs[Keys.eqBandLevels]) ?: defaults.eqBandLevels,
+                bassBoostStrength = prefs[Keys.bassBoost] ?: defaults.bassBoostStrength,
+                virtualizerStrength = prefs[Keys.virtualizer] ?: defaults.virtualizerStrength
+            )
+        }
 
     // ---------- 写入 ----------
 
     suspend fun setThemeMode(mode: String) = edit { it[Keys.themeMode] = mode }
     suspend fun setAmoledBlack(enabled: Boolean) = edit { it[Keys.amoledBlack] = enabled }
     suspend fun setDynamicColor(enabled: Boolean) = edit { it[Keys.dynamicColor] = enabled }
-    suspend fun setCoverPalette(enabled: Boolean) = edit { it[Keys.coverPalette] = enabled }
 
     suspend fun setGapless(enabled: Boolean) = edit { it[Keys.gapless] = enabled }
     suspend fun setPlaybackSpeed(speed: Float) = edit { it[Keys.playbackSpeed] = speed }
     suspend fun setResumeOnStart(enabled: Boolean) = edit { it[Keys.resumeOnStart] = enabled }
-    suspend fun setSleepTimerMinutes(minutes: Int) = edit { it[Keys.sleepTimerMinutes] = minutes }
+    /**
+     * 设置睡眠定时：同时写入分钟数（UI 选中态）与「到期时刻」（实际计时依据）。
+     * minutes <= 0 表示取消，两项都清零。
+     */
+    suspend fun setSleepTimerMinutes(minutes: Int) = edit {
+        if (minutes <= 0) {
+            it[Keys.sleepTimerMinutes] = 0
+            it[Keys.sleepTimerDeadline] = 0L
+        } else {
+            it[Keys.sleepTimerMinutes] = minutes
+            it[Keys.sleepTimerDeadline] = SystemClock.elapsedRealtime() + minutes * 60_000L
+        }
+    }
+
+    /** 定时到期后调用：只清「到期时刻」，保留分钟数供 UI 显示上次选择 */
+    suspend fun clearSleepTimerDeadline() = edit {
+        it[Keys.sleepTimerDeadline] = 0L
+    }
+
+    /** 剩余毫秒数（0 或负数表示无定时/已到期） */
+    fun sleepRemainingMs(s: PureToneSettings): Long {
+        val deadline = s.sleepTimerDeadlineMs
+        if (deadline <= 0L) return 0L
+        return (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+    }
     suspend fun setRepeatMode(mode: String) = edit { it[Keys.repeatMode] = mode }
     suspend fun setShuffle(enabled: Boolean) = edit { it[Keys.shuffle] = enabled }
 
@@ -150,6 +190,22 @@ class SettingsRepository @Inject constructor(
     suspend fun setEqPreset(preset: String) = edit { it[Keys.eqPreset] = preset }
     suspend fun setEqBandLevels(levels: List<Int>) = edit {
         it[Keys.eqBandLevels] = levels.joinToString(",")
+    }
+
+    /**
+     * 手动调节单个频段（P2-1）：频段值与「预设切 CUSTOM」一次写入。
+     *
+     * 旧实现只写频段不动预设：用户手动改完，旧预设胶囊仍高亮，
+     * 显示的频段值与预设矩阵早已不符（误导）。拆成两次 edit 还会有
+     * 中间态被 UI 看到，故合并为单次事务。
+     */
+    suspend fun setBandLevelCustom(band: Int, levelMb: Int) = edit { prefs ->
+        val current = decodeBands(prefs[Keys.eqBandLevels]) ?: PureToneSettings().eqBandLevels
+        if (band in current.indices) {
+            val next = current.toMutableList().apply { set(band, levelMb) }
+            prefs[Keys.eqBandLevels] = next.joinToString(",")
+        }
+        prefs[Keys.eqPreset] = PureToneSettings.EQ_CUSTOM
     }
 
     suspend fun setBassBoostStrength(strength: Int) = edit { it[Keys.bassBoost] = strength }
@@ -168,7 +224,9 @@ class SettingsRepository @Inject constructor(
     private val keyLastPosition = longPreferencesKey("playback_last_position")
 
     /** 上次播放会话（队列歌曲 id、索引、位置），空队列时为 null */
-    val playbackSession: Flow<PlaybackSession?> = dataStore.data.map { prefs ->
+    val playbackSession: Flow<PlaybackSession?> = dataStore.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { prefs ->
         val raw = prefs[keyLastQueueIds] ?: return@map null
         val ids = raw.split(",").mapNotNull { it.trim().toLongOrNull() }
         if (ids.isEmpty()) null else PlaybackSession(

@@ -2,8 +2,10 @@ package com.puretone.player.di
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.room.Room
 import com.puretone.player.data.local.PureToneDatabase
@@ -36,7 +38,11 @@ object DataModule {
             PureToneDatabase::class.java,
             PureToneDatabase.DATABASE_NAME
         )
-            .addMigrations(PureToneDatabase.MIGRATION_1_2, PureToneDatabase.MIGRATION_2_3)
+            .addMigrations(
+                PureToneDatabase.MIGRATION_1_2,
+                PureToneDatabase.MIGRATION_2_3,
+                PureToneDatabase.MIGRATION_3_4
+            )
             .build()
 
     @Provides
@@ -51,11 +57,15 @@ object DataModule {
     @Provides
     fun provideStatsDao(db: PureToneDatabase): StatsDao = db.statsDao()
 
-    /** 偏好 DataStore：主题 / 播放 / 音效设置，前缀分组见 SettingsRepository */
+    /**
+     * 偏好 DataStore：主题 / 播放 / 音效设置，前缀分组见 SettingsRepository。
+     * 文件损坏时用空偏好替换（回退默认设置），避免冷启动直接崩溃。
+     */
     @Provides
     @Singleton
     fun providePreferencesDataStore(@ApplicationContext context: Context): DataStore<Preferences> =
-        PreferenceDataStoreFactory.create {
-            context.preferencesDataStoreFile("puretone_settings")
-        }
+        PreferenceDataStoreFactory.create(
+            corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+            produceFile = { context.preferencesDataStoreFile("puretone_settings") }
+        )
 }

@@ -11,8 +11,8 @@ plugins {
  * 同时用于 versionName 与产物文件名（archivesName），避免二者漂移。
  * 发版时只改这里（版本号按语义化版本递增）。
  */
-val appVersionName = "1.3.0"
-val appVersionCode = 17
+val appVersionName = "1.3.1"
+val appVersionCode = 18
 
 /**
  * 产物文件名包含完整版本号。
@@ -170,9 +170,6 @@ dependencies {
 
     // DataStore 偏好
     implementation(libs.datastore.preferences)
-
-    // 封面取色
-    implementation(libs.palette.ktx)
 
     // 封面图加载
     implementation(libs.coil.compose)

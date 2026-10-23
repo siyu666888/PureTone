@@ -31,9 +31,11 @@ class MediaStoreScannerTest {
         title: String,
         path: String,
         mime: String,
-        durationMs: Long
+        durationMs: Long,
+        artist: String = "Artist",
+        album: String = "Album"
     ): Array<Any?> = arrayOf(
-        id, title, "Artist", "Album", 1L, durationMs, path, 1_000L,
+        id, title, artist, album, 1L, durationMs, path, 1_000L,
         mime, 2024, 1, 1_000L, 1_000L
     )
 
@@ -93,6 +95,66 @@ class MediaStoreScannerTest {
 
         assertEquals(2, result.songs.size)
         assertEquals(0, result.skippedNonMusic)
+    }
+
+    /**
+     * 多卷去重（P1-6）：同一路径经主卷与 SD 卷各返回一次（mediaStoreId 不同），
+     * 只入库一次。Robolectric 的 getExternalVolumeNames 返回空，卷枚举走不到，
+     * 这里直接验证 readRows 的合并语义。
+     */
+    @Test
+    fun `readRows dedups by path across volumes`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val scanner = MediaStoreScanner(context)
+        val songsByPath = LinkedHashMap<String, ScannedSong>()
+        val albumArtCache = HashMap<Long, Boolean>()
+
+        fun cursor(vararg rows: Array<Any?>) = RoboCursor().apply {
+            setColumnNames(PROJECTION.toList())
+            setResults(rows)
+        }
+
+        val primary = cursor(songRow(1, "A", "/storage/emulated/0/Music/a.mp3", "audio/mpeg", 200_000))
+        val sd = cursor(songRow(9, "A", "/storage/emulated/0/Music/a.mp3", "audio/mpeg", 200_000))
+
+        val pathsFromPrimary = scanner.readRows(primary, "external", songsByPath, albumArtCache)
+        val pathsFromSd = scanner.readRows(sd, "1234-5678", songsByPath, albumArtCache)
+
+        assertEquals(setOf("/storage/emulated/0/Music/a.mp3"), pathsFromPrimary)
+        assertEquals(setOf("/storage/emulated/0/Music/a.mp3"), pathsFromSd)
+        assertEquals(1, songsByPath.size)
+        // 先到先得：保留主卷扫描到的行
+        assertEquals(1L, songsByPath.values.first().mediaStoreId)
+    }
+
+    /**
+     * P2-9：MediaStore 对缺失的歌手/专辑写入 `<unknown>`（大小写不一），
+     * 扫描器必须归一为空串，交由上层兜底「未知艺术家/未知专辑」，
+     * 不能原样入库（截图里播放页/队列/迷你条直接显示 <unknown>）。
+     */
+    @Test
+    fun `normalizes unknown artist and album placeholders`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        register(
+            songRow(
+                1, "Song A", "/storage/emulated/0/Music/a.mp3", "audio/mpeg", 200_000,
+                artist = "<unknown>", album = "<Unknown>"
+            ),
+            songRow(
+                2, "Song B", "/storage/emulated/0/Music/b.flac", "audio/flac", 200_000,
+                artist = "unknown", album = "未知"
+            ),
+            songRow(
+                3, "Song C", "/storage/emulated/0/Music/c.m4a", "audio/mp4", 200_000,
+                artist = "  <unknown>  ", album = "  "
+            )
+        )
+        val result = MediaStoreScanner(context).scan()
+
+        assertEquals(3, result.songs.size)
+        // 占位符一律归一为空串（真实值原样保留 trim）
+        assertTrue(result.songs.all { it.artist.isEmpty() })
+        assertTrue(result.songs.all { it.album.isEmpty() })
     }
 
     private companion object {

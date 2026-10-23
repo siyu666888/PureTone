@@ -2,6 +2,8 @@ package com.puretone.player.data.local.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
@@ -9,8 +11,22 @@ import androidx.room.PrimaryKey
  *
  * 每次开始播放一首歌时插入一条记录，供"最近播放"列表与
  * 智能推荐（M5 后置）使用。保留 7 天窗口由 DAO 层清理策略控制。
+ *
+ * [songId] 带外键级联：歌曲从曲库删除时（文件被删/被过滤），
+ * 对应历史行自动清理，避免悬空引用（P1-4）。
  */
-@Entity(tableName = "play_history")
+@Entity(
+    tableName = "play_history",
+    indices = [Index(value = ["song_id"])],
+    foreignKeys = [
+        ForeignKey(
+            entity = SongEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["song_id"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ]
+)
 data class PlayHistoryEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0L,

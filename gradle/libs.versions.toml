@@ -12,7 +12,6 @@ splashscreen = "1.0.1"
 media3 = "1.4.1"
 room = "2.6.1"
 datastore = "1.1.1"
-palette = "1.0.0"
 coil = "2.7.0"
 coroutines = "1.9.0"
 hiltNavigationCompose = "1.2.0"
@@ -53,7 +52,6 @@ room-compiler = { group = "androidx.room", name = "room-compiler", version.ref =
 room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
 
 datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
-palette-ktx = { group = "androidx.palette", name = "palette-ktx", version.ref = "palette" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 # ffmpeg-kit 的 Java 传递依赖（Maven Central 仍在）；注意包名 com.arthenica.smartexception（无点）

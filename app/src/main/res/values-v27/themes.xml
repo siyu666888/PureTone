@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- API 27+ 才支持 windowLayoutInDisplayCutoutMode（minSdk 26）。
+         从 values/themes.xml 移至此处，消除 lint error「requires API 27」。
+         注意：AAPT2 对无 parent 的带点样式名会推断隐式父名（Theme.PureTone → Theme），
+         故这里必须显式声明与 values/themes.xml 相同的父主题。 -->
+    <style name="Theme.PureTone" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+
+</resources>

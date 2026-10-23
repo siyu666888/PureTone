@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.effect.AudioEffectController
+import com.puretone.player.effect.EffectStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -14,15 +15,26 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * 音效（均衡器）视图模型：读写 EQ 预设/频段/重低音/环绕，并即时生效于 [AudioEffectController]。
+ * 音效（均衡器）视图模型：读写 EQ 预设/频段/重低音/环绕。
+ *
+ * 单一状态源设计（P0-2）：本 VM 只写 DataStore，不直调 [AudioEffectController]。
+ * 播放侧（PlaybackManager.bind）订阅 settings Flow，每次变化都整包
+ * [AudioEffectController.applySettings]——冷启动恢复、设置页开关、本页调节
+ * 三条路径走同一套映射，不会再出现「UI 开着 EQ、实际没有 EQ」。
  */
 @HiltViewModel
 class EqViewModel @Inject constructor(
     private val settings: SettingsRepository,
-    private val effect: AudioEffectController
+    private val effects: AudioEffectController
 ) : ViewModel() {
 
     val presets: Map<String, List<Int>> = AudioEffectController.PRESETS
+
+    /**
+     * 音效可用性 + 设备段数（P2-1）：设备不支持时 UI 给出明确提示，
+     * 而不是让用户无声拖动滑杆。
+     */
+    val status: StateFlow<EffectStatus> = effects.status
 
     /**
      * 设置热缓存：DataStore 原始流是冷流（无 .value），
@@ -51,33 +63,28 @@ class EqViewModel @Inject constructor(
         )
 
     fun setEnabled(enabled: Boolean) {
-        effect.setEnabled(enabled)
-        viewModelScope.launch { settings.setEqEnabled(enabled) }
-        if (enabled) effect.setBandLevels(settingsState.value.eqBandLevels)
+        viewModelScope.launch { runCatching { settings.setEqEnabled(enabled) } }
     }
 
     fun setBandLevel(band: Int, levelMb: Int) {
-        effect.setBandLevel(band, levelMb)
+        // P2-1：手动调节即脱离预设（预设切 CUSTOM），频段与预设一次写入。
+        // runCatching：DataStore 写失败不应让协程异常崩溃（P1-5）
         viewModelScope.launch {
-            val next = settingsState.value.eqBandLevels.toMutableList().apply { set(band, levelMb) }
-            settings.setEqBandLevels(next)
+            runCatching { settings.setBandLevelCustom(band, levelMb) }
         }
     }
 
     fun applyPreset(name: String) {
         val bands = AudioEffectController.PRESETS[name] ?: return
-        effect.applyPreset(name)
-        viewModelScope.launch { settings.applyEqPreset(name, bands.map { it * 100 }) }
+        viewModelScope.launch { runCatching { settings.applyEqPreset(name, bands.map { it * 100 }) } }
     }
 
     fun setBassBoost(strength: Int) {
-        effect.setBassBoostStrength(strength)
-        viewModelScope.launch { settings.setBassBoostStrength(strength) }
+        viewModelScope.launch { runCatching { settings.setBassBoostStrength(strength) } }
     }
 
     fun setVirtualizer(strength: Int) {
-        effect.setVirtualizerStrength(strength)
-        viewModelScope.launch { settings.setVirtualizerStrength(strength) }
+        viewModelScope.launch { runCatching { settings.setVirtualizerStrength(strength) } }
     }
 }
 

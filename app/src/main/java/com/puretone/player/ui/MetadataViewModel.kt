@@ -2,6 +2,7 @@ package com.puretone.player.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.metadata.LyricsProvider
 import com.puretone.player.data.metadata.MetadataCandidate
 import com.puretone.player.data.metadata.SongMetadataProvider
@@ -10,6 +11,8 @@ import com.puretone.player.lyrics.LyricsStore
 import com.puretone.player.util.ChineseText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,7 +59,39 @@ class MetadataViewModel @Inject constructor(
     private val _backfill = MutableStateFlow<Pair<Int, Int>?>(null)
     val backfill: StateFlow<Pair<Int, Int>?> = _backfill.asStateFlow()
 
-    fun setQuery(q: String) { _query.value = q }
+    /** 自动填充是否可撤销（最近一次 autoFill 成功写入后为真） */
+    private val _canUndoAutoFill = MutableStateFlow(false)
+    val canUndoAutoFill: StateFlow<Boolean> = _canUndoAutoFill.asStateFlow()
+
+    /** 最近一次自动填充前的原歌曲（用于撤销） */
+    private var lastAutoFilled: SongEntity? = null
+
+    /** 批量补全任务（用于取消） */
+    private var backfillJob: Job? = null
+
+    fun setQuery(q: String) {
+        _query.value = q
+        _results.value = emptyList()   // P2-2：改查询词时清空上一轮候选，避免结果残留
+    }
+
+    /** 清空搜索候选（P2-2：「清空结果」与切歌时调用） */
+    fun clearResults() {
+        _results.value = emptyList()
+    }
+
+    /**
+     * 低置信匹配保护：去掉空白与标点后，候选标题与查询标题存在包含关系才算高置信。
+     * 避免 autoFill 无脑套用第一条结果导致错误匹配被永久写入。
+     */
+    private fun isLikelyMatch(queryTitle: String, candidateTitle: String): Boolean {
+        val norm = { s: String ->
+            s.lowercase().replace(Regex("[\\s\\p{Punct}]"), "")
+        }
+        val a = norm(queryTitle)
+        val b = norm(candidateTitle)
+        if (a.isBlank() || b.isBlank()) return false
+        return a == b || a.contains(b) || b.contains(a)
+    }
 
     fun consumeMessage() { _message.value = null }
 
@@ -108,6 +143,12 @@ class MetadataViewModel @Inject constructor(
                 _message.value = "未找到匹配（${provider.sourceName}），可检查网络或更换关键词"
                 return@launch
             }
+            // P2-2：低置信匹配不自动写入，改为展示候选让用户手动选择，避免错误匹配被永久保留
+            if (!isLikelyMatch(title, best.title)) {
+                _message.value = "未找到高置信匹配，请从候选中选择或手动修改"
+                return@launch
+            }
+            val original = runCatching { repo.getSong(songId) }.getOrNull()
             runCatching {
                 repo.updateSongInfo(
                     id = songId,
@@ -118,11 +159,39 @@ class MetadataViewModel @Inject constructor(
                     year = best.year
                 )
             }.onSuccess {
+                lastAutoFilled = original
+                _canUndoAutoFill.value = true
                 _message.value = "已自动填充：「${best.title}」"
                 _results.value = emptyList()
                 onApplied(best)
             }.onFailure {
                 _message.value = "更新失败：${it.message}"
+            }
+        }
+    }
+
+    /**
+     * 撤销最近一次自动填充：恢复原歌曲信息（P2-2）。
+     */
+    fun undoAutoFill(onUndone: () -> Unit = {}) {
+        val original = lastAutoFilled ?: return
+        viewModelScope.launch {
+            runCatching {
+                repo.updateSongInfo(
+                    id = original.id,
+                    title = original.title,
+                    artist = original.artist,
+                    album = original.album,
+                    coverUri = original.coverUri,
+                    year = original.year
+                )
+            }.onSuccess {
+                lastAutoFilled = null
+                _canUndoAutoFill.value = false
+                _message.value = "已撤销自动填充"
+                onUndone()
+            }.onFailure {
+                _message.value = "撤销失败：${it.message}"
             }
         }
     }
@@ -185,11 +254,12 @@ class MetadataViewModel @Inject constructor(
 
     /**
      * 批量补全缺失封面：对每首无封面歌曲按「歌手 歌名」搜索首个候选并套用其封面。
+     * 串行处理、每次请求间隔限流，支持取消；完成后重新查询实际剩余数量用于校验。
      * @param onDone 完成回调（成功补全数量）
      */
     fun backfillMissingCovers(onDone: (Int) -> Unit) {
         if (_backfill.value != null) return
-        viewModelScope.launch {
+        backfillJob = viewModelScope.launch {
             val missing = runCatching { repo.getSongsMissingCover() }.getOrDefault(emptyList())
             if (missing.isEmpty()) {
                 _message.value = "没有需要补全封面的歌曲"
@@ -197,18 +267,32 @@ class MetadataViewModel @Inject constructor(
                 return@launch
             }
             var done = 0
-            missing.forEachIndexed { i, song ->
-                _backfill.value = i to missing.size
-                val term = "${song.artist} ${song.title}".trim()
-                val candidate = runCatching { provider.search(term, 1).firstOrNull() }.getOrNull()
-                if (candidate?.artworkUrl != null) {
-                    runCatching { repo.updateCover(song.id, candidate.artworkUrl) }
-                    done++
+            try {
+                missing.forEachIndexed { i, song ->
+                    _backfill.value = i to missing.size
+                    val term = "${song.artist} ${song.title}".trim()
+                    val candidate = runCatching { provider.search(term, 1).firstOrNull() }.getOrNull()
+                    if (candidate?.artworkUrl != null) {
+                        // P2-2：仅当确实写入了封面才计入成功
+                        runCatching { repo.updateCover(song.id, candidate.artworkUrl) }
+                        done++
+                    }
+                    delay(700) // P2-2：限流，避免触发数据源配额导致大量失败
                 }
+            } finally {
+                _backfill.value = null
             }
-            _backfill.value = null
-            _message.value = "封面补全完成：${done} / ${missing.size} 首"
+            // P2-2：计数校验——重新查询实际剩余缺失封面数
+            val remaining = runCatching { repo.getSongsMissingCover().size }.getOrDefault(0)
+            _message.value = "封面补全完成：$done / ${missing.size} 首（剩余 $remaining 首未补全）"
             onDone(done)
         }
+    }
+
+    /** 取消正在进行的批量封面补全（P2-2） */
+    fun cancelBackfill() {
+        backfillJob?.cancel()
+        backfillJob = null
+        _backfill.value = null
     }
 }

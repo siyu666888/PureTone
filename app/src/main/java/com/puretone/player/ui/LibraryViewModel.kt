@@ -8,15 +8,20 @@ import com.puretone.player.data.repository.SongSortOrder
 import com.puretone.player.data.repository.SyncResult
 import com.puretone.player.playback.PlaybackManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
 import javax.inject.Inject
 
 /** 专辑分组汇总（封面网格墙 / 二级详情页用） */
@@ -79,41 +84,44 @@ class LibraryViewModel @Inject constructor(
     val isScanning = MutableStateFlow(false)
     val lastSync = MutableStateFlow<SyncResult?>(null)
 
+    /** 扫描互斥：避免自动扫描与手动扫描并发跑两遍全库同步（P0-6） */
+    private val scanMutex = Mutex()
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery
 
-    /** 搜索结果（标题/艺术家/专辑） */
-    val searchResults: StateFlow<List<SongEntity>> = combine(
-        repo.observeLibrary(),
-        _searchQuery
-    ) { all, q ->
-        if (q.isBlank()) emptyList()
-        else all.filter {
-            it.title.contains(q, ignoreCase = true) ||
-                it.artist.contains(q, ignoreCase = true) ||
-                it.album.contains(q, ignoreCase = true)
+    /**
+     * 搜索结果（P1-3：走 SQL LIKE 查询 + 250ms 防抖）。
+     * 旧实现在 Main 上对全库内存 filter 且无防抖：每敲一个字符都遍历整库，
+     * 大库输入时明显掉帧；SongDao.search 反而没人用。
+     */
+    val searchResults: StateFlow<List<SongEntity>> = _searchQuery
+        .debounce(250)
+        .flatMapLatest { q ->
+            if (q.isBlank()) flowOf(emptyList()) else repo.search(q.trim())
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val librarySize = library.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** 「我喜欢」收藏列表 */
     val favorites = repo.observeFavorites()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    /** 专辑分组（封面网格墙 / 二级详情页） */
+    /** 专辑分组（封面网格墙 / 二级详情页）。flowOn(Default)：分组计算不占主线程（P1-3） */
     val albums: StateFlow<List<AlbumSummary>> = repo.observeLibrary()
         .map { groupAlbums(it) }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** 歌手分组 */
     val artists: StateFlow<List<ArtistSummary>> = repo.observeLibrary()
         .map { groupArtists(it) }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** 文件夹分组 */
     val folders: StateFlow<List<FolderSummary>> = repo.observeLibrary()
         .map { groupFolders(it) }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /**
@@ -133,10 +141,20 @@ class LibraryViewModel @Inject constructor(
 
     fun setSearchQuery(q: String) { _searchQuery.value = q }
 
+    /**
+     * 同步曲库。互斥保护（P0-6）：冷启动自动扫描与用户手动扫描可能几乎同时触发，
+     * 两次 syncLibrary 交错的 upsertAll / deleteByPathIn 会留下中间态；
+     * 已在扫描时直接返回（isScanning 只用于 UI 展示，不作为唯一防线）。
+     */
     fun scan() = viewModelScope.launch {
-        isScanning.value = true
-        runCatching { repo.syncLibrary() }.onSuccess { lastSync.value = it }
-        isScanning.value = false
+        if (!scanMutex.tryLock()) return@launch
+        try {
+            isScanning.value = true
+            runCatching { repo.syncLibrary() }.onSuccess { lastSync.value = it }
+        } finally {
+            isScanning.value = false
+            scanMutex.unlock()
+        }
     }
 
     /**

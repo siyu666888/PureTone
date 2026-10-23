@@ -7,9 +7,13 @@ import com.puretone.player.data.local.dao.NamedCountRow
 import com.puretone.player.data.local.dao.TopSongRow
 import com.puretone.player.data.repository.MusicRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import java.util.Calendar
 import javax.inject.Inject
@@ -56,34 +60,72 @@ data class StatsUiState(
  */
 @HiltViewModel
 class StatsViewModel @Inject constructor(
-    repo: MusicRepository
+    private val repo: MusicRepository
 ) : ViewModel() {
 
-    private val sinceMs: Long = System.currentTimeMillis() - TREND_DAYS * 24L * 60 * 60 * 1000
+    /**
+     * 统计窗口基准时间戳。构造时为当前时刻；手动刷新或跨午夜时更新，
+     * 使「近 30 天」窗口随真实时间滚动，而非固定在 ViewModel 创建瞬间。
+     */
+    private val refreshTick = MutableStateFlow(System.currentTimeMillis())
 
-    val state: StateFlow<StatsUiState> = combine(
+    /** 重新计算统计窗口（如跨午夜后手动刷新） */
+    fun refresh() {
+        refreshTick.value = System.currentTimeMillis()
+    }
+
+    val state: StateFlow<StatsUiState> = refreshTick.flatMapLatest { tick ->
+        val sinceMs = tick - TREND_DAYS * 24L * 60 * 60 * 1000
         combine(
-            repo.observeTotalPlays(),
-            repo.observeTotalListenMs(),
-            repo.observePlayedSongs()
-        ) { plays, listenMs, playedSongs -> CoreStats(plays, listenMs, playedSongs) },
-        combine(
-            repo.observeDailyTrend(sinceMs),
-            repo.observeTopSongs(10),
-            repo.observeTopArtists(5),
-            repo.observeHourDistribution()
-        ) { trend, topSongs, topArtists, hours -> ListStats(trend, topSongs, topArtists, hours) }
-    ) { core, lists ->
-        StatsUiState(
-            totalPlays = core.plays,
-            totalListenMs = core.listenMs,
-            playedSongs = core.playedSongs,
-            dailyTrend = buildFullTrend(lists.trend, sinceMs),
-            topSongs = lists.topSongs,
-            topArtists = lists.topArtists,
-            hourPlays = (0..23).map { h -> h to (lists.hours.firstOrNull { it.hour == h }?.plays ?: 0L) }
-        )
+            combine(
+                repo.observeTotalPlays(),
+                repo.observeTotalListenMs(),
+                repo.observePlayedSongs()
+            ) { plays, listenMs, playedSongs -> CoreStats(plays, listenMs, playedSongs) },
+            combine(
+                repo.observeDailyTrend(sinceMs),
+                repo.observeTopSongs(10),
+                repo.observeTopArtists(5),
+                repo.observeHourDistribution()
+            ) { trend, topSongs, topArtists, hours -> ListStats(trend, topSongs, topArtists, hours) }
+        ) { core, lists ->
+            StatsUiState(
+                totalPlays = core.plays,
+                totalListenMs = core.listenMs,
+                playedSongs = core.playedSongs,
+                dailyTrend = buildFullTrend(lists.trend, sinceMs),
+                topSongs = lists.topSongs,
+                topArtists = lists.topArtists,
+                hourPlays = (0..23).map { h -> h to (lists.hours.firstOrNull { it.hour == h }?.plays ?: 0L) }
+            )
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatsUiState())
+
+    /** 清空播放历史（不含曲库与收藏），供统计页「清空历史」入口调用 */
+    fun clearHistory() {
+        viewModelScope.launch { repo.clearHistory() }
+    }
+
+    init {
+        // 跨午夜自动滚动「近 30 天」窗口
+        viewModelScope.launch {
+            while (true) {
+                delayUntilNextMidnight()
+                refreshTick.value = System.currentTimeMillis()
+            }
+        }
+    }
+
+    private suspend fun delayUntilNextMidnight() {
+        val now = Calendar.getInstance()
+        val next = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }
+        val millis = next.timeInMillis - now.timeInMillis
+        if (millis > 0) delay(millis)
+    }
 
     private data class CoreStats(val plays: Long, val listenMs: Long, val playedSongs: Int)
     private data class ListStats(

@@ -1,5 +1,7 @@
 package com.puretone.player.ui.screens
 
+import android.animation.ValueAnimator
+import android.net.Uri
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.Animatable
@@ -16,14 +18,19 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,15 +47,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Equalizer
 import androidx.compose.material.icons.rounded.AddCircleOutline
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.RemoveCircleOutline
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -65,15 +75,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
@@ -114,14 +127,27 @@ fun PlayerScreen(
     var showQueue by remember { mutableStateOf(false) }
     var showInfo by remember { mutableStateOf(false) }
     var lyricFontSize by remember { mutableIntStateOf(18) }
+    // P2-4：封面/歌词翻转态提升到此——「歌词」可见按钮与点按封面翻转共享同一状态
+    var coverFlipped by remember { mutableStateOf(false) }
+
+    // P0-8：标题/歌手/封面优先取 Room 实时当前曲（编辑信息、联网匹配后立即刷新），
+    // 回退到设置队列时构建的 QueueEntry 快照（刚切歌、Room 尚未回发的过渡态）。
+    // 旧实现只显示 entry 快照，导致改完歌曲信息播放页/迷你条仍是旧标题旧封面。
+    val displayTitle = currentSong?.title ?: entry?.title ?: ""
+    val displayArtist = currentSong?.artist ?: entry?.artist ?: ""
+    val displayCover = currentSong?.coverUri?.let { Uri.parse(it) } ?: entry?.coverUri
 
     // 播放顺序（三态：顺序播放 / 随机播放 / 单曲循环），由播放状态派生
     val playMode = state.toPlayMode()
 
     Scaffold(
+        // P1-7：inset 由外层 Scaffold 统一负责（底部导航可见时它是唯一 source），
+        // 内层 Scaffold 不再叠加系统栏 padding，否则标题上方多出一圈空白
+        contentWindowInsets = WindowInsets(0),
         topBar = {
             TopAppBar(
                 title = { Text("正在播放") },
+                windowInsets = WindowInsets(0),
                 navigationIcon = {
                     IconButton(onClick = navController::popBackStack) {
                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
@@ -155,12 +181,15 @@ fun PlayerScreen(
             // 封面：3D 翻转歌词 / 视差切歌 / 双击播放暂停 / 长按歌曲信息
             SwipeableCover(
                 entry = entry,
+                coverOverride = displayCover,
                 isPlaying = state.isPlaying,
                 onSwipePrev = vm::prev,
                 onSwipeNext = vm::next,
                 onDoubleTap = vm::togglePlay,
                 onLongPress = { showInfo = true },
                 modifier = Modifier.fillMaxWidth(0.82f),
+                flipped = coverFlipped,
+                onFlippedChange = { coverFlipped = it },
                 backContent = {
                     LyricsFace(
                         lyrics = lyrics,
@@ -171,14 +200,14 @@ fun PlayerScreen(
                 }
             )
 
-            // 标题 / 艺术家
+            // 标题 / 艺术家（Room 实时值，编辑后立即刷新——P0-8）
             Text(
-                entry.title,
+                displayTitle,
                 style = MaterialTheme.typography.headlineSmall,
                 textAlign = TextAlign.Center
             )
             Text(
-                entry.artist,
+                displayArtist,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -205,7 +234,7 @@ fun PlayerScreen(
                 )
             }
 
-            // 进度条上方：左=均衡器入口，右=收藏
+            // 进度条上方：左=均衡器入口，中=歌词/封面切换，右=收藏
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -218,6 +247,18 @@ fun PlayerScreen(
                     buttonSize = 40.dp,
                     iconSize = 22.dp
                 )
+                // P2-4：歌词入口原为「点封面翻转」的隐藏手势，新用户很难发现。
+                // 补一个可见切换按钮（与封面翻转共享翻转态），保留点按翻转为快捷方式。
+                FilledTonalButton(
+                    onClick = { coverFlipped = !coverFlipped },
+                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp),
+                    modifier = Modifier.height(36.dp)
+                ) {
+                    Text(
+                        if (coverFlipped) "封面" else "歌词",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
                 FavoriteButton(favorite = favorite, onClick = vm::toggleFavorite)
             }
 
@@ -288,6 +329,7 @@ fun PlayerScreen(
     // 播放队列浮层（半模态，从底部弹出）
     // 精简：仅保留「上一首 / 播放·暂停 / 下一首」三个按钮，其余按钮全部移除；
     // 队列列表保留（点击即切歌），下滑或点遮罩关闭。
+    // P2-4：当前曲高亮、行尾移除、顶部「清空」；行不再构造 album="" 的假 SongEntity。
     if (showQueue) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(onDismissRequest = { showQueue = false }, sheetState = sheetState) {
@@ -297,7 +339,22 @@ fun PlayerScreen(
                     .padding(horizontal = 16.dp)
                     .padding(bottom = 20.dp)
             ) {
-                Text("播放队列（${state.queue.size}）", style = MaterialTheme.typography.titleLarge)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "播放队列（${state.queue.size}）",
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (state.queue.isNotEmpty()) {
+                        TextButton(onClick = {
+                            vm.clearQueue()
+                            showQueue = false
+                        }) { Text("清空") }
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 if (state.queue.isEmpty()) {
                     Text(
@@ -309,21 +366,11 @@ fun PlayerScreen(
                     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
                         // 注意：队列允许同一首歌出现多次，key 不能只用 songId，故沿用位置索引
                         itemsIndexed(state.queue) { index, q ->
-                            SongRow(
-                                song = com.puretone.player.data.local.entity.SongEntity(
-                                    id = q.songId,
-                                    mediaStoreId = q.songId,
-                                    title = q.title,
-                                    artist = q.artist,
-                                    album = "",
-                                    albumId = 0,
-                                    duration = q.durationMs,
-                                    path = q.filePath,
-                                    size = 0,
-                                    coverUri = q.coverUri?.toString(),
-                                    mimeType = if (q.isApe) "audio/ape" else "audio/mpeg"
-                                ),
-                                onClick = { vm.playAtIndex(index) }
+                            QueueRow(
+                                entry = q,
+                                isCurrent = index == state.queueIndex,
+                                onClick = { vm.playAtIndex(index) },
+                                onRemove = { vm.removeFromQueue(index) }
                             )
                         }
                     }
@@ -388,22 +435,37 @@ private fun SwipeableCover(
     onDoubleTap: () -> Unit,
     onLongPress: () -> Unit,
     backContent: @Composable () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // P0-8：Room 实时封面（编辑/匹配后刷新）；null 时用 entry 快照里的封面
+    coverOverride: Uri? = null,
+    // P2-4：翻转态提升到调用方——播放页需要「歌词」可见按钮与封面翻转共享同一状态
+    flipped: Boolean = false,
+    onFlippedChange: (Boolean) -> Unit = {}
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val springBack = SpringSpec<Float>(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow)
     val offsetAnim = remember { Animatable(0f) }
     var dragAccum by remember { mutableFloatStateOf(0f) }
-    var flipped by remember { mutableStateOf(false) }
     // 切歌方向：>0 下一首（向上滑），<0 上一首（向下滑）；决定 AnimatedContent 过渡方向
     var swipeDir by remember { mutableIntStateOf(1) }
 
     // CD 旋转角：播放时匀速持续旋转，暂停即停（保留当前角度），切歌不重置。
     // 该 Animatable 位于 SwipeableCover 作用域，跨 entry 变化保持同一实例。
     val discAngle = remember { Animatable(0f) }
-    LaunchedEffect(isPlaying, flipped) {
-        if (isPlaying && !flipped) {
+    // P1-10：页面退后台（ON_PAUSE）时停转，避免不可见状态下持续产出 frame 耗电；
+    // 导航离开本页时组合已被销毁，效果天然取消。
+    var foreground by remember { mutableStateOf(true) }
+    LifecycleResumeEffect(Unit) {
+        foreground = true
+        onPauseOrDispose { foreground = false }
+    }
+    LaunchedEffect(isPlaying, flipped, foreground) {
+        // 尊重系统「移除动画」设置（开发者选项「动画程序时长缩放」关闭 /
+        // 省电模式可全局关闭动画）：关闭时停转，仅展示静态封面。
+        // Compose 动画不受该开关影响，故此处显式判断（切换设置后下次
+        // 播放态变化/翻面/前后台切换时生效）。
+        if (isPlaying && !flipped && foreground && ValueAnimator.areAnimatorsEnabled()) {
             while (true) {
                 discAngle.animateTo(
                     targetValue = discAngle.value + 360f,
@@ -419,7 +481,10 @@ private fun SwipeableCover(
         label = "CoverFlip"
     )
 
-    val maxDrag = 240f
+    val maxDrag = with(density) { 240.dp.toPx() }
+    // P2-4：阈值按 dp 声明再换算成像素——旧实现是裸 90f 像素，
+    // 在 320dpi 设备上仅约 29dp，与 160dpi 设备手感差异巨大
+    val swipeThreshold = with(density) { 90.dp.toPx() }
     // 阻尼函数：越拖位移增量越小，产生"拉橡皮筋"手感
     fun damp(drag: Float): Float = maxDrag * tanh(drag / maxDrag)
     val damped = damp(dragAccum + offsetAnim.value)
@@ -436,12 +501,12 @@ private fun SwipeableCover(
                 offsetAnim.animateTo(0f, tween(380))
             }
         }
-        if (total > 90f) {
+        if (total > swipeThreshold) {
             swipeDir = -1
             dragAccum = 0f
             settle()
             onSwipePrev()
-        } else if (total < -90f) {
+        } else if (total < -swipeThreshold) {
             swipeDir = 1
             dragAccum = 0f
             settle()
@@ -490,18 +555,19 @@ private fun SwipeableCover(
                     coverAlpha = if (rotation <= 90f) 1f else 0f,
                     interactive = false,
                     onSingleTap = {}, onDoubleTap = {}, onLongPress = {},
-                    onDragDelta = {}, onDragEnd = {}
+                    onDragDelta = {}, onDragEnd = {},
+                    coverOverride = coverOverride
                 )
                 LyricsBackFace(
                     backAlpha = if (rotation > 90f) 1f else 0f,
-                    onTapFlipBack = { flipped = false },
+                    onTapFlipBack = { onFlippedChange(false) },
                     content = backContent
                 )
             } else {
                 // 未翻转：歌词面垫底（透明），封面朝上并接管全部手势
                 LyricsBackFace(
                     backAlpha = if (rotation > 90f) 1f else 0f,
-                    onTapFlipBack = { flipped = false },
+                    onTapFlipBack = { onFlippedChange(false) },
                     content = backContent
                 )
                 CoverFace(
@@ -509,11 +575,12 @@ private fun SwipeableCover(
                     discAngle = discAngle,
                     coverAlpha = if (rotation <= 90f) 1f else 0f,
                     interactive = true,
-                    onSingleTap = { flipped = !flipped },
+                    onSingleTap = { onFlippedChange(true) },
                     onDoubleTap = onDoubleTap,
                     onLongPress = onLongPress,
                     onDragDelta = { total -> dragAccum = total.coerceIn(-maxDrag, maxDrag) },
-                    onDragEnd = { total -> endDrag(total) }
+                    onDragEnd = { total -> endDrag(total) },
+                    coverOverride = coverOverride
                 )
             }
         }
@@ -536,7 +603,9 @@ private fun CoverFace(
     onDoubleTap: () -> Unit,
     onLongPress: () -> Unit,
     onDragDelta: (Float) -> Unit,
-    onDragEnd: (Float) -> Unit
+    onDragEnd: (Float) -> Unit,
+    // P0-8：Room 实时封面（编辑/匹配后刷新）；null 时用 entry 快照封面
+    coverOverride: Uri? = null
 ) {
     val scope = rememberCoroutineScope()
     var lastTapTime by remember { mutableLongStateOf(0L) }
@@ -626,23 +695,47 @@ private fun CoverFace(
                     .clip(CircleShape)
                     .border(1.dp, Color.White.copy(alpha = 0.10f), CircleShape)
             )
-            // 圆形专辑封面
-            if (entry.coverUri != null) {
+            // 圆形专辑封面（优先 Room 实时封面——P0-8）
+            val coverModel = coverOverride ?: entry.coverUri
+            if (coverModel != null) {
                 AsyncImage(
-                    model = entry.coverUri,
+                    model = coverModel,
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(0.86f).clip(CircleShape),
                     contentScale = ContentScale.Crop
                 )
             } else {
+                // P2-4：无封面时旧实现渲染纯灰圆盘 + 小黑点，观感像加载失败。
+                // 改为品牌渐变盘体 + 黑胶纹路 + 音符，任何主题下都像"设计如此"。
                 Box(
                     modifier = Modifier
                         .fillMaxSize(0.86f)
                         .clip(CircleShape)
-                        .background(scheme.surfaceVariant),
+                        .background(
+                            Brush.linearGradient(
+                                listOf(scheme.primary, scheme.tertiary)
+                            )
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("♪", style = MaterialTheme.typography.displayMedium, color = scheme.primary)
+                    // 黑胶纹路：两圈同心圆描边
+                    Box(
+                        Modifier
+                            .fillMaxSize(0.72f)
+                            .clip(CircleShape)
+                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+                    )
+                    Box(
+                        Modifier
+                            .fillMaxSize(0.5f)
+                            .clip(CircleShape)
+                            .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+                    )
+                    Text(
+                        "♪",
+                        style = MaterialTheme.typography.displayMedium,
+                        color = Color.White
+                    )
                 }
             }
             // 中心孔（用页面底色模拟"打通"）
@@ -731,8 +824,23 @@ private fun LyricsFace(
 
         val currentIndex = lyrics.lineIndexAt(positionMs)
         val listState = rememberLazyListState()
+        // P2-4：用户手动滚动歌词后，自动滚动避让几秒。
+        // 旧实现只要 currentIndex 变化就 animateScrollToItem，用户正看着
+        // 上面的句子时会被下一次 500ms 高亮强行拉回当前行，手动浏览被打断。
+        var userScrollPauseUntil by remember { mutableLongStateOf(0L) }
         LaunchedEffect(currentIndex) {
-            if (currentIndex >= 0) listState.animateScrollToItem(currentIndex)
+            if (currentIndex < 0) return@LaunchedEffect
+            if (android.os.SystemClock.uptimeMillis() < userScrollPauseUntil) return@LaunchedEffect
+            listState.animateScrollToItem(currentIndex)
+        }
+        // 检测用户主动滚动：拖动 LazyColumn 会派发 DragInteraction.Start，
+        // 而程序化 animateScrollToItem 不会，借此区分并避让几秒。
+        LaunchedEffect(listState) {
+            listState.interactionSource.interactions.collect { interaction ->
+                if (interaction is DragInteraction.Start) {
+                    userScrollPauseUntil = android.os.SystemClock.uptimeMillis() + 4_000L
+                }
+            }
         }
         LazyColumn(
             state = listState,
@@ -752,6 +860,97 @@ private fun LyricsFace(
                     modifier = Modifier.padding(vertical = 6.dp)
                 )
             }
+        }
+    }
+}
+
+/**
+ * 播放队列行（P2-4）。
+ *
+ * 旧实现为复用 [SongRow] 而构造 `album=""` 的假 SongEntity：副标题出现
+ * "artist · " 尾点，媒体类型/封面等字段也都是凑数的；且队列不标当前曲、
+ * 不能移除单曲。这里直接基于 [QueueEntry] 渲染——当前曲整行高亮 +
+ * 「正在播放」标注，行尾移除按钮。
+ */
+@Composable
+private fun QueueRow(
+    entry: QueueEntry,
+    isCurrent: Boolean,
+    onClick: () -> Unit,
+    onRemove: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (isCurrent) scheme.primaryContainer else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(8.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (entry.coverUri != null) {
+                AsyncImage(
+                    model = entry.coverUri,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Icon(
+                    Icons.Rounded.MusicNote,
+                    contentDescription = null,
+                    tint = scheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                entry.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = if (isCurrent) scheme.primary else Color.Unspecified,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                entry.artist,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        if (isCurrent) {
+            Text(
+                "正在播放",
+                style = MaterialTheme.typography.labelSmall,
+                color = scheme.primary,
+                modifier = Modifier.padding(end = 4.dp)
+            )
+        }
+        if (entry.isApe) {
+            Text(
+                "APE",
+                style = MaterialTheme.typography.labelSmall,
+                color = scheme.primary,
+                modifier = Modifier.padding(end = 8.dp)
+            )
+        }
+        IconButton(onClick = onRemove) {
+            Icon(
+                Icons.Rounded.RemoveCircleOutline,
+                contentDescription = "从队列移除",
+                tint = scheme.onSurfaceVariant
+            )
         }
     }
 }

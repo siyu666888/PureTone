@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import com.puretone.player.data.local.entity.SongEntity
 import kotlinx.coroutines.flow.Flow
@@ -125,9 +126,30 @@ interface SongDao {
     )
     fun getSongsByArtist(artist: String): Flow<List<SongEntity>>
 
-    /** 幂等 upsert：按 path 冲突则替换（mediaStoreId 可能变化） */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertAll(songs: List<SongEntity>)
+    /**
+     * 幂等 upsert（P1-4 起改用 INSERT OR IGNORE + UPDATE 两段式）。
+     *
+     * 为什么不能再 `@Insert(onConflict = REPLACE)`：playlist_songs /
+     * play_history 已对 songs.id 加 CASCADE 外键，REPLACE 的语义是
+     * 「先 DELETE 再 INSERT」，会触发级联，把该歌曲的歌单成员与播放历史
+     * 一并清掉（表现为"同步一次，歌单里的歌全没了"）。
+     * INSERT OR IGNORE + UPDATE 不删行，子表引用完好保留。
+     *
+     * 调用方传入的行已合并本地字段（id / favorite / play_count /
+     * last_played_at / 封面），UPDATE 整列写回不丢数据。
+     */
+    @Transaction
+    suspend fun upsertAll(songs: List<SongEntity>) {
+        val rowIds = insertIgnoreAll(songs)
+        val conflicted = songs.filterIndexed { index, _ -> rowIds.getOrNull(index) == -1L }
+        if (conflicted.isNotEmpty()) updateAll(conflicted)
+    }
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnoreAll(songs: List<SongEntity>): List<Long>
+
+    @Update
+    suspend fun updateAll(songs: List<SongEntity>)
 
     /**
      * 删除给定路径集合内的歌曲（这些文件已不在本次扫描结果中，如被过滤的录音）。

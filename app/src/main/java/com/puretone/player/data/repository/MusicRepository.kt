@@ -1,5 +1,6 @@
 package com.puretone.player.data.repository
 
+import com.puretone.player.data.local.PureToneDatabase
 import com.puretone.player.data.local.dao.PlayHistoryDao
 import com.puretone.player.data.local.dao.PlaylistDao
 import com.puretone.player.data.local.dao.PlaylistWithSongs
@@ -15,9 +16,13 @@ import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.media.ScannedSong
 import com.puretone.player.data.media.MediaStoreScanner
 import com.puretone.player.data.settings.SettingsRepository
+import com.puretone.player.util.UnknownText
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
+import androidx.room.withTransaction
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -49,6 +54,7 @@ data class SyncResult(
  */
 @Singleton
 class MusicRepository @Inject constructor(
+    private val db: PureToneDatabase,
     private val songDao: SongDao,
     private val playlistDao: PlaylistDao,
     private val playHistoryDao: PlayHistoryDao,
@@ -111,8 +117,17 @@ class MusicRepository @Inject constructor(
     /**
      * 全量同步：扫描系统媒体库并与本地 Room 对账。
      * 返回新增 / 移除 / 总数，供 UI 展示同步结果。
+     *
+     * 性能与一致性（P1-3）：
+     * - 整体在 [Dispatchers.IO] 执行：旧实现只把 scanner.scan() 切 IO，
+     *   之后的 associateBy / map / toEntity / 差集都在调用线程（Main）跑，
+     *   大库同步时直接掉帧；
+     * - 增量对账：与旧行比较 mediaStoreId / dateModified / size / 封面，
+     *   只写入「新增或变化」的行。旧实现对全部扫描结果 REPLACE upsert，
+     *   即使文件没变也重写整表 → Room 全表失效、所有 Flow 重发、UI 重新分组；
+     * - upsert + 删除包在同一事务：中途失败不会留下半套数据。
      */
-    suspend fun syncLibrary(): SyncResult {
+    suspend fun syncLibrary(): SyncResult = withContext(Dispatchers.IO) {
         val scan = scanner.scan()
         val scanned = scan.songs
         val existing = songDao.getAll()
@@ -121,11 +136,13 @@ class MusicRepository @Inject constructor(
         // 否则一次授权失败/读取异常会把整个曲库清空（历史 bug：删除方向写反，
         // 传 [SongDao.deleteByPathNotIn] 导致"删音乐、留录音"）。
         if (scanned.isEmpty()) {
-            return SyncResult(added = 0, removed = 0, total = existing.size, skippedNonMusic = scan.skippedNonMusic)
+            return@withContext SyncResult(
+                added = 0, removed = 0, total = existing.size, skippedNonMusic = scan.skippedNonMusic
+            )
         }
 
         val existingByPath = existing.associateBy { it.path }
-        val existingPaths = existing.map { it.path }.toSet()
+        val existingPaths = existingByPath.keys
         val scannedPaths = scanned.map { it.path }.toSet()
 
         val added = scanned.count { it.path !in existingPaths }
@@ -133,43 +150,60 @@ class MusicRepository @Inject constructor(
         // （文件被删、或被本次过滤规则判定为非音乐，如录音）。
         val removed = existingPaths - scannedPaths
 
-        // 保留已存在歌曲的本地 id（维持歌单 / 历史外键引用）、收藏与统计字段
-        // （upsert 冲突策略为 REPLACE，不携带 favorite / play_count 会把用户数据冲掉）；
+        // 保留已存在歌曲的本地 id（维持歌单 / 历史引用）、收藏与统计字段
+        // （upsert 为 INSERT OR IGNORE + UPDATE 两段式，冲突行走 UPDATE，
+        // 不删行；但调用方仍显式携带这些字段，避免任何写路径丢用户数据）；
         // 用户手动编辑过信息的行（user_edited）整行保留，避免 MediaStore 覆盖修正结果；
         // 封面同样要保留：本次扫描没解析到本地封面时，沿用库里已有的远程封面
         // （联网补全写入的 iTunes 封面等）——否则每次重扫都会把补全的封面清掉，
         // 表现为「补全缺失封面功能像没实现」。旧版扫描写入的 albumart 占位 URI
         // （实际解析不出图）不保留，借此清理。
-        val entities = scanned.map { s ->
-            val existing = existingByPath[s.path]
-            if (existing != null && existing.userEdited) {
-                existing
+        val toUpsert = scanned.mapNotNull { s ->
+            val old = existingByPath[s.path]
+            // 用户编辑行整行保留；未变化的行完全不写库（增量）
+            if (old != null && (old.userEdited || !hasChanged(old, s))) {
+                null
             } else {
                 s.toEntity(
-                    existingId = existing?.id ?: 0L,
-                    favorite = existing?.favorite ?: false,
-                    playCount = existing?.playCount ?: 0,
-                    lastPlayedAt = existing?.lastPlayedAt ?: 0L,
-                    preservedCoverUri = existing?.coverUri?.takeIf { prev ->
+                    existingId = old?.id ?: 0L,
+                    favorite = old?.favorite ?: false,
+                    playCount = old?.playCount ?: 0,
+                    lastPlayedAt = old?.lastPlayedAt ?: 0L,
+                    preservedCoverUri = old?.coverUri?.takeIf { prev ->
                         prev.isNotBlank() && !prev.startsWith(ALBUM_ART_URI_PREFIX)
                     }
                 )
             }
         }
-        if (entities.isNotEmpty()) {
-            songDao.upsertAll(entities)
+
+        db.withTransaction {
+            if (toUpsert.isNotEmpty()) {
+                songDao.upsertAll(toUpsert)
+            }
+            // 分片删除（规避 SQLite 参数上限）——删除集合"之内"的路径
+            removed.toList().chunked(500).forEach { chunk ->
+                songDao.deleteByPathIn(chunk)
+            }
         }
-        // 分片删除（规避 SQLite 参数上限）——删除集合"之内"的路径
-        removed.toList().chunked(500).forEach { chunk ->
-            songDao.deleteByPathIn(chunk)
-        }
-        return SyncResult(
+        SyncResult(
             added = added,
             removed = removed.size,
-            total = entities.size,
+            total = scanned.size,
             skippedNonMusic = scan.skippedNonMusic
         )
     }
+
+    /**
+     * 扫描行与库内旧行是否有实质变化（P1-3 增量对账）：
+     * mediaStoreId 变化（媒体库重扫分配新 id）、文件被改写（dateModified/size）、
+     * 或封面从「无/占位」变为「可用」。标题等标签变化一定伴随文件改写，
+     * 故无需逐一比对展示字段。
+     */
+    private fun hasChanged(old: SongEntity, s: ScannedSong): Boolean =
+        old.mediaStoreId != s.mediaStoreId ||
+            old.dateModified != s.dateModified ||
+            old.size != s.size ||
+            (s.coverUri != null && (old.coverUri == null || old.coverUri.startsWith(ALBUM_ART_URI_PREFIX)))
 
     // ---------- 播放历史 ----------
 
@@ -249,6 +283,10 @@ class MusicRepository @Inject constructor(
     suspend fun renamePlaylist(playlistId: Long, name: String) =
         playlistDao.rename(playlistId, name.trim())
 
+    /**
+     * 删除歌单。playlist_songs 对 playlist_id 有 CASCADE 外键，
+     * 关联行随歌单一并清除（旧版只删 playlists 行，junction 永久残留）。
+     */
     suspend fun deletePlaylist(playlistId: Long) {
         playlistDao.getById(playlistId)?.let { playlistDao.delete(it) }
     }
@@ -257,7 +295,7 @@ class MusicRepository @Inject constructor(
         playlistDao.addSongsAtEnd(playlistId, songIds.distinct())
 
     suspend fun removeFromPlaylist(playlistId: Long, songId: Long) =
-        playlistDao.removeSong(playlistId, songId)
+        playlistDao.removeSongAndTouch(playlistId, songId)
 
     // ---------- 续播会话 ----------
 
@@ -268,6 +306,9 @@ class MusicRepository @Inject constructor(
     /** 持久化当前播放会话（队列 + 索引 + 位置） */
     suspend fun savePlaybackSession(songIds: List<Long>, index: Int, positionMs: Long) =
         settings.savePlaybackSession(songIds, index, positionMs)
+
+    /** 清空续播会话（用户主动停止/清空队列时调用，避免下次冷启动恢复已停队列） */
+    suspend fun clearPlaybackSession() = settings.clearPlaybackSession()
 
     private fun ScannedSong.toEntity(
         existingId: Long,
@@ -280,8 +321,10 @@ class MusicRepository @Inject constructor(
         id = existingId,
         mediaStoreId = mediaStoreId,
         title = title.ifBlank { path.substringAfterLast('/').substringBeforeLast('.') },
-        artist = artist.ifBlank { UNKNOWN_ARTIST },
-        album = album.ifBlank { UNKNOWN_ALBUM },
+        // P2-9：扫描器已归一 <unknown> 等占位符；此处再兜底一次
+        // （M3U 导入等其它入口可能带入占位符），空串才换「未知××」
+        artist = UnknownText.normalizeArtist(artist).ifBlank { UNKNOWN_ARTIST },
+        album = UnknownText.normalizeAlbum(album).ifBlank { UNKNOWN_ALBUM },
         albumId = albumId,
         duration = duration,
         path = path,

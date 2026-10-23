@@ -4,13 +4,16 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
+import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import com.puretone.player.data.local.entity.SongEntity
@@ -31,6 +34,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -62,6 +67,8 @@ data class PlaybackUiState(
     val repeatMode: RepeatMode = RepeatMode.OFF,
     val shuffle: Boolean = false,
     val speed: Float = 1.0f,
+    /** 睡眠定时剩余毫秒（0 = 未设置/已到期） */
+    val sleepRemainingMs: Long = 0L,
     val queue: List<QueueEntry> = emptyList(),
     val queueIndex: Int = -1,
     val error: String? = null
@@ -88,6 +95,7 @@ private data class PendingPlay(
  *   待 [bind] 后自动执行，避免静默失败。
  */
 @Singleton
+@OptIn(UnstableApi::class)
 class PlaybackManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val musicRepository: MusicRepository,
@@ -104,22 +112,30 @@ class PlaybackManager @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    private val songCache = HashMap<Long, SongEntity>()
-
     private var sleepTimerJob: Job? = null
     private var settingsJob: Job? = null
-    private var appliedSleepMin: Int = -1
     private var apeRetryIndex: Int = -1
+
+    /** 「完整播放完成」去重窗口：自动切歌（AUTO/REPEAT）与末首播完（STATE_ENDED）
+     *  两条路径可能指向同一首歌，5s 内只计一次，避免统计页播放次数虚高。 */
+    private var lastCompletionId: Long = -1L
+    private var lastCompletionAt: Long = 0L
 
     /** 当前无缝播放开关（来自设置，bind 时订阅） */
     private var gaplessEnabled: Boolean = true
 
+    /** 最近一次设置快照（session 重建后重新灌入音效/播放模式用） */
+    private var lastSettings: PureToneSettings = PureToneSettings()
+
     private var pendingPlay: PendingPlay? = null
+    private var pendingEnqueue: List<SongEntity>? = null
     private var pendingRestore: Boolean = false
 
     private val playerListener = object : Player.Listener {
         override fun onAudioSessionIdChanged(audioSessionId: Int) {
             audioEffectController.attachToSession(audioSessionId)
+            // session 重建后把当前设置重新灌一遍（音效/播放模式不因换会话丢失）
+            audioEffectController.applySettings(lastSettings)
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -141,13 +157,14 @@ class PlaybackManager @Inject constructor(
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             val prevId = _uiState.value.currentSongId
             val songId = mediaItem?.mediaId?.toLongOrNull()
-            // 上一首「完整播放完成」判定：自动切歌（自然播完）或循环回到开头（re-peat）。
+            // 上一首「完整播放完成」判定：自动切歌（自然播完）或循环回到开头（repeat-one）。
             // 用户手动上/下一首（SEEK）、替换队列（PLAYLIST_CHANGED）不计入完成。
+            // recordCompletionOnce 做 5s 去重：STATE_ENDED 与过渡回调可能同时指向同一首。
             if (prevId != null && songId != null &&
                 (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
                     reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
             ) {
-                scope.launch { musicRepository.recordCompletion(prevId) }
+                recordCompletionOnce(prevId)
             }
             if (songId != null) {
                 _uiState.update { state ->
@@ -181,7 +198,17 @@ class PlaybackManager @Inject constructor(
                     )
                 }
             }
+            // 睡眠定时剩余时间随 ticker 刷新，UI 才能显示「剩余 12:34」
+            refreshSleepRemaining()
             delay(500)
+        }
+    }
+
+    /** 重算睡眠定时剩余时间；到期则由 job 负责暂停与清零 */
+    private fun refreshSleepRemaining() {
+        val remaining = settings.sleepRemainingMs(lastSettings)
+        if (remaining != _uiState.value.sleepRemainingMs) {
+            _uiState.update { it.copy(sleepRemainingMs = remaining) }
         }
     }
 
@@ -191,14 +218,18 @@ class PlaybackManager @Inject constructor(
         this.session = session
         player.addListener(playerListener)
         audioEffectController.attachToSession(player.audioSessionId)
-        // 订阅设置：倍速 / 睡眠定时 / 无缝播放 实时生效（决策 D1 MVP+）
+        // 订阅设置：倍速 / 睡眠定时 / 无缝播放 / 播放顺序 / 音效 实时生效
         settingsJob = scope.launch {
             settings.settings.collect { applySettings(it) }
         }
         // 执行挂起请求
         pendingPlay?.let { req ->
             pendingPlay = null
-            scope.launch { doSetQueueAndPlay(req.songs, req.startIndex, req.startPositionMs) }
+            scope.launch { doSetQueueAndPlay(req.songs, req.startIndex, req.startPositionMs, autoPlay = true) }
+        }
+        pendingEnqueue?.let { songs ->
+            pendingEnqueue = null
+            if (songs.isNotEmpty()) enqueue(songs)
         }
         if (pendingRestore) {
             pendingRestore = false
@@ -214,19 +245,76 @@ class PlaybackManager @Inject constructor(
         player = null
         session = null
         audioEffectController.detach()
-        pendingPlay = null
+        pendingEnqueue = null
         pendingRestore = false
     }
 
-    /** 将用户设置映射到播放引擎（倍速 / 睡眠定时 / 无缝播放） */
+    /**
+     * 将用户设置映射到播放引擎与音效（唯一入口）。
+     *
+     * - 倍速 / 无缝播放：直接生效；
+     * - 睡眠定时：按「到期时刻」恢复倒计时（进程重建后仍准确），已过期则清零；
+     * - 播放顺序 / 随机：灌给 ExoPlayer 与 uiState，冷启动不再重置；
+     * - 音效：整包交给 [AudioEffectController.applySettings]，设置页开关从此有真实效果。
+     */
     private fun applySettings(s: PureToneSettings) {
+        lastSettings = s
         gaplessEnabled = s.gapless
         setSpeed(s.playbackSpeed)
-        // 仅当睡眠定时分钟数变化时才重新计时，避免改动其它设置时重置计时
-        if (s.sleepTimerMinutes != appliedSleepMin) {
-            appliedSleepMin = s.sleepTimerMinutes
-            setSleepTimer(s.sleepTimerMinutes)
+        applyPlayOrder(s)
+        applySleepTimer(s)
+        audioEffectController.applySettings(s)
+    }
+
+    /** 播放顺序（顺序/随机/单曲）来自设置：既灌给播放器，也写回 uiState */
+    private fun applyPlayOrder(s: PureToneSettings) {
+        val repeat = when (s.repeatMode) {
+            PureToneSettings.REPEAT_ALL -> RepeatMode.ALL
+            PureToneSettings.REPEAT_ONE -> RepeatMode.ONE
+            else -> RepeatMode.OFF
         }
+        if (repeat != _uiState.value.repeatMode) {
+            _uiState.update { it.copy(repeatMode = repeat) }
+        }
+        if (s.shuffle != _uiState.value.shuffle) {
+            _uiState.update { it.copy(shuffle = s.shuffle) }
+        }
+        player?.let { p ->
+            p.repeatMode = when (repeat) {
+                RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+                RepeatMode.ALL -> Player.REPEAT_MODE_ALL
+                RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+            }
+            p.shuffleModeEnabled = s.shuffle
+        }
+    }
+
+    /**
+     * 睡眠定时：以「到期时刻」为准恢复/取消。
+     * 到期后由 job 暂停并把设置里的到期时刻清零——否则进程重启后
+     * 会按完整时长重新倒计时（旧实现只存分钟数导致的「定时复活」bug）。
+     */
+    private fun applySleepTimer(s: PureToneSettings) {
+        val remaining = settings.sleepRemainingMs(s)
+        if (remaining <= 0L) {
+            // 无定时，或已过期（例如到期瞬间进程被杀）→ 收尾并清零
+            sleepTimerJob?.cancel()
+            sleepTimerJob = null
+            if (s.sleepTimerDeadlineMs > 0L) {
+                scope.launch { settings.clearSleepTimerDeadline() }
+            }
+            _uiState.update { it.copy(sleepRemainingMs = 0L) }
+            return
+        }
+        sleepTimerJob?.cancel()
+        sleepTimerJob = scope.launch {
+            delay(remaining)
+            pause()
+            // 关键：触发后清零，防止重启后再次倒计时
+            scope.launch { settings.setSleepTimerMinutes(0) }
+            _uiState.update { it.copy(sleepRemainingMs = 0L) }
+        }
+        _uiState.update { it.copy(sleepRemainingMs = remaining) }
     }
 
     // ---------- 队列命令 ----------
@@ -239,55 +327,79 @@ class PlaybackManager @Inject constructor(
             ensureServiceStarted()
             return
         }
-        scope.launch { doSetQueueAndPlay(songs, startIndex, startPositionMs) }
+        scope.launch { doSetQueueAndPlay(songs, startIndex, startPositionMs, autoPlay = true) }
     }
 
+    /**
+     * 真正设置队列。[autoPlay] 显式控制是否 play()：
+     * - 用户主动播放 / 续播恢复都走这里，恢复时传 false，避免「取决于队列里有没有 APE」
+     *   （APE 会在 ensureWav 挂起，pause() 先于 play() 执行 → 恢复后不自动播放，非 APE 又自动播放）。
+     */
     private suspend fun doSetQueueAndPlay(
         songs: List<SongEntity>,
         startIndex: Int,
-        startPositionMs: Long
+        startPositionMs: Long,
+        autoPlay: Boolean
     ) {
         val p = player ?: return
         if (songs.isEmpty()) return
-        songCache.putAll(songs.associateBy { it.id })
         val entries = songs.map { it.toQueueEntry() }
 
-        val apeSongs = songs.filter { it.isApe }
-        if (apeSongs.isNotEmpty()) _uiState.update { it.copy(isTranscoding = true) }
-        val mediaItems = try {
-            buildMediaItems(songs)
-        } finally {
-            if (apeSongs.isNotEmpty()) _uiState.update { it.copy(isTranscoding = false) }
+        // 只转码「即将播放的这一首」：整队预转码会让 20 首 APE 的专辑等几十秒才出声。
+        // 其余 APE 在切歌/出错时按需转码（见 playAtIndex / handlePlayerError / warmUpFollowingApe）。
+        val startSong = songs[startIndex]
+        val startUri = if (startSong.isApe) {
+            _uiState.update { it.copy(isTranscoding = true) }
+            val wav = runCatching { apeTranscoder.ensureWav(startSong.id, startSong.path) }.getOrNull()
+            _uiState.update { it.copy(isTranscoding = false) }
+            wav?.let { Uri.fromFile(it) }
+        } else {
+            mediaStoreUri(startSong)
         }
-        if (mediaItems.isEmpty()) {
+        if (startUri == null) {
             _uiState.update { it.copy(error = "无法解析播放地址") }
             return
         }
 
+        // 其余项先按「非 APE 直连、APE 占位源路径」入库；切到它们时再按需转码替换 URI。
+        val mediaItems = songs.mapIndexed { index, song ->
+            if (index == startIndex) {
+                song.toMediaItem(startUri)
+            } else if (song.isApe) {
+                song.toMediaItem(Uri.parse(song.path))
+            } else {
+                song.toMediaItem(mediaStoreUri(song))
+            }
+        }
+
         p.setMediaItems(mediaItems, startIndex, startPositionMs)
         p.prepare()
-        p.play()
+        if (autoPlay) p.play() else p.pause()
         _uiState.update {
             it.copy(
                 queue = entries,
                 queueIndex = startIndex,
-                currentSongId = songs[startIndex].id,
-                durationMs = songs[startIndex].duration,
+                currentSongId = startSong.id,
+                durationMs = startSong.duration,
                 error = null
             )
         }
         saveSessionNow()
+        if (!autoPlay) warmUpFollowingApe()
     }
 
-    /** 追加到队列末尾（不打断当前播放） */
+    /** 追加到队列末尾（不打断当前播放）；player 未就绪时挂起，bind 后执行 */
     fun enqueue(songs: List<SongEntity>) {
-        val p = player ?: run { ensureServiceStarted(); return }
+        val p = player
+        if (p == null) {
+            pendingEnqueue = (pendingEnqueue ?: emptyList()) + songs
+            ensureServiceStarted()
+            return
+        }
         if (songs.isEmpty()) return
-        songCache.putAll(songs.associateBy { it.id })
         val entries = songs.map { it.toQueueEntry() }
         scope.launch {
-            songs.forEach { song -> if (song.isApe) apeTranscoder.ensureWav(song.id, song.path) }
-            p.addMediaItems(songs.map { it.toMediaItemSuspending() })
+            p.addMediaItems(songs.map { it.toMediaItemLazy() })
             _uiState.update { it.copy(queue = it.queue + entries) }
         }
     }
@@ -304,12 +416,10 @@ class PlaybackManager @Inject constructor(
             return
         }
         if (songs.isEmpty()) return
-        songCache.putAll(songs.associateBy { it.id })
         val entries = songs.map { it.toQueueEntry() }
         scope.launch {
-            songs.forEach { song -> if (song.isApe) apeTranscoder.ensureWav(song.id, song.path) }
             val insertAt = (_uiState.value.queueIndex + 1).coerceIn(0, _uiState.value.queue.size)
-            p.addMediaItems(insertAt, songs.map { it.toMediaItemSuspending() })
+            p.addMediaItems(insertAt, songs.map { it.toMediaItemLazy() })
             _uiState.update { state ->
                 val merged = state.queue.toMutableList().also { q -> q.addAll(insertAt, entries) }
                 state.copy(queue = merged)
@@ -317,15 +427,15 @@ class PlaybackManager @Inject constructor(
         }
     }
 
-    /** 播放队列中指定索引 */
+    /** 播放队列中指定索引（APE 按需转码后替换 URI） */
     fun playAtIndex(index: Int) {
-        val p = player ?: run { ensureServiceStarted(); return }
+        val p = player ?: run { pendingPlay = PendingPlay(emptyList(), index, 0L); ensureServiceStarted(); return }
         if (index !in _uiState.value.queue.indices) return
         scope.launch {
             val entry = _uiState.value.queue[index]
             if (entry.isApe) {
                 _uiState.update { it.copy(isTranscoding = true) }
-                val wav = apeTranscoder.ensureWav(entry.songId, entry.filePath)
+                val wav = runCatching { apeTranscoder.ensureWav(entry.songId, entry.filePath) }.getOrNull()
                 _uiState.update { it.copy(isTranscoding = false) }
                 if (wav != null) replaceMediaItemUri(index, wav)
             }
@@ -335,17 +445,47 @@ class PlaybackManager @Inject constructor(
         }
     }
 
-    /** 从队列移除指定索引 */
+    /**
+     * 从队列移除指定索引。
+     * 必须同步修正 [PlaybackUiState.queueIndex]：删除当前曲之前的条目后
+     * player.currentMediaItemIndex 已左移，UI 若按旧索引取 currentEntry 会显示错歌。
+     */
     fun removeFromQueue(index: Int) {
         val p = player ?: return
         if (index !in _uiState.value.queue.indices) return
+        val currentIndex = p.currentMediaItemIndex
         p.removeMediaItem(index)
-        _uiState.update { it.copy(queue = it.queue.filterIndexed { i, _ -> i != index }) }
+        _uiState.update { state ->
+            val newQueue = state.queue.filterIndexed { i, _ -> i != index }
+            val newIndex = when {
+                index < currentIndex -> currentIndex - 1
+                index == currentIndex -> currentIndex.coerceAtMost(newQueue.lastIndex)
+                else -> currentIndex
+            }
+            state.copy(queue = newQueue, queueIndex = newIndex)
+        }
     }
 
+    /**
+     * 清空队列。只重置「瞬时」字段，保留用户偏好（播放顺序/随机/倍速），
+     * 否则 UI 显示的播放顺序会和播放器真实状态不一致（历史 bug）。
+     */
     fun clearQueue() {
         player?.clearMediaItems()
-        _uiState.value = PlaybackUiState()
+        _uiState.update { state ->
+            state.copy(
+                queue = emptyList(),
+                queueIndex = -1,
+                currentSongId = null,
+                positionMs = 0L,
+                durationMs = 0L,
+                isTranscoding = false,
+                isBuffering = false,
+                error = null
+            )
+        }
+        scope.launch { musicRepository.clearPlaybackSession() }
+        stopServiceIfIdle()
     }
 
     // ---------- 播放控制 ----------
@@ -383,6 +523,8 @@ class PlaybackManager @Inject constructor(
         player?.stop()
         player?.clearMediaItems()
         _uiState.value = PlaybackUiState()
+        // 显式停止即放弃续播：清会话，否则下次冷启动会把已停的队列又恢复出来
+        scope.launch { musicRepository.clearPlaybackSession() }
         stopServiceIfIdle()
     }
 
@@ -403,6 +545,10 @@ class PlaybackManager @Inject constructor(
         _uiState.update { it.copy(positionMs = positionMs.coerceAtLeast(0L)) }
     }
 
+    /**
+     * 循环模式：本地即时生效 + 写回 DataStore。
+     * 冷启动后由 [applyPlayOrder] 从设置恢复，不再重置为 OFF（P0-3）。
+     */
     fun setRepeatMode(mode: RepeatMode) {
         val p = player ?: return
         p.repeatMode = when (mode) {
@@ -411,11 +557,22 @@ class PlaybackManager @Inject constructor(
             RepeatMode.ONE -> Player.REPEAT_MODE_ONE
         }
         _uiState.update { it.copy(repeatMode = mode) }
+        scope.launch {
+            settings.setRepeatMode(
+                when (mode) {
+                    RepeatMode.ALL -> PureToneSettings.REPEAT_ALL
+                    RepeatMode.ONE -> PureToneSettings.REPEAT_ONE
+                    RepeatMode.OFF -> PureToneSettings.REPEAT_OFF
+                }
+            )
+        }
     }
 
+    /** 随机播放：本地即时生效 + 写回 DataStore（P0-3） */
     fun setShuffle(enabled: Boolean) {
         player?.shuffleModeEnabled = enabled
         _uiState.update { it.copy(shuffle = enabled) }
+        scope.launch { settings.setShuffle(enabled) }
     }
 
     fun setSpeed(speed: Float) {
@@ -424,29 +581,36 @@ class PlaybackManager @Inject constructor(
         _uiState.update { it.copy(speed = p.playbackParameters.speed) }
     }
 
-    /** 睡眠定时：分钟数后暂停；0 取消 */
+    /**
+     * 睡眠定时：只写 DataStore（分钟数 + 到期时刻）。
+     * 真正的倒计时由设置流触发 [applySleepTimer] 建立/取消 job，
+     * 保证「UI 设的定时」与「播放器实际定时」同源，不会出现两套计时器。
+     */
     fun setSleepTimer(minutes: Int) {
-        sleepTimerJob?.cancel()
-        sleepTimerJob = null
-        if (minutes <= 0) return
-        sleepTimerJob = scope.launch {
-            delay(minutes * 60_000L)
-            pause()
-        }
+        scope.launch { settings.setSleepTimerMinutes(minutes) }
     }
 
     fun dismissError() = _uiState.update { it.copy(error = null) }
 
     // ---------- 续播 ----------
 
-    /** 恢复上次播放会话（受 settings resumeOnStart 控制） */
+    /** 恢复上次播放会话（受 settings resumeOnStart 控制，由 PlayerViewModel 首帧后调用） */
     suspend fun restoreLastSession(): Boolean {
         val saved = musicRepository.loadPlaybackSession() ?: return false
         if (saved.songIds.isEmpty()) return false
-        val songs = musicRepository.getSongs(saved.songIds)
+        // 按保存的顺序重建队列并保留重复项：getByIds 是 `IN (:ids)` 查询，
+        // 既无 ORDER BY 也会被 SQL 去重——直接拿它恢复会顺序错位、重复歌丢失（P0-7）。
+        val byId = musicRepository.getSongs(saved.songIds).associateBy { it.id }
+        val songs = saved.songIds.mapNotNull { byId[it] }
         if (songs.isEmpty()) return false
-        setQueueAndPlay(songs, saved.index.coerceIn(0, songs.lastIndex), saved.positionMs)
-        player?.pause()
+        // autoPlay=false：恢复后停在当前位置，是否播交给用户（旧实现先 setQueueAndPlay
+        // 再 pause()，APE 队列会在 ensureWav 挂起导致 pause 先于 play 执行，行为不确定）。
+        doSetQueueAndPlay(
+            songs,
+            saved.index.coerceIn(0, songs.lastIndex),
+            saved.positionMs,
+            autoPlay = false
+        )
         return true
     }
 
@@ -495,11 +659,22 @@ class PlaybackManager @Inject constructor(
     private fun handlePlaybackEnded() {
         // 队列最后一首自然播完（无后继可自动切换）时无 AUTO/REPEAT 过渡，
         // 在此补记「完整播放完成」，避免末首歌漏计。
-        _uiState.value.currentSongId?.let { id ->
-            scope.launch { musicRepository.recordCompletion(id) }
-        }
+        _uiState.value.currentSongId?.let { id -> recordCompletionOnce(id) }
         saveSessionNow()
         if ((player?.mediaItemCount ?: 0) == 0) stopServiceIfIdle()
+    }
+
+    /**
+     * 记录「完整播放完成」（驱动统计页播放次数）。
+     * [onMediaItemTransition]（AUTO/REPEAT）与本方法（STATE_ENDED）都会调用，
+     * 用 5s 窗口去重，防止同一首歌被计两次。
+     */
+    private fun recordCompletionOnce(songId: Long) {
+        val now = SystemClock.elapsedRealtime()
+        if (songId == lastCompletionId && now - lastCompletionAt < 5_000L) return
+        lastCompletionId = songId
+        lastCompletionAt = now
+        scope.launch { musicRepository.recordCompletion(songId) }
     }
 
     /**
@@ -531,22 +706,17 @@ class PlaybackManager @Inject constructor(
         const val TAG = "PlaybackManager"
     }
 
-    private suspend fun buildMediaItems(songs: List<SongEntity>): List<MediaItem> =
-        songs.map { song ->
-            val uri = if (song.isApe) {
-                apeTranscoder.ensureWav(song.id, song.path)?.let { Uri.fromFile(it) }
-            } else {
-                mediaStoreUri(song)
-            }
-            song.toMediaItem(uri)
-        }
-
-    private suspend fun SongEntity.toMediaItemSuspending(): MediaItem {
-        val uri = if (isApe) {
-            apeTranscoder.ensureWav(id, path)?.let { Uri.fromFile(it) }
-        } else {
-            mediaStoreUri(this)
-        }
+    /**
+     * 惰性构建媒体项：
+     * - 非 APE：直连 MediaStore content URI（本地文件，打开即播）；
+     * - APE：先以源文件路径占位，ExoPlayer 无法解码时会走
+     *   [handlePlayerError] → 转码 → [replaceMediaItemUri] 重试，
+     *   或由 [playAtIndex] / [warmUpFollowingApe] 提前按需转码替换。
+     *
+     * 这样「追加/插播」不必等待整队转码，APE 队列也能秒级入队。
+     */
+    private fun SongEntity.toMediaItemLazy(): MediaItem {
+        val uri = if (isApe) Uri.parse(path) else mediaStoreUri(this)
         return toMediaItem(uri)
     }
 
@@ -576,13 +746,15 @@ class PlaybackManager @Inject constructor(
         p.replaceMediaItem(index, updated)
     }
 
+    /**
+     * 预热「下一首 APE」的转码（只一首：整队预转会拖慢切片切换、
+     * 并无谓占满字节上限的缓存，见 P0-5）。其余 APE 切到它们时按需转码。
+     */
     private fun warmUpFollowingApe() {
-        val queue = _uiState.value.queue
-        val current = _uiState.value.queueIndex
-        val following = queue.drop(current + 1).filter { it.isApe }
-        if (following.isEmpty()) return
+        val state = _uiState.value
+        val nextApe = state.queue.drop(state.queueIndex + 1).firstOrNull { it.isApe } ?: return
         scope.launch(Dispatchers.IO) {
-            following.forEach { apeTranscoder.ensureWav(it.songId, it.filePath) }
+            apeTranscoder.ensureWav(nextApe.songId, nextApe.filePath)
         }
     }
 

@@ -1,0 +1,34 @@
+PureTone v1.3.1 交付证据（CODE_REVIEW P0–P3 全量修复）
+构建时间：2026-10-23
+构建命令：:app:assembleRelease（R8 收缩 + lintVitalRelease 通过）
+
+## 产物（dist/）
+- PureTone-v1.3.1-universal-release.apk
+- PureTone-v1.3.1-arm64-v8a-release.apk
+
+## SHA-256
+- universal: e0853393d330bccf3153b95081966cb76b3bbb8ef554666d2605b189149a992f
+- arm64-v8a: 9686b5e5725a372569f331cd19c40f520c1503d39f60c126c6fede034314d2b0
+
+## apksigner 校验
+- 两个包 `apksigner verify --min-sdk-version 26` 均无报错 → v2 签名有效（minSdk 26 ≥ 24，无需 v1）。
+
+## 单元测试 / Lint
+- :app:testDebugUnitTest → BUILD SUCCESSFUL（45 actionable tasks，仅 RoboCursor 弃用告警）
+- :app:lintDebug → BUILD SUCCESSFUL（0 error）
+
+## 本次修复范围（对照 CODE_REVIEW.md）
+P0 正确性：歌曲编辑/音效/续播/睡眠定时/扫描/会话恢复/播放页刷新
+P1：APE 转码策略、sync 主线程、歌单排序/索引、DataStore 兜底、lint error
+P2-1：EQ 手动调节切 CUSTOM 预设 + 设备可用性提示
+P2-2：autoFill 相似度校验 + 撤销、backfillMissingCovers 限流/可取消/计数校验、setQuery 清空候选、切歌重置
+P2-3：歌单删除确认弹窗、「我喜欢」改 LazyColumn 懒加载、最近播放 take(8) 与队列统一为 8
+P2-4：播放页空封面品牌渐变、手势阈值 dp 化、歌词手动滚动避让、队列高亮+清空/移除
+P2-5：移除死开关「封面取色」+ palette-ktx 依赖、AMOLED 纯黑开关（优先级高于动态取色）
+P2-6：统计卡片标注「近 30 天」、sinceMs 每次订阅/跨午夜重算、峰值高亮修正、最爱歌曲/歌手可点击、清空历史入口
+P3：清理死依赖（palette-ktx）、ControlIconsTest 改 JUnit assertTrue、README 对齐、新增 PRIVACY.md 隐私政策
+
+## 验证说明
+- 代码层：testDebugUnitTest + lintDebug 全绿；assembleRelease + lintVitalRelease 全绿。
+- 设备层：本环境为纯软件渲染模拟器，对 UI 交互的实机/模拟器手测（手势、滚动避让、弹窗）未在本轮执行；
+  上述交互改动均已通过编译与单元/静态检查，建议真机安装 arm64 包做一轮手动回归。

@@ -2,6 +2,7 @@ package com.puretone.player.ui.components
 
 import androidx.compose.ui.graphics.vector.ImageVector
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -27,13 +28,16 @@ class ControlIconsTest {
         for (icon in allIcons) {
             // 触发 lazy 构造；若 arcTo / path 参数非法会在此抛异常
             assertNotNull("图标构造失败", icon)
-            assert(icon.name.isNotEmpty()) { "图标 name 不应为空" }
+            assertTrue("图标 name 不应为空", icon.name.isNotEmpty())
         }
     }
 
     @Test
     fun repeatIconsShareLoopShape() {
         // 单曲循环应额外包含中央「1」，但不应比顺序循环少节点
-        assert(ControlIcons.RepeatOne.defaultWidth == ControlIcons.RepeatAll.defaultWidth)
+        assertTrue(
+            "顺序循环与单曲循环的画布尺寸应一致",
+            ControlIcons.RepeatOne.defaultWidth == ControlIcons.RepeatAll.defaultWidth
+        )
     }
 }

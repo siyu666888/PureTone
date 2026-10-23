@@ -8,11 +8,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -39,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import com.puretone.player.data.local.dao.PlaylistWithSongs
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.ui.LibraryViewModel
 import com.puretone.player.ui.PlayerViewModel
@@ -57,6 +61,8 @@ fun MeScreen(
     val favorites by libVm.favorites.collectAsStateWithLifecycle()
     val playlists by libVm.playlists.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
+    // P2-3：删除歌单前先确认，避免误触立即删除
+    var playlistToDelete by remember { mutableStateOf<PlaylistWithSongs?>(null) }
 
     Column(
         modifier = Modifier
@@ -79,27 +85,32 @@ fun MeScreen(
             }
         }
 
-        // 最近播放
+        // 最近播放（仅展示前 8 首，点击播放也只把前 8 首送进队列，口径统一）
         if (recently.isNotEmpty()) {
             SectionTitle("最近播放")
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column {
-                    recently.take(8).forEachIndexed { index, song ->
+                    val recent8 = recently.take(8)
+                    recent8.forEachIndexed { index, song ->
                         SongRow(
                             song = song,
-                            onClick = { playerVm.playSongs(recently, index) }
+                            onClick = { playerVm.playSongs(recent8, index) }
                         )
                     }
                 }
             }
         }
 
-        // 我喜欢（收藏）
+        // 我喜欢（收藏）—— 改为懒加载列表，收藏较多时不卡顿
         if (favorites.isNotEmpty()) {
             SectionTitle("我喜欢（${favorites.size}）")
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column {
-                    favorites.forEachIndexed { index, song ->
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 480.dp)
+                ) {
+                    itemsIndexed(favorites) { index, song ->
                         SongRow(
                             song = song,
                             onClick = { playerVm.playSongs(favorites, index) }
@@ -137,7 +148,7 @@ fun MeScreen(
                                 IconButton(onClick = { playerVm.playSongs(pw.songs, 0) }) {
                                     Icon(Icons.Default.PlayArrow, contentDescription = "播放歌单", tint = PureToneBrand.Primary)
                                 }
-                                IconButton(onClick = { libVm.deletePlaylist(pw.playlist.id) }) {
+                                IconButton(onClick = { playlistToDelete = pw }) {
                                     Icon(Icons.Default.Delete, contentDescription = "删除歌单")
                                 }
                             }
@@ -152,6 +163,24 @@ fun MeScreen(
         CreatePlaylistDialog(
             onCreate = { name -> libVm.createPlaylist(name); showCreate = false },
             onDismiss = { showCreate = false }
+        )
+    }
+
+    // P2-3：删除歌单确认弹窗
+    if (playlistToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { playlistToDelete = null },
+            title = { Text("删除歌单") },
+            text = { Text("确定删除歌单「${playlistToDelete!!.playlist.name}」吗？此操作不可撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    libVm.deletePlaylist(playlistToDelete!!.playlist.id)
+                    playlistToDelete = null
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { playlistToDelete = null }) { Text("取消") }
+            }
         )
     }
 }

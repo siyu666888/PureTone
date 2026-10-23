@@ -65,10 +65,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.playback.PlaybackUiState
 import com.puretone.player.playback.PlayMode
+import com.puretone.player.util.UnknownText
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.roundToInt
 
 /** 「我喜欢」红心着色（歌曲列表收藏标识 / 收藏按钮激活色） */
@@ -152,8 +155,11 @@ fun SongRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            // P2-9：展示层二次兜底，空/占位符 → 「未知××」
+            // （历史数据或其它写入入口可能绕过入库归一）
             Text(
-                "${song.artist} · ${song.album}",
+                "${UnknownText.displayArtist(song.artist, "未知艺术家")} · " +
+                    UnknownText.displayAlbum(song.album, "未知专辑"),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -526,18 +532,30 @@ fun PlayerProgressBar(
  *
  * 控制按钮仅保留三枚：上一首 / 播放-暂停 / 下一首（对称居中排布）。
  * 播放顺序切换与「喜欢」仅在完整播放页提供，避免迷你条信息过载。
+ *
+ * P1-10：入参为 [StateFlow] 而非状态值——position 每 500ms tick 一次，
+ * 收集下沉到本组件内部，使 2Hz 重组只发生在迷你条子树，不波及根部导航树。
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun MiniPlayer(
-    state: PlaybackUiState,
+    stateFlow: StateFlow<PlaybackUiState>,
     onOpen: () -> Unit,
     onToggle: () -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // P0-8：Room 实时当前曲的展示字段（编辑标题/封面、联网匹配后立即刷新）。
+    // 为 null（尚未查到实体）时回退到队列快照 entry，行为与旧版一致。
+    liveTitle: String? = null,
+    liveArtist: String? = null,
+    liveCoverUri: android.net.Uri? = null
 ) {
+    val state by stateFlow.collectAsStateWithLifecycle()
     val entry = state.currentEntry ?: return
+    val title = liveTitle ?: entry.title
+    val artist = liveArtist ?: entry.artist
+    val coverUri = liveCoverUri ?: entry.coverUri
     val scheme = MaterialTheme.colorScheme
     // 长按切换「剩余时长」展示
     var showRemaining by remember { mutableStateOf(false) }
@@ -570,9 +588,9 @@ fun MiniPlayer(
                         .clip(RoundedCornerShape(10.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (entry.coverUri != null) {
+                    if (coverUri != null) {
                         AsyncImage(
-                            model = entry.coverUri,
+                            model = coverUri,
                             contentDescription = null,
                             modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
                             contentScale = ContentScale.Crop
@@ -590,7 +608,7 @@ fun MiniPlayer(
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        entry.title,
+                        title,
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -612,7 +630,7 @@ fun MiniPlayer(
                             )
                         } else {
                             Text(
-                                entry.artist,
+                                artist,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = scheme.onSurfaceVariant,
                                 maxLines = 1,
