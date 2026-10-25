@@ -7,13 +7,17 @@
 
 ## 📸 界面预览
 
-| 音乐库 | 播放页 | 播放队列 |
+| 音乐库 · 歌曲 | 专辑网格 | 歌手列表 |
 | --- | --- | --- |
-| ![音乐库](docs/screenshots/01_music.png) | ![播放页](docs/screenshots/02_player.png) | ![播放队列](docs/screenshots/03_queue.png) |
+| ![音乐库](docs/screenshots/01_music.png) | ![专辑](docs/screenshots/02_albums.png) | ![歌手](docs/screenshots/03_artists.png) |
 
-| 我的 | 听歌统计 | 设置 |
+| 播放页 · 歌词 | 播放页 · 封面 | 播放队列 |
 | --- | --- | --- |
-| ![我的](docs/screenshots/04_me.png) | ![听歌统计](docs/screenshots/05_stats.png) | ![设置](docs/screenshots/06_settings.png) |
+| ![播放页歌词](docs/screenshots/04_player_lyrics.png) | ![播放页封面](docs/screenshots/05_player_cover.png) | ![播放队列](docs/screenshots/09_queue.png) |
+
+| 我的 | 听歌数据 | 设置 |
+| --- | --- | --- |
+| ![我的](docs/screenshots/06_me.png) | ![听歌数据](docs/screenshots/07_stats.png) | ![设置](docs/screenshots/08_settings.png) |
 
 ---
 
@@ -114,8 +118,8 @@ keyPassword=你的密钥口令
 
 ```bash
 ./gradlew assembleRelease
-# 产物：app/build/outputs/apk/release/PureTone-v1.3.0-universal-release.apk
-#       app/build/outputs/apk/release/PureTone-v1.3.0-arm64-v8a-release.apk
+# 产物：app/build/outputs/apk/release/PureTone-v1.5.0-universal-release.apk
+#       app/build/outputs/apk/release/PureTone-v1.5.0-arm64-v8a-release.apk
 ```
 
 > `dist/` 目录存放各版本已签名的发布包与交付证据（SHA-256 / apksigner 校验记录）。
@@ -153,6 +157,11 @@ keyPassword=你的密钥口令
 | v1.1.9 | 列表 `key` 防串位、长按操作菜单、收藏跨入口实时同步（Room 派生真源） |
 | v1.2.0 | 播放队列浮层精简、循环图标圆角重设计、播放卡片新增「播放顺序/喜欢」对称按钮、切换按钮中性化 |
 | v1.3.0 | 迷你播放条精简为三按钮；音乐页新增 歌曲/专辑/歌手/文件夹 四页签；专辑方形封面网格墙；专辑/歌手/文件夹二级详情页 |
+| v1.3.1 | 首轮代码审查（CODE_REVIEW）P0~P3 全量修复 |
+| v1.3.2 | 修复「进播放页被自动暂停」；SQL 批量参数分片等崩溃防护 |
+| v1.4.0 | 第二轮代码审查全量修复：统计虚高、APE 转码期队列竞态、MediaSession 准入白名单、睡眠定时墙钟基准等 |
+| v1.4.1 | 歌词高亮居中悬浮；设置页子项高度统一；听歌数据页配色对齐 |
+| v1.5.0 | 第三轮复审按序修复：主题行高度统一、续播恢复竞态、APE 锁原子化、均衡器主开关语义、Room v5 索引迁移、封面占位 URI 清理等 |
 
 ---
 
