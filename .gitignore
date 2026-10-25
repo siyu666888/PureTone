@@ -13,3 +13,5 @@ app/release/
 *.keystore
 *.apk
 .dsh-acl-recovery/
+# Office 临时锁文件（打开 docx/xlsx 时宿主生成，非项目资产）
+~$*

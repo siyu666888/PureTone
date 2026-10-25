@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!--
+        项目级 opt-in：Media3 的 UnstableApi。
+
+        本项目播放链路（PlaybackManager / PlaybackService）整体依赖 Media3 的
+        unstable 接口（如 MediaSession.ConnectionResult.DEFAULT_*），源码侧已用
+        Kotlin 的 @OptIn(UnstableApi::class) 标注满足编译期要求；但 lint 的
+        UnsafeOptInUsageError 是 error 级且按声明作用域判定，嵌套类里仍会报错。
+        官方建议的做法就是在 lint.xml 里做项目级 opt-in（见该检查的说明文档），
+        比在调用点逐个 @SuppressLint 干净。
+    -->
+    <issue id="UnsafeOptInUsageError">
+        <option name="opt-in" value="androidx.media3.common.util.UnstableApi" />
+    </issue>
+</lint>

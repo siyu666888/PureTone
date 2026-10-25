@@ -60,7 +60,10 @@ fun PureToneTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
+            // P3-23：旧实现强转 Activity——在预览、或非 Activity context（如某些
+            // 嵌入场景）下会直接 ClassCastException 崩掉；系统栏配色属于锦上添花，
+            // 取不到 window 就跳过即可。
+            val window = (view.context as? Activity)?.window ?: return@SideEffect
             val controller = WindowCompat.getInsetsController(window, view)
             controller.isAppearanceLightStatusBars = !dark
             controller.isAppearanceLightNavigationBars = !dark

@@ -27,6 +27,13 @@ import com.puretone.player.data.local.entity.SongEntity
  *              索引 + CASCADE 外键（迁移见 [MIGRATION_3_4]）。
  *              外键执行无需额外配置：Room 生成的 openHelper 在 onOpen 时
  *              自动 `PRAGMA foreign_keys = ON`（迁移期间临时关闭）。
+ * version 5 —— 排序/时间窗查询补索引（P2-2 / P2-3）：
+ *              - play_history(played_at)：「最近播放」倒序 LIMIT、统计页
+ *                时间窗聚合、小时级清理 DELETE 的支撑列（全是 Flow，无索引时
+ *                每次写入都全表扫描 + 重排）；
+ *              - songs(date_added / (play_count, last_played_at) / duration)：
+ *                曲库页四个排序 Flow 与「最爱歌曲榜」的支撑列（迁移见
+ *                [MIGRATION_4_5]）。纯 CREATE INDEX，无表重建、无数据搬运。
  * schema JSON 由 KSP room.schemaLocation 导出至 app/schemas，供后续迁移校验。
  */
 @Database(
@@ -36,7 +43,7 @@ import com.puretone.player.data.local.entity.SongEntity
         PlaylistSongEntity::class,
         PlayHistoryEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 abstract class PureToneDatabase : RoomDatabase() {
@@ -143,6 +150,38 @@ abstract class PureToneDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_play_history_song_id` " +
                         "ON `play_history` (`song_id`)"
+                )
+            }
+        }
+
+        /**
+         * v4 → v5：排序/时间窗查询补索引（P2-2 / P2-3）。
+         *
+         * 纯 CREATE INDEX——SQLite 支持在线建索引，无需重建表、无数据搬运。
+         * 索引名必须与 Room 按实体 @Index 注解生成的名字逐字一致，否则运行期
+         * schema 校验（TableInfo 比对）会崩：
+         * - songs(date_added)              → index_songs_date_added
+         * - songs(play_count, last_played_at) → index_songs_play_count_last_played_at
+         * - songs(duration)                → index_songs_duration
+         * - play_history(played_at)        → index_play_history_played_at
+         */
+        val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_songs_date_added` " +
+                        "ON `songs` (`date_added`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_songs_play_count_last_played_at` " +
+                        "ON `songs` (`play_count`, `last_played_at`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_songs_duration` " +
+                        "ON `songs` (`duration`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_play_history_played_at` " +
+                        "ON `play_history` (`played_at`)"
                 )
             }
         }

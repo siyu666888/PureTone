@@ -42,9 +42,9 @@ class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
                 for (pass in 0..1) {
                     for (i in 0 until arr.length()) {
                         val obj = arr.optJSONObject(i) ?: continue
-                        val synced = obj.optString("syncedLyrics").takeIf { !it.isNullOrBlank() }
+                        val synced = obj.optLyrics("syncedLyrics")
                         if (pass == 0 && synced != null) return@withContext synced
-                        val plain = obj.optString("plainLyrics").takeIf { !it.isNullOrBlank() }
+                        val plain = obj.optLyrics("plainLyrics")
                         if (pass == 1 && plain != null) return@withContext plainToLrc(plain, durationMs)
                     }
                 }
@@ -54,10 +54,25 @@ class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
 
     private fun pickFrom(obj: JSONObject?, durationMs: Long): String? {
         if (obj == null) return null
-        obj.optString("syncedLyrics").takeIf { !it.isNullOrBlank() }?.let { return it }
-        obj.optString("plainLyrics").takeIf { !it.isNullOrBlank() }?.let { return plainToLrc(it, durationMs) }
+        obj.optLyrics("syncedLyrics")?.let { return it }
+        obj.optLyrics("plainLyrics")?.let { return plainToLrc(it, durationMs) }
         return null
     }
+
+    /**
+     * 取非空字符串字段。
+     *
+     * P1-1（第二轮复审）：Android 框架 `org.json`（API 26–34 行为一致，已用
+     * android-all 字节码实证）的 `JSONObject.optString` 对**显式 JSON null** 返回
+     * 字面量字符串 `"null"` 而非空串：`JSONObject.NULL.toString()` = "null" →
+     * `JSON.toString` = `String.valueOf(...)` → `optString` 的 `result != null` 判定
+     * 使其通过。LRCLIB 对缺失字段正是返回 `"plainLyrics":null`（键显式为 null），
+     * 因此裸 `takeIf { it.isNotBlank() }` 会把四个字母 "null" 当成歌词返回，
+     * 导致歌词被写进 .lrc 文件、界面提示「已保存」却永远不显示。
+     * 同仓 [ItunesMetadataProvider] 早已用 `!= "null"` 防御，这里保持一致。
+     */
+    private fun JSONObject.optLyrics(name: String): String? =
+        optString(name).takeIf { it.isNotBlank() && it != "null" }
 
     private fun buildGetUrl(title: String, artist: String): String = buildString {
         append("https://lrclib.net/api/get?track_name=")

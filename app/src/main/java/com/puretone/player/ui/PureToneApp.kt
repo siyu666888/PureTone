@@ -39,7 +39,6 @@ import com.puretone.player.ui.screens.SettingsScreen
 import com.puretone.player.ui.screens.StatsScreen
 import com.puretone.player.ui.theme.PureToneTheme
 import com.puretone.player.ui.theme.PureToneThemeMode
-import java.net.URLDecoder
 
 /** 导航路由 */
 object Routes {
@@ -51,9 +50,20 @@ object Routes {
     const val STATS = "stats"
     const val GROUP_DETAIL = "group/{type}/{key}"
 
-    /** 分组二级详情页路由（type ∈ {album, artist, folder}，key 经 URL 编码） */
+    /**
+     * 分组二级详情页路由（type ∈ {album, artist, folder}，key 经 URI 编码）。
+     *
+     * P0-1（第二轮复审）：必须用 [Uri.encode] 而非 `URLEncoder`。
+     * Navigation 2.8.x 的 `NavDeepLink.getMatchingPathArguments` 在把路径参数放入
+     * Bundle **之前已经 `Uri.decode` 解过一次**（已从 navigation-common AAR 字节码确认），
+     * 因此这里只能用与之互为逆运算的 `Uri.encode`；旧实现用 `URLEncoder`（form 语义：
+     * 空格→`+`、`%`→`%25`）再在取参处 `URLDecoder.decode` 二次解码，会导致：
+     * - 含 `%` 的名字（如专辑「100% Rock」）经一次 Uri.decode 后变成 `100%+Rock`，
+     *   二次 URLDecoder 遇 `%+R` 非法转义直接抛 IllegalArgumentException → 崩溃；
+     * - 含 `+` 的名字（如歌手「+44」「C++」）被静默解成 `" 44"`/`"C  "` → 分组错乱。
+     */
     fun groupDetail(type: String, key: String): String =
-        "group/$type/${java.net.URLEncoder.encode(key, "UTF-8")}"
+        "group/$type/${Uri.encode(key)}"
 }
 
 /** 应用根：主题 + 底部导航 + 迷你播放条 + 导航宿主 */
@@ -87,7 +97,8 @@ fun PureToneApp() {
                         if (hasCurrentSong) {
                             MiniPlayer(
                                 stateFlow = playerVm.state,
-                                onOpen = { nav.navigate(Routes.PLAYER) },
+                                // P3-27：launchSingleTop，避免连点/多入口重复压入多个播放页实例
+                                onOpen = { nav.navigate(Routes.PLAYER) { launchSingleTop = true } },
                                 onToggle = playerVm::togglePlay,
                                 onPrev = playerVm::prev,
                                 onNext = playerVm::next,
@@ -129,12 +140,17 @@ fun PureToneApp() {
                 startDestination = Routes.BROWSE,
                 modifier = Modifier.fillMaxSize().padding(padding)
             ) {
-                composable(Routes.BROWSE) { BrowseScreen(navController = nav) }
-                composable(Routes.ME) { MeScreen(navController = nav) }
+                // playerVm 由根部（Activity 作用域）统一创建并下发：
+                // 若各目的地自己 hiltViewModel()，拿到的是 NavBackStackEntry 作用域的
+                // 独立实例，其 init 会各自跑一次「恢复上次会话」——恢复以 autoPlay=false
+                // 重建队列并暂停，于是「进播放页/我的/统计页」都会打断正在播放的歌。
+                // 复用同一实例也避免每个页面各起一份 stateIn 管线（P1-10 同源）。
+                composable(Routes.BROWSE) { BrowseScreen(navController = nav, playerVm = playerVm) }
+                composable(Routes.ME) { MeScreen(navController = nav, playerVm = playerVm) }
                 composable(Routes.SETTINGS) { SettingsScreen(navController = nav) }
-                composable(Routes.PLAYER) { PlayerScreen(navController = nav) }
+                composable(Routes.PLAYER) { PlayerScreen(navController = nav, vm = playerVm) }
                 composable(Routes.EQ) { EqScreen(navController = nav) }
-                composable(Routes.STATS) { StatsScreen(navController = nav) }
+                composable(Routes.STATS) { StatsScreen(navController = nav, playerVm = playerVm) }
                 composable(
                     route = Routes.GROUP_DETAIL,
                     arguments = listOf(
@@ -143,9 +159,10 @@ fun PureToneApp() {
                     )
                 ) { backStackEntry ->
                     val gType = backStackEntry.arguments?.getString("type") ?: "album"
-                    val gKey = backStackEntry.arguments?.getString("key")
-                        ?.let { URLDecoder.decode(it, "UTF-8") } ?: ""
-                    GroupDetailScreen(navController = nav, type = gType, key = gKey)
+                    // P0-1：Navigation 已自动 Uri.decode 过一次，这里直接取原值，
+                    // 绝不能再用 URLDecoder 二次解码（见 Routes.groupDetail 注释）
+                    val gKey = backStackEntry.arguments?.getString("key") ?: ""
+                    GroupDetailScreen(navController = nav, type = gType, key = gKey, playerVm = playerVm)
                 }
             }
         }

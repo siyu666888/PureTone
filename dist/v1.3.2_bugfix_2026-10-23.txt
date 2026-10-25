@@ -1,0 +1,116 @@
+PureTone v1.3.2（code 19）— Bugfix：点迷你条进「正在播放」页后播放被自动暂停
+日期：2026-10-23  基线：b0edc15（v1.3.1）
+
+=====================================================================
+一、根因
+=====================================================================
+1) 触发面：PlayerViewModel 会被创建多份。
+   - 根部 PureToneApp 用 hiltViewModel() 拿一份（Activity 作用域）；
+   - 每个导航目的地（BrowseScreen / MeScreen / GroupDetailScreen /
+     PlayerScreen / StatsScreen）各自 hiltViewModel() 再拿一份——
+     hiltViewModel() 默认取 LocalViewModelStoreOwner，即 NavBackStackEntry，
+     所以是**独立实例**。
+2) 每份实例的 init 都会跑一次「恢复上次会话」（PlayerViewModel.kt:102-110，
+   受 resumeOnStart 控制）。
+3) 而 PlaybackManager.restoreLastSession() 内部以 autoPlay=false 调
+   doSetQueueAndPlay()：setMediaItems() 重建队列 + p.pause()。
+   在「播放器里已有内容」时执行，就等于打断正在播放的歌。
+4) PlayerViewModel 里的防重字段 restoreAttempted 是**实例字段**，
+   跨实例无效——新实例照样再恢复一次。
+
+结论：不是路由/组件卸载/播放器重建或监听器误调 pause，而是
+「导航 → 新建 ViewModel 实例 → 二次恢复会话 → 恢复逻辑自带 pause」。
+
+影响面（同一根因，之前都会暂停）：进「正在播放」页、进「我的」、
+进「统计」页、进分组详情页、音乐页重建。
+
+=====================================================================
+二、改动（按修复顺序）
+=====================================================================
+[1] 权威守卫：PlaybackManager.restoreLastSession()（进程级单例）
+    - 文件：app/src/main/java/com/puretone/player/playback/PlaybackManager.kt
+      位置：restoreLastSession() 开头 + 文件末尾新增 canRestoreSession()
+    - 内容：播放器已有媒体项或正在播放时，直接 return false，不重建队列、不 pause。
+      判据抽为纯函数 canRestoreSession(playerItemCount, isPlaying)（可单测）。
+    - 原因：守卫必须落在单例层——ViewModel 的实例级去重挡不住跨实例重复恢复。
+    - 兼容性：故意用 player.mediaItemCount（而非 uiState.queue）作判据，
+      保留「服务被回收但 uiState 仍有队列」时仍能恢复的原有行为。
+[2] 复用根部实例：PureToneApp 的 NavHost
+    - 文件：app/src/main/java/com/puretone/player/ui/PureToneApp.kt
+      位置：NavHost 内 5 个 composable/groupDetail 的调用处
+    - 内容：把根部 Activity 作用域的 playerVm 显式下发给
+      BrowseScreen / MeScreen / PlayerScreen / StatsScreen / GroupDetailScreen。
+    - 原因：消除多余实例（也就不会再各跑一次恢复），顺带去掉 5 份重复的
+      stateIn 管线（与 P1-10 同源的性能收益）。
+[3] StatsScreen 接收外部 playerVm
+    - 文件：app/src/main/java/com/puretone/player/ui/screens/StatsScreen.kt
+    - 内容：函数体内 val playerVm = hiltViewModel<PlayerViewModel>() 改为
+      带默认值的参数 playerVm: PlayerViewModel = hiltViewModel()。
+[4] 注释固化：PlayerViewModel.init 的续播块
+    - 说明「权威守卫在 PlaybackManager」，避免后人误以为实例字段足够。
+[5] 回归测试：新增 app/src/test/.../playback/RestoreGuardTest.kt（4 用例全绿）。
+
+未触碰的逻辑：手动暂停 pause()、togglePlayPause()、后台播放、耳机断开
+（setHandleAudioBecomingNoisy）、音频焦点（handleAudioFocus=true）、
+睡眠定时、暂停/退出时的会话保存——均未改动。
+
+=====================================================================
+三、验证方式
+=====================================================================
+A. 操作路径（主用例）
+   1) 音乐页任选一首歌开始播放 → 确认通知/迷你条显示播放中；
+   2) 回到音乐页（或其他页），点底部**迷你播放器条**进入「正在播放」；
+   3) 断言：全程不中断，进入播放页后仍在播放，进度条继续推进；
+   4) 电量/音量/队列不变：播放页右上角队列列表与进入前一致；
+   5) 再点返回键回音乐页 → 迷你条仍显示播放中、进度继续走。
+
+B. adb 断言（推荐，客观可复核）
+   # 播放状态与进度（连续执行 3 次，间隔 2s）
+   adb shell dumpsys media_session | grep -E "state=PlaybackState|position"
+   断言 1：state=PlaybackState {state=3(PLAYING)...}（state=3 即播放中）
+   断言 2：三次 position 递增（差值约等于真实经过毫秒数）
+   # 导航前后各抓一次，确认 state 从 3 保持为 3，且未出现 state=2(PAUSED)
+   # 日志侧：不应再出现新的「恢复会话」导致的自动暂停（可加过滤）
+   adb logcat -s PlaybackManager
+
+C. UI 断言
+   - 播放页按钮图标保持「暂停」态（不是「播放」态）；
+   - 迷你条按钮图标保持「暂停」态；
+   - 进度条在播放页/迷你条上连续推进，无回跳。
+
+D. 自动化（已随改动落地）
+   ./gradlew :app:testDebugUnitTest  → RestoreGuardTest 4/4 通过
+   （播放器已有内容/正在播放时禁止恢复；空播放器允许恢复）
+
+=====================================================================
+四、需回归检查的场景
+=====================================================================
+1) 手动暂停/继续：播放中点迷你条或播放页的暂停按钮 → 立即暂停；再点 → 继续。
+2) 后台播放：HOME 键退后台、锁屏 → 继续播放；通知栏控制可用。
+3) 耳机断开（ACTION_AUDIO_BECOMING_NOISY）→ 自动暂停（不应受本次改动影响）。
+4) 来电/其它音乐 App 抢占音频焦点 → 暂停，焦点归还后按系统行为恢复。
+5) 冷启动续播（设置「启动时续播上次歌曲」开启）：
+   - 杀进程后重新启动 → 队列恢复到上次的歌与位置，处于暂停态（原有行为不变）；
+   - 首次「点播放」→ 正常出声（不出现只恢复不出声的退化）。
+6) 播放中依次进入：我的 / 统计 / 分组详情 / 均衡器 / 设置，每次进入都不中断播放。
+7) 播放中在音乐页切页签（歌曲/专辑/歌手/文件夹）→ 不中断。
+8) 旋转屏幕 / 切换深色模式 / 切换 AMOLED 纯黑 → 不中断、进度不回跳。
+9) 队列浮层：删除当前曲之前的条目、清空队列 → 索引/UI 不错位（不受本次改动影响）。
+10) APE 曲目：播放中进/出播放页不打断；转码中的「APE 转码中…」提示正常。
+11) 睡眠定时到点 → 仍自动暂停并清零（不受本次改动影响）。
+12) 播放页歌词高亮/封面旋转随播放继续推进（无卡死）。
+
+=====================================================================
+五、产物与校验
+=====================================================================
+dist/PureTone-v1.3.2-universal-release.apk
+  SHA-256: 6abe8d5e26cabda8ebfbd88dd6003ac40675c0789b6855f2a7391c5b2c52fdc0
+dist/PureTone-v1.3.2-arm64-v8a-release.apk
+  SHA-256: e326b0f8ab5653fa1b3728a9fbc0884a7cd3fdc31ffe1d3ea0dc413d2f73b828
+
+apksigner verify（universal）：Verifies；v2 scheme = true；v3 = false（minSdk 26，v2 足够）
+签名者 DN: CN=PureTone, OU=Dev, O=PureTone, L=Unknown, ST=Guangdong, C=CN
+证书 SHA-256: ca868c771df379cd8ea999c1cb7fc39f58d8807f47203e3000463abaafba39c2
+
+构建：:app:testDebugUnitTest + :app:lintDebug  BUILD SUCCESSFUL
+      :app:assembleRelease（含 lintVitalRelease + R8）  BUILD SUCCESSFUL

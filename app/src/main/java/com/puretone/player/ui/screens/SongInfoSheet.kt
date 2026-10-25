@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,15 +72,22 @@ fun SongInfoSheet(
     var saving by remember { mutableStateOf(false) }
     var saveFailed by remember { mutableStateOf(false) }
 
-    var title by remember(song.id) { mutableStateOf(ChineseText.toSimplified(song.title) ?: song.title) }
-    var artist by remember(song.id) { mutableStateOf(ChineseText.toSimplified(song.artist) ?: song.artist) }
-    var album by remember(song.id) { mutableStateOf(ChineseText.toSimplified(song.album) ?: song.album) }
+    // P2-9：改用 rememberSaveable——旧实现是 remember，进程被系统回收后重建时
+    // 用户正在编辑的标题/歌手/专辑与搜索词全部丢失（manifest 的 configChanges 只挡住了
+    // 旋屏重建，挡不住后台杀进程）。这些都是 String，可直接保存。
+    var title by rememberSaveable(song.id) { mutableStateOf(ChineseText.toSimplified(song.title) ?: song.title) }
+    var artist by rememberSaveable(song.id) { mutableStateOf(ChineseText.toSimplified(song.artist) ?: song.artist) }
+    var album by rememberSaveable(song.id) { mutableStateOf(ChineseText.toSimplified(song.album) ?: song.album) }
     // 本地封面预览：套用联网候选后即时刷新（song 参数不会随之更新）
-    var coverUri by remember(song.id) { mutableStateOf(song.coverUri) }
+    var coverUri by rememberSaveable(song.id) { mutableStateOf(song.coverUri) }
+    // P2-11：年份同样本地缓存——弹窗没有年份输入框，而 autoFill/apply 会把
+    // 候选年份直接写库；保存时若仍传 song.year（打开弹窗时的旧值），刚
+    // 自动填充的年份会被旧值覆盖（表现为「填了年份，保存后又变回去」）。
+    var year by rememberSaveable(song.id) { mutableStateOf(song.year) }
     // 预填搜索词：跳过「未知艺术家/空」，避免污染搜索；统一转简体
     val artistPart = (ChineseText.toSimplified(song.artist) ?: song.artist)
         .takeIf { it.isNotBlank() && it != "<unknown>" && it != "未知艺术家" }
-    var metaQuery by remember(song.id) {
+    var metaQuery by rememberSaveable(song.id) {
         mutableStateOf(
             ChineseText.toSimplified(
                 listOfNotNull(artistPart, song.title.takeIf { it.isNotBlank() }).joinToString(" ").trim()
@@ -171,7 +179,7 @@ fun SongInfoSheet(
                     // 失败保留弹窗与已填内容，并提示（旧实现用 currentSongId 会写错歌/静默丢失）。
                     scope.launch {
                         saving = true
-                        val ok = playerVm.saveSongInfo(song.id, title, artist, album, coverUri, song.year)
+                        val ok = playerVm.saveSongInfo(song.id, title, artist, album, coverUri, year)
                         saving = false
                         if (ok) onDismiss() else saveFailed = true
                     }
@@ -216,7 +224,8 @@ fun SongInfoSheet(
                 Button(
                     onClick = {
                         metadataVm.autoFill(song.id, artist, title) { c ->
-                            title = c.title; artist = c.artist; album = c.album; coverUri = c.artworkUrl
+                            title = c.title; artist = c.artist; album = c.album
+                            coverUri = c.artworkUrl; year = c.year
                         }
                         playerVm.refreshCurrentSong()
                     },
@@ -242,10 +251,20 @@ fun SongInfoSheet(
                 }
             }
 
-            // P2-2：可撤销最近一次自动填充
+            // P2-2：可撤销最近一次自动填充。撤销成功时把表单一并还原为
+            // 原歌曲信息——否则表单里仍留着自动填充的值，用户再点「保存修改」
+            // 会把候选值（含年份）又写回库，撤销等于白做。
             if (canUndo) {
                 OutlinedButton(
-                    onClick = { metadataVm.undoAutoFill() },
+                    onClick = {
+                        metadataVm.undoAutoFill { original ->
+                            title = ChineseText.toSimplified(original.title) ?: original.title
+                            artist = ChineseText.toSimplified(original.artist) ?: original.artist
+                            album = ChineseText.toSimplified(original.album) ?: original.album
+                            coverUri = original.coverUri
+                            year = original.year
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("撤销自动填充") }
             }
@@ -274,7 +293,8 @@ fun SongInfoSheet(
                         }
                         TextButton(onClick = {
                             metadataVm.apply(song.id, c) { c2 ->
-                                title = c2.title; artist = c2.artist; album = c2.album; coverUri = c2.artworkUrl
+                                title = c2.title; artist = c2.artist; album = c2.album
+                                coverUri = c2.artworkUrl; year = c2.year
                             }
                             playerVm.refreshCurrentSong()
                         }) { Text("使用") }

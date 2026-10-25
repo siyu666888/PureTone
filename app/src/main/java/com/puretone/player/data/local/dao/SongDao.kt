@@ -40,17 +40,33 @@ interface SongDao {
     @Query("SELECT * FROM songs")
     suspend fun getAll(): List<SongEntity>
 
-    /** 模糊搜索：标题 / 艺术家 / 专辑 */
+    /**
+     * 模糊搜索：标题 / 艺术家 / 专辑。
+     * P3-26：`ESCAPE '\'` + 调用方转义，避免用户输入里的 `%`/`_` 被当通配符。
+     */
     @Query(
         """
         SELECT * FROM songs
-        WHERE title LIKE '%' || :query || '%'
-           OR artist LIKE '%' || :query || '%'
-           OR album LIKE '%' || :query || '%'
+        WHERE title LIKE '%' || :query || '%' ESCAPE '\'
+           OR artist LIKE '%' || :query || '%' ESCAPE '\'
+           OR album LIKE '%' || :query || '%' ESCAPE '\'
         ORDER BY title COLLATE NOCASE ASC
         """
     )
     fun search(query: String): Flow<List<SongEntity>>
+
+    /**
+     * 某文件夹下的歌曲（P2-11：SQL 侧前缀过滤，替代全库内存 filter）。
+     * @param prefix 形如 `<已转义的文件夹路径>/%`
+     */
+    @Query(
+        """
+        SELECT * FROM songs
+        WHERE path LIKE :prefix ESCAPE '\'
+        ORDER BY title COLLATE NOCASE ASC
+        """
+    )
+    fun observeSongsByFolder(prefix: String): Flow<List<SongEntity>>
 
     @Query("SELECT * FROM songs WHERE id = :id")
     suspend fun getById(id: Long): SongEntity?
@@ -164,11 +180,19 @@ interface SongDao {
     @Query("SELECT COUNT(*) FROM songs")
     suspend fun count(): Int
 
-    /** 缺少封面的歌曲（批量补全封面用，最多 [limit] 首） */
+    /**
+     * 缺少封面的歌曲（批量补全封面用，最多 [limit] 首）。
+     *
+     * P2-1：占位 URI（content://media/<任意卷>/audio/albumart/<id>，实际解析
+     * 不出图）同样算「缺失」——旧版扫描会写入这种 URI，它既非 NULL 也非 ''，
+     * 旧判据下这些歌永远进不了补全队列。片段与
+     * [com.puretone.player.data.repository.MusicRepository.ALBUM_ART_URI_MARK]
+     * 保持一致（LIKE 串里无 `%` `_` 通配符，无需 ESCAPE）。
+     */
     @Query(
         """
         SELECT * FROM songs
-        WHERE cover_uri IS NULL OR cover_uri = ''
+        WHERE cover_uri IS NULL OR cover_uri = '' OR cover_uri LIKE '%/audio/albumart/%'
         ORDER BY title COLLATE NOCASE ASC
         LIMIT :limit
         """

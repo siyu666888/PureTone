@@ -43,6 +43,9 @@ data class EffectStatus(
  *   直接对 band 0..9 调 setBandLevel 会在第一个越界 band 抛异常，
  *   且 runCatching 包住整个循环导致后续频段全部静默丢失（历史 bug）。
  *   这里改为「每个设备段取中心频率最接近的 UI 段增益」再下发，天然防越界；
+ * - **主开关语义统一**（P1-5）：重低音/环绕声从属于均衡器主开关——
+ *   主开关关闭时三者一律不启用（旧实现 `applyBass` 只看强度不看主开关，
+ *   关开关后重低音仍按厂商默认响，与 `setEnabled(false)` 路径行为相反）；
  * - 所有 setter 在调用线程执行，均为本地快操作。
  */
 @Singleton
@@ -61,6 +64,19 @@ class AudioEffectController @Inject constructor() {
         /** 强度效果范围 */
         const val MIN_STRENGTH = 0
         const val MAX_STRENGTH = 1000
+
+        /**
+         * 强度类效果（重低音/环绕声）的启停判定（P1-5，纯函数便于单测锁死）：
+         * 从属于主开关——主开关关闭或强度为 0 一律不启用。
+         *
+         * 历史 bug：`applyBass` 旧实现只看 `bassStrength > 0`，用户关掉主开关
+         * （eqEnabled=false）但滑块停在 500 时，经 DataStore 流回
+         * [applySettings] 会把 BassBoost 重新置 enabled=true，主开关关了
+         * 重低音仍在响；而直接调 `setEnabled(false)` 走 [disableAllEffects]
+         * 又全关——同一语义两个入口行为相反。现统一为：两者取与。
+         */
+        internal fun shouldEnableEffect(masterEnabled: Boolean, strength: Int): Boolean =
+            masterEnabled && strength > 0
 
         /** 内置预设：10 段增益（dB） */
         val PRESETS: Map<String, List<Int>> = mapOf(
@@ -114,9 +130,14 @@ class AudioEffectController @Inject constructor() {
         }
     }
 
-    /** 是否确实需要原生音效实例 */
-    private fun needsEffects(): Boolean =
-        enabled || bassStrength > 0 || virtualizerStrength > 0
+    /**
+     * 是否确实需要原生音效实例。
+     *
+     * P1-5：与主开关语义统一——重低音/环绕声从属于主开关，主开关关闭时
+     * 没有任何效果需要生效，也就不必创建原生 AudioEffect 实例（部分机型
+     * 对效果器的实现有缺陷，无谓持有会抬高 native 崩溃风险）。
+     */
+    private fun needsEffects(): Boolean = enabled
 
     /**
      * 按需创建音效实例（幂等）。创建后立即回放当前设置。
@@ -259,17 +280,21 @@ class AudioEffectController @Inject constructor() {
     private fun applyBass() {
         val bb = bassBoost ?: return
         runCatching {
-            // 显式启停：强度 0 即关闭，避免「主开关关了重低音仍在按厂商默认生效」
-            bb.enabled = bassStrength > 0
-            if (bassStrength > 0) bb.setStrength(bassStrength.toShort())
+            // P1-5：主开关关闭时一律不启用（旧实现只看强度，关了主开关
+            // 重低音仍按厂商默认生效）
+            val on = shouldEnableEffect(enabled, bassStrength)
+            bb.enabled = on
+            if (on) bb.setStrength(bassStrength.toShort())
         }.onFailure { Log.w(TAG, "bass failed", it) }
     }
 
     private fun applyVirtualizer() {
         val v = virtualizer ?: return
         runCatching {
-            v.enabled = virtualizerStrength > 0
-            if (virtualizerStrength > 0) v.setStrength(virtualizerStrength.toShort())
+            // P1-5：同 applyBass——从属于主开关
+            val on = shouldEnableEffect(enabled, virtualizerStrength)
+            v.enabled = on
+            if (on) v.setStrength(virtualizerStrength.toShort())
         }.onFailure { Log.w(TAG, "virtualizer failed", it) }
     }
 

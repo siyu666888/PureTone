@@ -49,6 +49,14 @@ data class PureToneSettings(
      * 「重启进程后定时复活」（旧实现只写分钟数，重启后 appliedSleepMin 归 -1 会重计时）。
      */
     val sleepTimerDeadlineMs: Long = 0L,
+    /**
+     * 睡眠定时「到期时刻」的墙钟版本（[System.currentTimeMillis]），0 = 无定时。
+     *
+     * P2-14：elapsedRealtime 在设备重启后归零，长离机重启会算出离谱的剩余时间
+     * （定时失效或立刻触发）。墙钟不受重启影响，是更可靠的基准；
+     * 这里两者都写，读取时优先墙钟，旧数据（只有 elapsed 基准）仍可兼容。
+     */
+    val sleepTimerWallDeadlineMs: Long = 0L,
     /** 循环模式：OFF / ALL / ONE */
     val repeatMode: String = REPEAT_OFF,
     val shuffle: Boolean = false,
@@ -109,6 +117,7 @@ class SettingsRepository @Inject constructor(
         val resumeOnStart = booleanPreferencesKey("playback_resume_on_start")
         val sleepTimerMinutes = intPreferencesKey("playback_sleep_timer_minutes")
         val sleepTimerDeadline = longPreferencesKey("playback_sleep_timer_deadline")
+        val sleepTimerWallDeadline = longPreferencesKey("playback_sleep_timer_wall_deadline")
         val repeatMode = stringPreferencesKey("playback_repeat_mode")
         val shuffle = booleanPreferencesKey("playback_shuffle")
         // eq_
@@ -139,6 +148,8 @@ class SettingsRepository @Inject constructor(
                 resumeOnStart = prefs[Keys.resumeOnStart] ?: defaults.resumeOnStart,
                 sleepTimerMinutes = prefs[Keys.sleepTimerMinutes] ?: defaults.sleepTimerMinutes,
                 sleepTimerDeadlineMs = prefs[Keys.sleepTimerDeadline] ?: defaults.sleepTimerDeadlineMs,
+                sleepTimerWallDeadlineMs = prefs[Keys.sleepTimerWallDeadline]
+                    ?: defaults.sleepTimerWallDeadlineMs,
                 repeatMode = prefs[Keys.repeatMode] ?: defaults.repeatMode,
                 shuffle = prefs[Keys.shuffle] ?: defaults.shuffle,
                 eqEnabled = prefs[Keys.eqEnabled] ?: defaults.eqEnabled,
@@ -166,19 +177,36 @@ class SettingsRepository @Inject constructor(
         if (minutes <= 0) {
             it[Keys.sleepTimerMinutes] = 0
             it[Keys.sleepTimerDeadline] = 0L
+            it[Keys.sleepTimerWallDeadline] = 0L
         } else {
             it[Keys.sleepTimerMinutes] = minutes
             it[Keys.sleepTimerDeadline] = SystemClock.elapsedRealtime() + minutes * 60_000L
+            // P2-14：同时写墙钟到期时刻（重启后仍然准确）
+            it[Keys.sleepTimerWallDeadline] = System.currentTimeMillis() + minutes * 60_000L
         }
     }
 
     /** 定时到期后调用：只清「到期时刻」，保留分钟数供 UI 显示上次选择 */
     suspend fun clearSleepTimerDeadline() = edit {
         it[Keys.sleepTimerDeadline] = 0L
+        it[Keys.sleepTimerWallDeadline] = 0L
     }
 
-    /** 剩余毫秒数（0 或负数表示无定时/已到期） */
+    /** 是否存在未到期的定时（用于决定是否需要清理） */
+    fun hasSleepTimer(s: PureToneSettings): Boolean =
+        s.sleepTimerDeadlineMs > 0L || s.sleepTimerWallDeadlineMs > 0L
+
+    /**
+     * 剩余毫秒数（0 表示无定时/已到期）。
+     *
+     * P2-14：优先取墙钟基准——elapsedRealtime 在重启后归零会让剩余时间失真；
+     * 只有旧版本写入的数据（仅有 elapsed 基准）才回退到 elapsed 计算。
+     */
     fun sleepRemainingMs(s: PureToneSettings): Long {
+        val wallDeadline = s.sleepTimerWallDeadlineMs
+        if (wallDeadline > 0L) {
+            return (wallDeadline - System.currentTimeMillis()).coerceAtLeast(0L)
+        }
         val deadline = s.sleepTimerDeadlineMs
         if (deadline <= 0L) return 0L
         return (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)

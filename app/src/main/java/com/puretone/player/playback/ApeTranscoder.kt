@@ -4,10 +4,12 @@ import android.content.Context
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -40,18 +42,18 @@ class ApeTranscoder @Inject constructor(
     /** 同一首歌的转码互斥（按 songId 懒创建） */
     private val songLocks = ConcurrentHashMap<Long, Mutex>()
 
-    private fun lockFor(songId: Long): Mutex {
-        val lock = songLocks.getOrPut(songId) { Mutex() }
-        // 防御：超长 APE 队列后清理未被持有的锁，避免 map 无限增长
-        if (songLocks.size > LOCK_MAP_MAX) {
-            songLocks.entries.removeAll { it.key != songId && !it.value.isLocked }
-        }
-        return lock
-    }
-
-    /** 目标 WAV 是否已缓存 */
-    fun isCached(songId: Long): Boolean =
-        File(cacheDir, fileName(songId)).let { it.exists() && it.length() > 0 }
+    /**
+     * 同一首歌的转码互斥（按 songId 懒创建）。
+     *
+     * P1-4：必须用 [ConcurrentHashMap.computeIfAbsent]（原子），不能用
+     * `getOrPut { Mutex() }`——后者是「get + put」两步非原子：两个线程
+     * 可能各建一把锁都 put 进去，同曲并发互斥失效 → 两个 ffmpeg 同写一个
+     * `.tmp`，半截 WAV 还会被后续调用当成「缓存命中」播出去。
+     *
+     * 锁条目永不删除：songId 有界（曲库曲目数），[Mutex] 对象本身极小；
+     * 旧实现按 `LOCK_MAP_MAX` 清理会删掉「别人即将持有」的锁，反而制造竞态。
+     */
+    private fun lockFor(songId: Long): Mutex = songLocks.computeIfAbsent(songId) { Mutex() }
 
     /**
      * 确保歌曲已转码为 WAV 并返回文件；失败返回 null。
@@ -71,19 +73,10 @@ class ApeTranscoder @Inject constructor(
                 cacheDir.mkdirs()
                 val tmp = File(cacheDir, "${fileName(songId)}.tmp")
                 tmp.delete()
-                val session = runCatching {
-                    FFmpegKit.executeWithArguments(
-                        arrayOf(
-                            "-y",
-                            "-i", source.absolutePath,
-                            "-c:a", "pcm_s16le",
-                            "-f", "wav",
-                            tmp.absolutePath
-                        )
-                    )
-                }.getOrNull() ?: return@withContext null
+                // P3-22：转码带墙钟上限（见 [transcode]），超时会 cancel 掉 ffmpeg
+                val transcoded = runCatching { transcode(source, tmp) }.getOrDefault(false)
 
-                if (ReturnCode.isSuccess(session.returnCode) && tmp.length() > 0) {
+                if (transcoded) {
                     val ok = tmp.renameTo(target) || runCatching {
                         tmp.copyTo(target, overwrite = true).let { tmp.delete(); true }
                     }.getOrDefault(false)
@@ -101,6 +94,34 @@ class ApeTranscoder @Inject constructor(
             }
         }
 
+    /**
+     * 执行 ffmpeg 转码并等待结果（P3-22：带墙钟上限）。
+     *
+     * 旧实现同步 `FFmpegKit.executeWithArguments` 且不设上限：损坏或编码异常的
+     * APE 会让 ffmpeg 长时间不返回，该曲永久卡在「转码中」，还一直占着每曲 Mutex
+     * （同曲的后续播放请求全部排队等它）。这里改为异步执行 + [withTimeoutOrNull]，
+     * 超时主动 cancel 会话，让调用方能正常走失败分支。
+     */
+    private suspend fun transcode(source: File, tmp: File): Boolean {
+        val done = CompletableDeferred<Boolean>()
+        val session = FFmpegKit.executeWithArgumentsAsync(
+            arrayOf(
+                "-y",
+                "-i", source.absolutePath,
+                "-c:a", "pcm_s16le",
+                "-f", "wav",
+                tmp.absolutePath
+            )
+        ) { s -> done.complete(ReturnCode.isSuccess(s.returnCode)) }
+        val success = withTimeoutOrNull(FFMPEG_TIMEOUT_MS) { done.await() }
+        if (success == null) {
+            // 超时：终止 ffmpeg，避免残留进程继续写这个 tmp
+            runCatching { FFmpegKit.cancel(session.sessionId) }
+            return false
+        }
+        return success && tmp.length() > 0
+    }
+
     /** 清除全部转码缓存 */
     suspend fun clearCache() = withContext(Dispatchers.IO) {
         cacheDir.listFiles()?.forEach { it.delete() }
@@ -115,7 +136,11 @@ class ApeTranscoder @Inject constructor(
 
     /** 超出字节上限时淘汰最久未使用的缓存（按 lastModified LRU） */
     private fun trimCache() {
-        val files = cacheDir.listFiles()?.filter { it.isFile }?.sortedBy { it.lastModified() } ?: return
+        // P2-16：排除正在写的 .tmp——它也会被算进总字节并参与 LRU，
+        // 缓存接近上限时可能把「正在转码」的临时文件删掉，导致该次转码白做
+        val files = cacheDir.listFiles()
+            ?.filter { it.isFile && !it.name.endsWith(".tmp") }
+            ?.sortedBy { it.lastModified() } ?: return
         var total = files.sumOf { it.length() }
         if (total <= MAX_CACHE_BYTES) return
         for (f in files) {
@@ -134,7 +159,11 @@ class ApeTranscoder @Inject constructor(
          */
         const val MAX_CACHE_BYTES = 2L * 1024 * 1024 * 1024
 
-        /** 锁 map 容量上限（防御性清理阈值） */
-        private const val LOCK_MAP_MAX = 128
+        /**
+         * 单次转码的墙钟上限（P3-22）。
+         * WAV 是无损 PCM，转码本身不重编码，正常是秒级到几十秒；
+         * 5 分钟足够覆盖超长单曲与低端机，超出即判定为异常并放弃。
+         */
+        private const val FFMPEG_TIMEOUT_MS = 5L * 60 * 1000
     }
 }

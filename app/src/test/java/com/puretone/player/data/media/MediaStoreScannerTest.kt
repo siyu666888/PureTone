@@ -107,7 +107,7 @@ class MediaStoreScannerTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val scanner = MediaStoreScanner(context)
         val songsByPath = LinkedHashMap<String, ScannedSong>()
-        val albumArtCache = HashMap<Long, Boolean>()
+        val albumArtCache = HashMap<String, Boolean>()
 
         fun cursor(vararg rows: Array<Any?>) = RoboCursor().apply {
             setColumnNames(PROJECTION.toList())

@@ -20,13 +20,13 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 /**
- * 数据库迁移 3 → 4 的实证测试（P1-4）。
+ * 数据库迁移 3 → 4 → 5 的实证测试（P1-4 / P2-2 / P2-3）。
  *
  * 迁移 SQL 是手写的（SQLite 不能 ALTER 加外键，只能重建表），必须与
- * Room 按实体注解生成的 v4 schema 逐字一致，否则运行期 schema 校验直接崩。
- * 本测试不依赖 assets 挂载：直接按导出的 3.json 造一个"旧版本真实库"，
- * 再用 Room 的正常打开路径升级——schema 校验、数据搬运、外键级联
- * 全链路走一遍。
+ * Room 按实体注解生成的目标 schema 逐字一致，否则运行期 schema 校验直接崩。
+ * 本测试不依赖 assets 挂载：直接按导出的 3.json / 4.json 造一个"旧版本真实库"，
+ * 再用 Room 的正常打开路径升级——schema 校验、数据搬运、外键级联、
+ * v5 索引创建全链路走一遍。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -51,13 +51,15 @@ class PureToneDatabaseMigrationTest {
     fun `migrate 3 to 4 cleans orphans adds fk cascade and keeps data`() = runTest {
         createV3DatabaseWithData()
 
-        // 用 Room 的正常打开路径升级：跑 MIGRATION_3_4 + schema 校验 + 开外键。
-        // 任何一步不对（DDL 漂移、数据丢失、校验失败）都会在这里抛错。
+        // 用 Room 的正常打开路径升级：跑 MIGRATION_3_4 + MIGRATION_4_5 +
+        // v5 schema 校验 + 开外键。任何一步不对（DDL 漂移、数据丢失、
+        // 校验失败）都会在这里抛错。
         val db = Room.databaseBuilder(context, PureToneDatabase::class.java, dbFile.absolutePath)
             .addMigrations(
                 PureToneDatabase.MIGRATION_1_2,
                 PureToneDatabase.MIGRATION_2_3,
-                PureToneDatabase.MIGRATION_3_4
+                PureToneDatabase.MIGRATION_3_4,
+                PureToneDatabase.MIGRATION_4_5
             )
             .build()
 
@@ -94,6 +96,47 @@ class PureToneDatabaseMigrationTest {
         assertEquals(0, db.playlistDao().observePlaylistSongRowsOf(playlistId).first().size)
 
         db.close()
+    }
+
+    @Test
+    fun `migrate 4 to 5 adds query indexes and keeps data`() = runTest {
+        createV4DatabaseWithData()
+
+        // 只注册 4 → 5：验证纯索引迁移 + v5 schema 校验（索引名/列序与实体
+        // @Index 注解不一致会在这里抛错）
+        val db = Room.databaseBuilder(context, PureToneDatabase::class.java, dbFile.absolutePath)
+            .addMigrations(PureToneDatabase.MIGRATION_4_5)
+            .build()
+
+        // 1) 触发真实打开：跑迁移 + schema 校验，数据完整保留
+        assertEquals(1, db.songDao().count())
+        assertEquals(1, db.playHistoryDao().observeRecent(50).first().size)
+
+        // 2) 四个新索引真实存在于各自表上（PRAGMA index_list）
+        val songIndexes = indexNamesOf(db, "songs")
+        assertTrue("缺 index_songs_date_added：$songIndexes", songIndexes.contains("index_songs_date_added"))
+        assertTrue(
+            "缺 index_songs_play_count_last_played_at：$songIndexes",
+            songIndexes.contains("index_songs_play_count_last_played_at")
+        )
+        assertTrue("缺 index_songs_duration：$songIndexes", songIndexes.contains("index_songs_duration"))
+        val historyIndexes = indexNamesOf(db, "play_history")
+        assertTrue(
+            "缺 index_play_history_played_at：$historyIndexes",
+            historyIndexes.contains("index_play_history_played_at")
+        )
+
+        db.close()
+    }
+
+    /** 查询表上真实存在的索引名集合 */
+    private fun indexNamesOf(db: PureToneDatabase, table: String): Set<String> {
+        val names = mutableSetOf<String>()
+        db.openHelper.writableDatabase.query("PRAGMA index_list(`$table`)").use { c ->
+            val nameCol = c.getColumnIndexOrThrow("name")
+            while (c.moveToNext()) names += c.getString(nameCol)
+        }
+        return names
     }
 
     /** 按导出的 3.json 建库并灌入数据（含两条悬空引用） */
@@ -146,6 +189,44 @@ class PureToneDatabaseMigrationTest {
             db.execSQL(
                 "INSERT INTO play_history (id, song_id, played_at, duration_ms) " +
                     "VALUES (2, 999, 100, 5000)"
+            )
+        }
+        helper.close()
+    }
+
+    /** 按导出的 4.json 建库并灌入数据（v4 真实库，尚无 v5 的新索引） */
+    private fun createV4DatabaseWithData() {
+        val schema = readSchema(4)
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbFile.absolutePath)
+                .callback(object : SupportSQLiteOpenHelper.Callback(4) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        schema.first.forEach { (table, ddl) -> db.execSQL(ddl) }
+                        schema.second.forEach { db.execSQL(it) }
+                    }
+
+                    override fun onUpgrade(
+                        db: SupportSQLiteDatabase,
+                        oldVersion: Int,
+                        newVersion: Int
+                    ) = Unit
+                })
+                .build()
+        )
+        helper.writableDatabase.use { db ->
+            db.execSQL(
+                """
+                INSERT INTO songs (id, media_store_id, title, artist, album, album_id, duration,
+                    path, size, cover_uri, mimeType, year, track_number, date_added, date_modified,
+                    favorite, play_count, last_played_at, user_edited)
+                VALUES ($SONG_ID, 100, 'Song A', 'Artist', 'Album', 1, 200000, '/music/a.mp3', 1000,
+                    NULL, 'audio/mpeg', 2024, 1, 1000, 2000, 1, 3, 99, 0)
+                """.trimIndent()
+            )
+            db.execSQL(
+                "INSERT INTO play_history (id, song_id, played_at, duration_ms) " +
+                    "VALUES (1, $SONG_ID, 100, 5000)"
             )
         }
         helper.close()

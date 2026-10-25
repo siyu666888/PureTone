@@ -46,6 +46,19 @@ class PlaylistImportResolverTest {
     }
 
     @Test
+    fun `suffix match respects path segment boundary`() {
+        // P2-12：旧实现裸 endsWith 会让条目 "music/a.mp3" 命中 ".../mymusic/a.mp3"
+        // （目录名恰好同后缀），且因唯一而静默导入——导入的是另一首歌。
+        // 修复后：后缀层要求 "/" 边界 → 不命中；文件名层两首同名 → 歧义跳过。
+        val library = listOf(
+            song(1, "/storage/emulated/0/mymusic/a.mp3"),
+            song(2, "/storage/emulated/0/other/a.mp3")
+        )
+        val entries = listOf(M3uEntry("music/a.mp3"))
+        assertEquals(emptyList<Long>(), PlaylistImportResolver.resolve(entries, library).map { it.id })
+    }
+
+    @Test
     fun `skips ambiguous file name matches`() {
         val library = listOf(
             song(1, "/storage/emulated/0/Music/a.mp3"),

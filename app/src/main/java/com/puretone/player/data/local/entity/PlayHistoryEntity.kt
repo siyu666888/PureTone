@@ -17,7 +17,10 @@ import androidx.room.PrimaryKey
  */
 @Entity(
     tableName = "play_history",
-    indices = [Index(value = ["song_id"])],
+    // P2-2：played_at 索引支撑「最近播放」倒序 LIMIT、统计页时间窗聚合与
+    // 小时级清理 DELETE——这三条全是 Flow，订阅期间每插一条历史就重算一次，
+    // 无索引时每次都是全表扫描 + 重排。v5 迁移负责给既有装机补上。
+    indices = [Index(value = ["song_id"]), Index("played_at")],
     foreignKeys = [
         ForeignKey(
             entity = SongEntity::class,

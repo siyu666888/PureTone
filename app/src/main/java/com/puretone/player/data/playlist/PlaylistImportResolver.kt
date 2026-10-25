@@ -27,8 +27,13 @@ object PlaylistImportResolver {
             val normalized = entry.path.replace('\\', '/')
             // 后缀 tier 同样必须唯一：裸文件名（a.mp3）会同时命中多个目录下的同名曲库文件，
             // 此时必须判歧义跳过，而不是静默匹配第一首（导入错歌）
+            // P2-12：必须以「路径段边界」结尾匹配。旧实现裸 endsWith 会让条目
+            // "music/a.mp3" 命中曲库里的 ".../mymusic/a.mp3"（目录名恰好同后缀），
+            // 且因为唯一而静默导入——导进来的是另一首歌。
             val suffixMatches = bySuffix.entries.filter { (libPath, _) ->
-                libPath.endsWith(normalized) || normalized.endsWith(libPath)
+                libPath == normalized ||
+                    libPath.endsWith("/$normalized") ||
+                    normalized.endsWith("/$libPath")
             }
             val match = byPath[normalized]
                 ?: suffixMatches.singleOrNull()?.value?.firstOrNull()

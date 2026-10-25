@@ -1,11 +1,14 @@
 package com.puretone.player.playback
 
+import android.Manifest
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.IBinder
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -20,6 +23,8 @@ import javax.inject.Inject
  * 在 onCreate 创建二者并 [PlaybackManager.bind] 注入单例；onDestroy 解绑并释放，
  * 释放顺序符合 MediaSessionService 约定（先解绑 manager，再释放 player/session）。
  */
+// ConnectionResult.DEFAULT_* 常量是 Media3 的 UnstableApi（与 PlaybackManager 同）
+@OptIn(UnstableApi::class)
 @AndroidEntryPoint
 class PlaybackService : MediaSessionService() {
 
@@ -45,6 +50,7 @@ class PlaybackService : MediaSessionService() {
 
         session = MediaSession.Builder(this, player)
             .setSessionActivity(sessionActivityIntent())
+            .setCallback(SessionCallback())   // P1-4：控制器白名单
             .build()
 
         playbackManager.bind(player, session)
@@ -66,6 +72,48 @@ class PlaybackService : MediaSessionService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession = session
 
+    /**
+     * 会话回调：控制器准入白名单（P1-4）。
+     *
+     * 本服务在清单里 `exported=true`（Media3 媒体会话的标准做法），不加校验时
+     * 设备上**任意 App** 都能连上会话：读取当前播放的歌名/歌手/队列元数据，
+     * 还能控制播放、暂停、切歌。这里只放行自身包与已知的系统级媒体控制器
+     * （系统控制中心、Android Auto、语音助手、Wear OS），其余一律 reject。
+     *
+     * 注意：准入是「会话级」的（MediaSession.Callback.onConnect），
+     * 服务基类 MediaSessionService 没有 onConnect 可覆写。
+     */
+    @OptIn(UnstableApi::class)
+    private inner class SessionCallback : MediaSession.Callback {
+        @OptIn(UnstableApi::class)
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo
+        ): MediaSession.ConnectionResult {
+            if (!isAllowedController(controller.packageName)) {
+                Log.w(TAG, "拒绝未授权控制器：${controller.packageName}")
+                return MediaSession.ConnectionResult.reject()
+            }
+            return MediaSession.ConnectionResult.accept(
+                MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS,
+                MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
+            )
+        }
+    }
+
+    private fun isAllowedController(pkg: String?): Boolean {
+        if (pkg.isNullOrBlank()) return false
+        // 自身（UI / 本 App 发布的通知控制器）
+        if (pkg == packageName) return true
+        // 已知的系统级媒体客户端
+        if (pkg in KNOWN_CONTROLLERS) return true
+        // 持有 MEDIA_CONTENT_CONTROL 的系统媒体控制器（部分 ROM 的通知控制中心/语音助手）
+        return runCatching {
+            packageManager.checkPermission(Manifest.permission.MEDIA_CONTENT_CONTROL, pkg) ==
+                PackageManager.PERMISSION_GRANTED
+        }.getOrDefault(false)
+    }
+
     override fun onTaskRemoved(rootIntent: Intent?) {
         if (!player.playWhenReady || player.mediaItemCount == 0) {
             stopSelf()
@@ -84,6 +132,20 @@ class PlaybackService : MediaSessionService() {
 
     private companion object {
         const val TAG = "PlaybackService"
+
+        /**
+         * 允许连接的已知媒体控制器包名（P1-4）。
+         * 与「任意 App 可连」相比已大幅收敛；如需支持新的车载/穿戴/语音助手，
+         * 在这里补包名即可。
+         */
+        val KNOWN_CONTROLLERS = setOf(
+            "com.android.systemui",                    // 系统控制中心 / 锁屏媒体
+            "com.google.android.projection.gearhead",  // Android Auto
+            "com.google.android.apps.auto",            // Android Auto（部分版本）
+            "com.google.android.googlequicksearchbox", // Google Assistant
+            "com.google.android.apps.googleassistant", // Google Assistant（独立包）
+            "com.google.android.wearable.app"          // Wear OS
+        )
     }
 
     private fun sessionActivityIntent(): PendingIntent {

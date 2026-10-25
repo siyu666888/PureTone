@@ -116,6 +116,15 @@ class PlaybackManager @Inject constructor(
     private var settingsJob: Job? = null
     private var apeRetryIndex: Int = -1
 
+    /** 播放会话保存的去抖任务（P3-20：连续暂停/播放时取消上一个，避免协程堆叠） */
+    private var saveSessionJob: Job? = null
+
+    /**
+     * 队列命令代次（P1-3）：每次「设置队列」自增。
+     * 异步任务在挂起恢复后比对代次，过期则放弃写入，防止旧队列覆盖新队列。
+     */
+    private var queueGeneration: Int = 0
+
     /** 「完整播放完成」去重窗口：自动切歌（AUTO/REPEAT）与末首播完（STATE_ENDED）
      *  两条路径可能指向同一首歌，5s 内只计一次，避免统计页播放次数虚高。 */
     private var lastCompletionId: Long = -1L
@@ -174,7 +183,18 @@ class PlaybackManager @Inject constructor(
                         durationMs = player?.duration?.coerceAtLeast(0L) ?: state.durationMs
                     )
                 }
-                scope.launch { musicRepository.recordPlay(songId) }
+                // P1-2：只有「真的开始听这一首」才写播放历史：
+                // - AUTO / REPEAT：自然播完切下一首、单曲循环回放；
+                // - PLAYLIST_CHANGED 且换了歌：用户新选了一首开始播（换队列起播）。
+                // 用户手动上/下一首（SEEK）不计——连点 next 会把「最近播放 /
+                // 累计听歌时长 / 活跃天数 / 日均时长」整片灌水（旧实现对所有 reason 无差别记录）。
+                val isNaturalAdvance = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                    reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
+                val isFreshStart = reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED &&
+                    songId != prevId
+                if (isNaturalAdvance || isFreshStart) {
+                    scope.launch { musicRepository.recordPlay(songId) }
+                }
                 warmUpFollowingApe()
             }
             // 无缝播放关闭：在自动切歌（非用户手动 next）的边界处暂停，
@@ -200,7 +220,9 @@ class PlaybackManager @Inject constructor(
             }
             // 睡眠定时剩余时间随 ticker 刷新，UI 才能显示「剩余 12:34」
             refreshSleepRemaining()
-            delay(500)
+            // P3-18：暂停时不需要 500ms 粒度（睡眠定时剩余也只需秒级），
+            // 拉长到 2s，减少空转唤醒
+            delay(if (p?.isPlaying == true) 500 else 2_000)
         }
     }
 
@@ -225,6 +247,12 @@ class PlaybackManager @Inject constructor(
         // 执行挂起请求
         pendingPlay?.let { req ->
             pendingPlay = null
+            // P1-3：显式点歌优先于挂起的续播。冷启动首帧可能已由 togglePlayPause /
+            // play / playAtIndex 排了 pendingRestore（自动恢复上次会话），用户随后
+            // 的点歌更新鲜——两条命令若在 bind 后并发执行，恢复出的旧队列会覆盖
+            // 用户新点的歌（queueGeneration 守卫也救不了：恢复命令最后执行、
+            // 代次最新，先执行的点歌反而被判过期丢弃）。
+            pendingRestore = false
             scope.launch { doSetQueueAndPlay(req.songs, req.startIndex, req.startPositionMs, autoPlay = true) }
         }
         pendingEnqueue?.let { songs ->
@@ -300,7 +328,8 @@ class PlaybackManager @Inject constructor(
             // 无定时，或已过期（例如到期瞬间进程被杀）→ 收尾并清零
             sleepTimerJob?.cancel()
             sleepTimerJob = null
-            if (s.sleepTimerDeadlineMs > 0L) {
+            // P2-14：两个基准的到期时刻都要能触发清理
+            if (settings.hasSleepTimer(s)) {
                 scope.launch { settings.clearSleepTimerDeadline() }
             }
             _uiState.update { it.copy(sleepRemainingMs = 0L) }
@@ -323,7 +352,10 @@ class PlaybackManager @Inject constructor(
     fun setQueueAndPlay(songs: List<SongEntity>, startIndex: Int = 0, startPositionMs: Long = 0L) {
         val p = player
         if (p == null) {
+            // P1-3：显式点歌优先于挂起的续播（理由同 bind）——不清理的话，
+            // bind 后点歌与恢复两条命令并发，旧会话队列可能覆盖用户的新选择。
             pendingPlay = PendingPlay(songs, startIndex, startPositionMs)
+            pendingRestore = false
             ensureServiceStarted()
             return
         }
@@ -343,11 +375,17 @@ class PlaybackManager @Inject constructor(
     ) {
         val p = player ?: return
         if (songs.isEmpty()) return
+        // P1-3：本次「设置队列」命令的代次。下面 APE 转码会挂起（长曲可达数十秒），
+        // 期间用户完全可能又点了别的歌；本协程恢复后若发现代次已被后来的命令刷新，
+        // 就说明自己是过期任务，必须放弃——否则会用旧队列覆盖掉新队列
+        // （表现为「点了新歌，播的却是上一首/旧队列」）。
+        val generation = ++queueGeneration
         val entries = songs.map { it.toQueueEntry() }
 
         // 只转码「即将播放的这一首」：整队预转码会让 20 首 APE 的专辑等几十秒才出声。
         // 其余 APE 在切歌/出错时按需转码（见 playAtIndex / handlePlayerError / warmUpFollowingApe）。
-        val startSong = songs[startIndex]
+        // P3-17：索引不再裸取——越界（调用方传错）时静默放弃，而不是抛 IndexOutOfBounds。
+        val startSong = songs.getOrNull(startIndex) ?: return
         val startUri = if (startSong.isApe) {
             _uiState.update { it.copy(isTranscoding = true) }
             val wav = runCatching { apeTranscoder.ensureWav(startSong.id, startSong.path) }.getOrNull()
@@ -371,6 +409,14 @@ class PlaybackManager @Inject constructor(
                 song.toMediaItem(mediaStoreUri(song))
             }
         }
+
+        // 挂起点（APE 转码）之后重新确认自己仍是「最新」的队列命令
+        if (generation != queueGeneration) return
+
+        // P2-14：新队列生效前复位 APE 重试标记——它是按「队列内索引」记的，
+        // 旧队列 index=2 的 APE 重试过一次，新队列同样 index=2 的 APE
+        // 首次出错就会被误判「已重试过」而跳过转码，直接卡在 IDLE。
+        apeRetryIndex = -1
 
         p.setMediaItems(mediaItems, startIndex, startPositionMs)
         p.prepare()
@@ -429,7 +475,10 @@ class PlaybackManager @Inject constructor(
 
     /** 播放队列中指定索引（APE 按需转码后替换 URI） */
     fun playAtIndex(index: Int) {
-        val p = player ?: run { pendingPlay = PendingPlay(emptyList(), index, 0L); ensureServiceStarted(); return }
+        // P2-13：服务未就绪时旧实现写 PendingPlay(emptyList(), index, 0L)，
+        // bind 后 doSetQueueAndPlay 在 songs.isEmpty() 处直接 return → 点了队列项却无声。
+        // 改为标记「待恢复会话」，服务起来后由 bind() 真正恢复上次队列。
+        val p = player ?: run { pendingRestore = true; ensureServiceStarted(); return }
         if (index !in _uiState.value.queue.indices) return
         scope.launch {
             val entry = _uiState.value.queue[index]
@@ -484,6 +533,8 @@ class PlaybackManager @Inject constructor(
                 error = null
             )
         }
+        // P2-14：APE 重试标记随队列清空一并复位（理由同 stop）
+        apeRetryIndex = -1
         scope.launch { musicRepository.clearPlaybackSession() }
         stopServiceIfIdle()
     }
@@ -522,7 +573,26 @@ class PlaybackManager @Inject constructor(
     fun stop() {
         player?.stop()
         player?.clearMediaItems()
-        _uiState.value = PlaybackUiState()
+        // P3-21：旧实现整包重置 uiState，把 repeatMode / shuffle / speed 一并打回默认，
+        // 而播放器实例上的这些属性并未被重置 → UI 与真实状态不符。
+        // 与 clearQueue 对齐：只清「瞬时」字段，保留用户偏好。
+        _uiState.update { state ->
+            state.copy(
+                queue = emptyList(),
+                queueIndex = -1,
+                currentSongId = null,
+                positionMs = 0L,
+                durationMs = 0L,
+                isTranscoding = false,
+                isBuffering = false,
+                error = null
+            )
+        }
+        // 让仍在途的旧队列任务失效（例如 APE 转码挂起中）
+        queueGeneration++
+        // P2-14：APE 重试标记随旧队列一并作废——否则新队列同索引的 APE
+        // 首次出错时会被误判为「已重试过」，跳过转码重试直接卡在 IDLE。
+        apeRetryIndex = -1
         // 显式停止即放弃续播：清会话，否则下次冷启动会把已停的队列又恢复出来
         scope.launch { musicRepository.clearPlaybackSession() }
         stopServiceIfIdle()
@@ -594,8 +664,23 @@ class PlaybackManager @Inject constructor(
 
     // ---------- 续播 ----------
 
-    /** 恢复上次播放会话（受 settings resumeOnStart 控制，由 PlayerViewModel 首帧后调用） */
+    /**
+     * 恢复上次播放会话（受 settings resumeOnStart 控制，由 PlayerViewModel 首帧后调用）。
+     *
+     * 守卫必须放在本层（进程级单例），不能只靠 ViewModel 的实例字段：
+     * - 恢复以 [autoPlay=false] 重建队列并 `pause()`，一旦在「播放器里已有内容」时
+     *   执行，就会打断正在播放的歌（队列、进度、音量均被重置）；
+     * - 每个导航目的地用 `hiltViewModel()` 拿到的是 **NavBackStackEntry 作用域的独立
+     *   PlayerViewModel 实例**，其 init 都会跑一次恢复。于是「点迷你条进播放页」
+     *   （以及进 我的 / 统计 / 分组详情 页）都会新建实例 → 二次恢复 → 自动暂停。
+     *
+     * 因此：播放器已有媒体项或正在播放时，一律原样返回 false。
+     */
     suspend fun restoreLastSession(): Boolean {
+        val p = player
+        if (!canRestoreSession(playerItemCount = p?.mediaItemCount ?: 0, isPlaying = p?.isPlaying == true)) {
+            return false
+        }
         val saved = musicRepository.loadPlaybackSession() ?: return false
         if (saved.songIds.isEmpty()) return false
         // 按保存的顺序重建队列并保留重复项：getByIds 是 `IN (:ids)` 查询，
@@ -603,6 +688,17 @@ class PlaybackManager @Inject constructor(
         val byId = musicRepository.getSongs(saved.songIds).associateBy { it.id }
         val songs = saved.songIds.mapNotNull { byId[it] }
         if (songs.isEmpty()) return false
+        // P1-2：上面的 DB 读取是挂起点——这期间用户可能已经点了别的歌起播
+        // （setQueueAndPlay 会重建队列）。起播前必须再查一次守卫：否则旧会话
+        // 队列会覆盖用户的新选择，表现为「点了新歌却播出旧队列/旧歌」。
+        val current = player
+        if (!canRestoreSession(
+                playerItemCount = current?.mediaItemCount ?: 0,
+                isPlaying = current?.isPlaying == true
+            )
+        ) {
+            return false
+        }
         // autoPlay=false：恢复后停在当前位置，是否播交给用户（旧实现先 setQueueAndPlay
         // 再 pause()，APE 队列会在 ensureWav 挂起导致 pause 先于 play 执行，行为不确定）。
         doSetQueueAndPlay(
@@ -615,17 +711,31 @@ class PlaybackManager @Inject constructor(
     }
 
     private fun saveSessionDebounced() {
-        scope.launch { delay(800); saveSessionNow() }
+        // P3-20：取消上一个去抖任务再排新的——连续切播放/暂停时不会堆一串
+        // 各睡 800ms 的协程（旧实现每次都新起一个）
+        saveSessionJob?.cancel()
+        saveSessionJob = scope.launch { delay(800); saveSessionNow() }
     }
 
     private fun saveSessionNow() {
         val state = _uiState.value
         if (state.queue.isEmpty()) return
         scope.launch {
+            val p = player
+            val rawPosition = (p?.currentPosition ?: 0L).coerceAtLeast(0L)
+            // duration 未知时 ExoPlayer 返回 C.TIME_UNSET（远小于 0），takeIf 挡掉
+            val duration = p?.duration?.takeIf { it > 0 } ?: 0L
+            // P2-17：STATE_ENDED 时 currentPosition 即总时长，原样存下去次
+            // restoreLastSession 以 positionMs = duration 起播，seek 到结尾
+            // 立即再次 ENDED——表现为「续播恢复了但什么都没发生」。
+            // 统一钳到 duration-500 以内（时长未知或极短（<500ms）时保底 0）。
+            val position =
+                if (duration > 0L) rawPosition.coerceIn(0L, (duration - 500L).coerceAtLeast(0L))
+                else rawPosition
             musicRepository.savePlaybackSession(
                 songIds = state.queue.map { it.songId },
                 index = state.queueIndex,
-                positionMs = player?.currentPosition ?: 0L
+                positionMs = position
             )
         }
     }
@@ -639,9 +749,16 @@ class PlaybackManager @Inject constructor(
         if (entry != null && entry.isApe && apeRetryIndex != index) {
             apeRetryIndex = index
             scope.launch {
+                // P0-2：与 doSetQueueAndPlay / playAtIndex 一致包 runCatching——
+                // ensureWav 一旦抛出（IO/FFmpegKit/取消），协程会经 SupervisorJob
+                // 直达未捕获异常处理器导致进程崩溃；isTranscoding 用 finally 保证
+                // 一定复位，否则 UI 会永久卡在「APE 转码中…」。
                 _uiState.update { it.copy(isTranscoding = true) }
-                val wav = apeTranscoder.ensureWav(entry.songId, entry.filePath)
-                _uiState.update { it.copy(isTranscoding = false) }
+                val wav = try {
+                    runCatching { apeTranscoder.ensureWav(entry.songId, entry.filePath) }.getOrNull()
+                } finally {
+                    _uiState.update { it.copy(isTranscoding = false) }
+                }
                 if (wav != null) {
                     replaceMediaItemUri(index, wav)
                     p.prepare()
@@ -742,8 +859,15 @@ class PlaybackManager @Inject constructor(
 
     private fun replaceMediaItemUri(index: Int, wavFile: File) {
         val p = player ?: return
-        val updated = p.getMediaItemAt(index).buildUpon().setUri(Uri.fromFile(wavFile)).build()
-        p.replaceMediaItem(index, updated)
+        // P0-2：转码可挂起数十秒，期间用户可能 clearQueue() / removeFromQueue() / stop()
+        // 把 playlist 清空或缩短；协程恢复后若仍用旧 index 调 getMediaItemAt 会抛
+        // IndexOutOfBoundsException，而该异常发生在无 try/catch 的 scope.launch 里，
+        // 经 SupervisorJob 直达未捕获异常处理器 → 进程崩溃。此处做边界 + 异常双保险。
+        if (index !in 0 until p.mediaItemCount) return
+        runCatching {
+            val updated = p.getMediaItemAt(index).buildUpon().setUri(Uri.fromFile(wavFile)).build()
+            p.replaceMediaItem(index, updated)
+        }.onFailure { Log.w(TAG, "replaceMediaItemUri failed at index=$index", it) }
     }
 
     /**
@@ -754,7 +878,9 @@ class PlaybackManager @Inject constructor(
         val state = _uiState.value
         val nextApe = state.queue.drop(state.queueIndex + 1).firstOrNull { it.isApe } ?: return
         scope.launch(Dispatchers.IO) {
-            apeTranscoder.ensureWav(nextApe.songId, nextApe.filePath)
+            // P0-2：预热是 fire-and-forget，ensureWav 抛异常同样会经 SupervisorJob
+            // 到达未捕获异常处理器 → 进程崩溃，必须包住
+            runCatching { apeTranscoder.ensureWav(nextApe.songId, nextApe.filePath) }
         }
     }
 
@@ -768,3 +894,12 @@ class PlaybackManager @Inject constructor(
         filePath = path
     )
 }
+
+/**
+ * 续播守卫（纯函数，可单测）：只有「播放器里什么都没有」时才允许恢复会话。
+ *
+ * 恢复会重建队列并暂停；若播放器已有媒体项（无论正在播放还是已暂停待播），
+ * 恢复都会打断用户当前状态——这正是「进播放页被自动暂停」的根因场景。
+ */
+internal fun canRestoreSession(playerItemCount: Int, isPlaying: Boolean): Boolean =
+    playerItemCount == 0 && !isPlaying

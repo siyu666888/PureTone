@@ -51,6 +51,11 @@ import kotlinx.coroutines.delay
  * - 所有分类头行高一致（63dp）、所有子项行高一致（55dp），全页同一节奏；
  * - 内外边距适度放大，内容铺满整屏为宜（超出可滚动）。
  */
+/** 设置页子项统一行高（分类头 63dp，子项 55dp，全页同一节奏） */
+private val SETTINGS_ROW_HEIGHT = 55.dp
+/** 分段控件统一内高（主题 / 倍速 / 定时 视觉一致） */
+private val SETTINGS_SEGMENT_HEIGHT = 44.dp
+
 @Composable
 fun SettingsScreen(
     navController: NavHostController,
@@ -84,14 +89,17 @@ fun SettingsScreen(
             SettingsSegmentRow(
                 label = "倍速",
                 options = speedOptions.map { if (it % 1f == 0f) "${it.toInt()}x" else "${it}x" },
-                selectedIndex = speedOptions.indexOf(s.playbackSpeed).coerceAtLeast(0),
+                // P3-24：旧实现 `.coerceAtLeast(0)` 会把「不在选项里的值」（例如旧版本
+                // 存下的 0.75x）静默显示成第一项 0.5x，用户看到的状态与真实值不符。
+                // 这里传 -1 = 无选中（SettingsSegmentRow 按 index == selectedIndex 判定，安全）。
+                selectedIndex = speedOptions.indexOf(s.playbackSpeed),
                 onSelect = { vm.setPlaybackSpeed(speedOptions[it]) }
             )
             val sleepOptions = listOf(0, 15, 30, 45, 60)
             SettingsSegmentRow(
                 label = "定时",
                 options = sleepOptions.map { if (it == 0) "关" else "${it}m" },
-                selectedIndex = sleepOptions.indexOf(s.sleepTimerMinutes).coerceAtLeast(0),
+                selectedIndex = sleepOptions.indexOf(s.sleepTimerMinutes),
                 onSelect = { vm.setSleepTimerMinutes(sleepOptions[it]) }
             )
             // P0-4：定时进行中时显示真实剩余时间（按「到期时刻」倒推，每秒刷新），
@@ -110,7 +118,7 @@ fun SettingsScreen(
                     }
                 }
                 Row(
-                    modifier = Modifier.fillMaxWidth().height(55.dp),
+                    modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -130,7 +138,7 @@ fun SettingsScreen(
             val cacheSize by vm.apeCacheSize.collectAsStateWithLifecycle()
             LaunchedEffect(Unit) { vm.refreshApeCacheSize() }
             Row(
-                modifier = Modifier.fillMaxWidth().height(55.dp),
+                modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -151,7 +159,7 @@ fun SettingsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(55.dp)
+                    .height(SETTINGS_ROW_HEIGHT)
                     .clickable { navController.navigate(Routes.EQ) },
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -187,7 +195,12 @@ fun SettingsScreen(
 
 /**
  * 主题分段控件：整行一条分段轨道（无左侧标签，选项自解释）。
- * 行高与子项行一致（55dp），选中态 primary / onPrimary。
+ *
+ * 行高与其它子项一致（55dp），可见轨道高与倍速/定时分段一致（44dp）——
+ * 与 [SettingsSegmentRow] 完全同构：外层 55dp 行（透明，撑行高），
+ * 内层 44dp 轨道（surfaceVariant 背景）。旧实现把 55dp 的 Box 直接
+ * 铺满背景当轨道，主题行看起来比其它分段行高出一截（用户反馈
+ * 「主题切换行的高度同其他子项高度不一致」）。
  */
 @Composable
 private fun ThemeSegmentedControl(
@@ -203,33 +216,45 @@ private fun ThemeSegmentedControl(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(55.dp)
-            .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
-            .padding(4.dp)
+            .height(SETTINGS_ROW_HEIGHT),
+        contentAlignment = Alignment.Center
     ) {
-        Row(
-            modifier = Modifier.fillMaxHeight(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(SETTINGS_SEGMENT_HEIGHT)
+                .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
+                .padding(3.dp)
         ) {
-            options.forEach { (value, label) ->
-                val isSelected = selected == value
-                val containerColor by animateColorAsState(
-                    if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    label = "segmentBg"
-                )
-                val contentColor by animateColorAsState(
-                    if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    label = "segmentFg"
-                )
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .background(containerColor, CircleShape)
-                        .clickable { onSelect(value) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(label, style = MaterialTheme.typography.labelLarge, color = contentColor)
+            Row(
+                modifier = Modifier.fillMaxHeight(),
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                options.forEach { (value, label) ->
+                    val isSelected = selected == value
+                    val containerColor by animateColorAsState(
+                        if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                        label = "segmentBg"
+                    )
+                    val contentColor by animateColorAsState(
+                        if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        label = "segmentFg"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .background(containerColor, CircleShape)
+                            .clickable { onSelect(value) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = contentColor,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
         }
@@ -248,7 +273,7 @@ private fun SettingsSegmentRow(
     onSelect: (Int) -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().height(55.dp),
+        modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -256,7 +281,7 @@ private fun SettingsSegmentRow(
         Box(
             modifier = Modifier
                 .weight(1f)
-                .height(44.dp)
+                .height(SETTINGS_SEGMENT_HEIGHT)
                 .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
                 .padding(3.dp)
         ) {
@@ -323,7 +348,7 @@ private fun SettingsGroup(title: String, content: @Composable () -> Unit) {
 @Composable
 private fun SwitchRow(label: String, checked: Boolean, enabled: Boolean = true, onChanged: (Boolean) -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().height(55.dp),
+        modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {

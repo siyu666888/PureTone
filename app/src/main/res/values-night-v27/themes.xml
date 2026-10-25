@@ -2,8 +2,14 @@
 <resources>
 
     <!-- 深色 + API 27+：刘海屏短边延伸（父主题须与 values-night/themes.xml 一致，
-         否则 AAPT2 推断隐式父名「Theme」报错） -->
+         否则 AAPT2 推断隐式父名「Theme」报错）。
+
+         P1-5：同 values-v27——同名 style 是整体替换，必须把深色基础主题的
+         item 一并复制过来，否则 API 27+ 深色下丢失 windowBackground 与透明系统栏。 -->
     <style name="Theme.PureTone" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/surface_dark</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 

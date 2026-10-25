@@ -1,0 +1,47 @@
+PureTone v1.4.1 (code 21) — 三项界面调整交付说明
+=================================================
+
+构建：:app:assembleRelease 全绿（R8 + lintVitalRelease 0 error），apksigner v2 校验通过。
+基线：v1.4.0 (code 20) 工作树（含 Bug B「进播放页自动暂停」修复 + CODE_REVIEW 全量修复），在此之上叠加本次 UI 调整。
+
+改动文件（仅 UI，无播放/数据逻辑变更）：
+- app/src/main/java/com/puretone/player/ui/screens/PlayerScreen.kt
+- app/src/main/java/com/puretone/player/ui/screens/SettingsScreen.kt
+- app/src/main/java/com/puretone/player/ui/screens/StatsScreen.kt
+- app/build.gradle.kts（versionName 1.4.1 / versionCode 21）
+
+一、歌词高亮改为「上下居中悬浮」显示（PlayerScreen.kt · LyricsFace）
+- 原实现：高亮行随播放位置自动滚动到「顶部对齐」，未固定在中线。
+- 新实现：歌词区上下各留 (区域高 - 行高)/2 的对称内边距，当前高亮行始终停在
+  歌词区垂直中线，前/后歌词随播放平滑流过（animateScrollToItem 自带过渡）。
+- 保留原有交互：字号 +/- 调节、空歌词态、用户手动拖动浏览后自动居中避让 4 秒。
+- 估算行高 = 字号(sp, 含系统字体缩放) + 上下各 6.dp 内边距，保证不同字号/字体缩放下居中仍准确。
+
+二、设置页分类子项高度统一（SettingsScreen.kt）
+- 新增单一常量 SETTINGS_ROW_HEIGHT = 55.dp，所有分类子项行（开关行、分段行、
+  睡眠定时剩余行、APE 缓存行、均衡器行、主题分段控件）统一引用，杜绝魔法数漂移。
+- 新增 SETTINGS_SEGMENT_HEIGHT = 44.dp，主题分段控件与倍速/定时分段控件内高一致，
+  主题分段控件改为垂直居中，两处分段视觉对齐整齐。
+- 分类头（63dp）维持不变，全页节奏统一。
+
+三、听歌数据页（StatsScreen.kt）配色对齐整体风格
+- 原实现：各卡片标题/指标数字用默认 onSurface 色，与软件「primary = 强调色」的
+  整体风格（设置分组标题、我的页分区标题均用 primary）不一致。
+- 新实现：五大分区标题（每日听歌 / 时段分布 / 最爱歌手 / 最爱歌曲 / 趣味标签）
+  与六个指标数字统一改用 colorScheme.primary；卡片仍沿用默认 Card 容器色，
+  与设置/均衡器/我的页保持一致。
+
+验证：
+- :app:compileDebugKotlin 通过；:app:assembleRelease 通过（R8 + lintVitalRelease 0 error）。
+- 逻辑上三项均为纯展示层调整：未触碰播放状态、队列、数据层、路由、权限。
+- 真机回归建议：① 播放一首有 .lrc 的歌，翻到歌词面，确认当前行始终居中、切歌时平滑过渡；
+  ② 设置页各分类子项行高与分段控件高度一致；③ 听歌数据页标题/数字呈主题强调色。
+
+产物（dist/）：
+- PureTone-v1.4.1-universal-release.apk
+  SHA-256: f1eefa78de498d9d1318405ee15c4fe40efaa82544d63d6dfc26fc223c87d19e
+- PureTone-v1.4.1-arm64-v8a-release.apk
+  SHA-256: 58427051e3ec0e51d3316425a7fdd2549508ac3c132babbad67c06b1393be1a8
+（v2 签名已验，minSdk 26 / compileSdk 34）
+
+注：本次与 v1.4.0 的改动目前仍在工作树，尚未 git commit/push。

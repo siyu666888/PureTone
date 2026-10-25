@@ -74,7 +74,11 @@ fun MeScreen(
         Text("我的音乐", style = MaterialTheme.typography.headlineSmall)
 
         // 听歌数据入口（点击进入详情页）
-        Card(modifier = Modifier.fillMaxWidth(), onClick = { navController.navigate(Routes.STATS) }) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            // P3-27：launchSingleTop，避免连点压入多个统计页
+            onClick = { navController.navigate(Routes.STATS) { launchSingleTop = true } }
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically

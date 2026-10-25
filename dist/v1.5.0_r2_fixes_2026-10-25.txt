@@ -1,0 +1,95 @@
+PureTone v1.5.0 (code 22) — 第二轮代码复审修复交付说明
+=================================================
+
+构建：:app:testDebugUnitTest 64/64 通过（含本轮新增 5 个用例）；
+      :app:assembleRelease 全绿（R8 + lintVitalRelease 0 error），apksigner v2 校验通过。
+基线：v1.4.1 (code 21) 工作树（v1.4.0 复审修复 + v1.4.1 UI 调整均尚未 commit）。
+依据：CODE_REVIEW_2026-10-24_R2.md 的权威修复顺序（P0 → P1 → P2 分批 → P3 随迭代）。
+
+一、设置页主题切换行高度统一（用户反馈 · SettingsScreen.kt）
+- 现象：主题行的满幅背景轨道是 55dp，倍速/定时分段的可见轨道是 44dp，
+  主题行看起来比其它分段子项高出一截。
+- 修复：ThemeSegmentedControl 改为与 SettingsSegmentRow 完全同构——
+  外层 55dp 透明行（撑行高，与所有子项一致），内层 44dp 轨道
+  （surfaceVariant 背景，与倍速/定时分段一致）。分段内边距 4dp→3dp 对齐。
+
+二、P0 修复（收尾，R2 顺序第 1-2 项；实际在上轮已完成，本说明汇总）
+- P0-1 导航双重解码（ui/PureToneApp.kt）：路由参数改 Uri.encode 建、
+  取出时删 URLDecoder.decode（Navigation 2.8.2 入 Bundle 前已自动解码一次）。
+- P0-2 APE 懒加载崩溃（playback/PlaybackManager.kt）：
+  replaceMediaItemUri 加索引边界检查 + 整体 runCatching；
+  handlePlayerError 的 ensureWav 包 runCatching 且 isTranscoding 用 finally 复位；
+  warmUpFollowingApe 的 ensureWav 包 runCatching。
+
+三、P1 修复（R2 顺序第 3-5 项）
+- P1-1 LRCLIB "null" 字符串（data/metadata/LrcLibLyricsProvider.kt）：
+  新增 optLyrics 扩展，过滤 optString 对 JSON null 返回的字面量 "null"
+  （AOSP org.json 怪癖），4 处调用点全部切换。
+- P1-2 续播恢复竞态（PlaybackManager.restoreLastSession）：
+  DB 读取（loadPlaybackSession/getSongs）是挂起点，期间用户可能已点新歌；
+  起播前再查一次 canRestoreSession，不满足则放弃恢复。
+- P1-3 bind 后点歌/续播竞态（PlaybackManager.bind / setQueueAndPlay）：
+  显式点歌优先于挂起的续播——bind 执行 pendingPlay 后清 pendingRestore；
+  setQueueAndPlay 置 pendingPlay 时同步清 pendingRestore。两条命令并发时
+  旧会话队列会覆盖用户新点的歌（queueGeneration 守卫救不了：恢复命令最后执行、代次最新）。
+- P1-4 APE 转码锁非原子（playback/ApeTranscoder.kt）：
+  songLocks.getOrPut（get+put 两步）→ ConcurrentHashMap.computeIfAbsent；
+  删除 LOCK_MAP_MAX 清理逻辑（会删掉别人即将持有的锁，反而制造竞态）。
+- P1-5 均衡器主开关语义分裂（effect/AudioEffectController.kt）：
+  applyBass/applyVirtualizer 改 shouldEnableEffect(enabled, strength)
+  = 主开关 && 强度>0；needsEffects 改为主开关单独判定（关了就不创建原生
+  效果实例，顺带降低无谓持有的 native 崩溃风险）。新增 4 个纯函数单测锁死。
+
+四、P2 分批修复（R2 顺序第 6 项）
+- 批次一（数据与索引）：
+  - P2-1 封面占位 URI（SongDao.getSongsMissingCover + MusicRepository.hasChanged）：
+    补全队列判据增加 LIKE '%/audio/albumart/%'；重扫时「仍解析不出封面但
+    库里是占位 URI」也判为有变化 → 走重写路径把封面落为 NULL。
+  - P2-2/P2-3 v5 迁移（PureToneDatabase + SongEntity + PlayHistoryEntity）：
+    version 4→5，MIGRATION_4_5 纯 CREATE INDEX：
+    play_history(played_at)、songs(date_added)、(play_count,last_played_at)、
+    (duration)。索引名与 Room 实体注解逐字一致；DataModule 注册新迁移；
+    迁移测试扩为 3→4→5 全链路 + 新增 4→5 专测（PRAGMA index_list 实证）。
+- 批次二（DAO 健壮性）：
+  - P2-5 歌单 Flow（PlaylistDao）：observeAllWithSongs / observeWithSongs
+    的 combine 后加 distinctUntilChanged，消灭同批失效导致的重复发射/重组。
+  - P2-6 getSongs 空列表（MusicRepository）：空 ids 直接返回，不再生成
+    SQL `IN ()` 抛 SQLiteException。
+- 批次三（UI 写入正确性）：
+  - P2-11 歌曲信息弹窗年份回写（SongInfoSheet + MetadataViewModel）：
+    新增本地 year 状态随 autoFill/apply 更新并传入 saveSongInfo；
+    undoAutoFill 回调改为回传原始实体，撤销时表单一并还原
+    （否则表单留着自动填充值，再保存会把候选年份又写回去）。
+  - P2-17 STATE_ENDED 续播位置（PlaybackManager.saveSessionNow）：
+    位置钳到 duration-500 以内，避免「恢复了但什么都没发生」。
+  - P2-18 playSongById（PlayerViewModel）：歌曲不存在时无操作，
+    不再 coerceAtLeast(0) 静默播放第一首。
+- 随迭代（本轮一并做掉的低风险项）：
+  - P2-12 warmUpFollowingApe 裸调 ensureWav（P0-2 轮次已包 runCatching，确认在位）。
+  - P2-14 apeRetryIndex 永不复位：stop() / clearQueue() / doSetQueueAndPlay
+    生效新队列前统一置 -1。
+
+五、未修（留给后续迭代）
+- P2-4 album_id 跨卷撞号（需加 album_volume 列 + 迁移 + 扫描器/详情查询改造）
+- P2-7 M3uCodec EXTINF 时长 0 标题；P2-8 PlaylistImportResolver file:// 前缀与 URL 解码
+- P2-9 LrcParser offset 两遍化；P2-10 LyricsStore 文件名长度约束
+- P2-13 队列增删不参与 queueGeneration 协议；P2-15 APE 缓存 key 掺源文件指纹
+- P2-16 MetadataViewModel.search 请求排序/取消；P3 全部 26 项
+
+六、验证
+- :app:testDebugUnitTest 64/64（新增：migrate 4 to 5 索引实证 ×1、
+  主开关语义矩阵 ×4；migrate 3 to 4 扩为 3→4→5 全链路）。
+- :app:assembleRelease 通过（R8 + lintVitalRelease 0 error）。
+- 真机回归建议：① 设置页主题行与倍速/定时行高度观感一致、点击正常切换；
+  ② 冷启动后点迷你条进播放页不再被自动暂停；③ 点一首歌起播过程中
+  快速切到其它页面，恢复不会打断；④ 关均衡器主开关后重低音/环绕声静音；
+  ⑤ 连续播放几首 APE 无「转码中」卡死；⑥ 升级安装后曲库/歌单/历史数据完好。
+
+产物（dist/）：
+- PureTone-v1.5.0-universal-release.apk
+  SHA-256: 07e67918cbbe214edabc20d92bbb3bbc7132e7ebe86d3abf94525530edf2f44f
+- PureTone-v1.5.0-arm64-v8a-release.apk
+  SHA-256: 097883172afbc3d10630e3bf2a9dd199197c9a6d8479dcc9c59cd185f10be49d
+（v2 签名已验——apksigner: v2 scheme true，证书 CN=PureTone；minSdk 26 / compileSdk 34；Room schema version 5）
+
+注：v1.4.0 起的所有改动目前仍在工作树，尚未 git commit/push。

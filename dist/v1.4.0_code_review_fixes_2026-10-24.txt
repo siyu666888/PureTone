@@ -1,0 +1,107 @@
+PureTone v1.4.0（code 20）— 按 CODE_REVIEW_2026-10-24.md 全量修复
+日期：2026-10-24  基线：b0edc15 + 未提交的 v1.3.2 播放页自动暂停修复
+
+=====================================================================
+一、改动总览（按报告条目）
+=====================================================================
+[P0-1] SQL 批量参数超限（崩溃，Android ≤ 11）
+  - data/repository/MusicRepository.kt: syncLibrary 的 upsertAll → chunked(50)
+    （songs 表除自增 id 外 18 列，999/18≈55）
+  - getSongs(ids) → chunked(900) 后合并（IN 子句每 id 一个参数）
+  - 新增常量 UPSERT_CHUNK / ID_CHUNK 与推导注释
+
+[P1-2] 播放统计虚高
+  - playback/PlaybackManager.kt: onMediaItemTransition 仅在 AUTO/REPEAT、
+    或 PLAYLIST_CHANGED 且换了歌时 recordPlay；手动上/下一首（SEEK）不再计入
+
+[P1-3] APE 转码挂起期间旧队列覆盖新队列
+  - PlaybackManager: 新增 queueGeneration，doSetQueueAndPlay 入口领取代次，
+    挂起（APE 转码）恢复后校验，过期即 return；stop() 同样自增代次
+
+[P1-4] MediaSession 无控制器准入
+  - playback/PlaybackService.kt: 新增 SessionCallback（MediaSession.Callback.onConnect）
+    白名单 = 自身包 + 已知系统控制器（SystemUI / Android Auto / Assistant / Wear OS）
+    + 持有 MEDIA_CONTENT_CONTROL 者，其余 reject()
+    注意：MediaSessionService 基类没有 onConnect，必须在会话回调里做
+  - 新增 app/lint.xml：对 Media3 UnstableApi 做项目级 opt-in（该检查为 error 级）
+
+[P1-5] values-v27 主题整体替换丢失 windowBackground/透明系统栏
+  - res/values-v27/themes.xml、res/values-night-v27/themes.xml 补全三项目标
+
+[P1-6] albumArtCache 跨卷冲突
+  - data/media/MediaStoreScanner.kt: 缓存键 "$volumeName:$albumId"（ALBUM_ID 每卷独立）
+
+[P1-7] SD 卡占位封面 URI 漏判
+  - MusicRepository: ALBUM_ART_URI_PREFIX → isAlbumArtPlaceholder()（匹配 /audio/albumart/）
+
+[P2-8] backfill 计数与注释矛盾      → 仅 updateCover 成功才 done++
+[P2-9] SongInfoSheet 表单易丢失      → remember → rememberSaveable（5 个字段）
+[P2-10] 播放页 2Hz 全屏重组          → 新增 PlayerViewModel.discreteState（positionMs 抹平
+       + distinctUntilChanged）与 positionMs；根部只收离散态，进度下沉到
+       新增的 ProgressSection 与歌词 backContent lambda 内
+[P2-11] 文件夹页全库内存过滤         → SongDao.observeSongsByFolder（SQL LIKE 前缀 + ESCAPE）
+[P2-12] M3U 后缀匹配导错歌           → 要求 "/" 段边界；新增回归用例
+[P2-13] playAtIndex 未绑定时空操作   → 改 pendingRestore
+[P2-14] 睡眠定时重启后失真           → 增存墙钟到期时刻 sleepTimerWallDeadlineMs，
+       读取优先墙钟（兼容只存 elapsed 的旧数据），新增 hasSleepTimer()
+[P2-15] allowBackup=true             → false（manifest 注释说明隐私最小化）
+[P2-16] trimCache 可能删在写的 tmp   → LRU 过滤 .tmp
+
+[P3]  startIndex 越界防护 / ticker 暂停时 2s / 历史清理限频 1h /
+      saveSessionDebounced 复用 Job / stop() 不再重置用户偏好 /
+      ffmpeg 超时 5min + cancel / Theme 强转 Activity 改 as? /
+      分段控件 indexOf 不再 coerceAtLeast(0) / addToPlaylist 先过滤失效 id /
+      搜索与文件夹 LIKE 转义（escapeLike）/ 播放错误可点掉 /
+      3 处 navigate 加 launchSingleTop
+
+[P4]  删除无调用方的 PlayerViewModel.play()/pause()、ApeTranscoder.isCached()；
+      TRACK 不再 %1000（保留碟号，多碟专辑按轨号排序正确）
+
+=====================================================================
+二、核实后修正的判断（与报告原文的差异）
+=====================================================================
+- 报告称 stop() 是死代码：实际被 handlePlayerError 调用 → 改为「对齐 clearQueue 语义」。
+- 报告称 StatsViewModel 的 cal 是死代码：实际参与 dayKey() → 保留。
+- P3-28（dist 入库）：.gitignore 已有 *.apk，APK 从未入库 → 无需处理。
+- P1-4 的实现位置：MediaSessionService 无 onConnect 可覆写，改在 MediaSession.Callback。
+
+=====================================================================
+三、主动延期（需单独一轮）
+=====================================================================
+- P4：BrowseScreen 11 个 collect 合并为单一 UiState、LibraryViewModel 三次
+  observeLibrary 分组合并 —— 纯重构，本轮已大面积触碰播放/数据层，分开做更可控。
+- P3-27：部分图标触摸目标 < 48dp —— 需与 UI 尺寸一并确认。
+
+=====================================================================
+四、验证
+=====================================================================
+构建：:app:testDebugUnitTest 59 用例 / 0 失败（含新增 RestoreGuardTest 4 例、
+      PlaylistImportResolverTest 段边界用例）
+      :app:lintDebug  BUILD SUCCESSFUL（0 error）
+      :app:assembleRelease（R8 + lintVitalRelease）BUILD SUCCESSFUL
+
+真机回归建议（重点，行为有可观察变化的项）：
+1) 播放中进入「正在播放 / 我的 / 统计 / 分组详情」→ 全程不中断（v1.3.2 已修）。
+2) 手动连点下一首 N 次 → 统计页「最近播放 / 累计时长」不再被灌水。
+3) APE 队列：播放中在转码未完成前点另一首 → 播的是新点的那首（旧队列不再回灌）。
+4) 通知栏/锁屏/系统控制中心 仍能控制播放（白名单含 SystemUI）；
+   第三方 App 连接应被拒（logcat: "拒绝未授权控制器"）。
+5) 冷启动/深色冷启动：窗口背景为 surface_light/surface_dark，不再是平台默认灰。
+6) SD 卡有歌时：专辑封面能解析出图，且「补全缺失封面」能识别缺失项。
+7) 睡眠定时：设 30m → 中途重启设备 → 剩余时间仍按墙钟正确倒计时。
+8) 文件夹页进入速度（改为 SQL 过滤）；搜索框输入 "%" 或 "_" 不再全表匹配。
+9) 歌单加歌（含刚被同步删掉的歌）不崩；导入 M3U 不再导入同名目录里的错歌。
+10) 播放页进度条/歌词仍逐秒推进（P2-10 下沉后的正确性）；旋转屏幕不中断。
+
+=====================================================================
+五、产物与校验
+=====================================================================
+dist/PureTone-v1.4.0-universal-release.apk
+  SHA-256: b777dcb0257143673ce31791af177712505ff10c001e9554166ae845880919ca
+dist/PureTone-v1.4.0-arm64-v8a-release.apk
+  SHA-256: b3fd4fbaf9fc3dd734dd774b5d38f3d2e76bb602ed8f200e2ae71fa79c0e8528
+
+apksigner verify（universal）：Verifies；v2 = true；v1/v3/v4 = false（minSdk 26，v2 足够）
+签名者 DN: CN=PureTone, OU=Dev, O=PureTone, L=Unknown, ST=Guangdong, C=CN
+
+改动尚未提交 git（工作树含未提交改动）。

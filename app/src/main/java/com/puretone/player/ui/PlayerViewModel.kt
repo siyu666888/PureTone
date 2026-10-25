@@ -60,6 +60,32 @@ class PlayerViewModel @Inject constructor(
             playback.uiState.value.currentSongId != null
         )
 
+    /**
+     * 不含高频进度字段的状态快照（P2-10）。
+     *
+     * [state] 每 500ms 会因 positionMs tick 发射一次；播放页根部直接订阅它，
+     * 会让整屏（封面、按钮、队列）跟着 2Hz 重组——和 P1-10 在应用根部修掉的是同一个反模式。
+     * 这里把 positionMs 抹平成 0 再 distinctUntilChanged：其余字段都是离散的
+     * （切歌、播放/暂停、转码中、错误、队列增删、循环/随机），只在真正变化时发射。
+     */
+    val discreteState: StateFlow<PlaybackUiState> = playback.uiState
+        .map { it.copy(positionMs = 0L) }
+        .distinctUntilChanged()
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            playback.uiState.value.copy(positionMs = 0L)
+        )
+
+    /**
+     * 播放进度（毫秒，2Hz 高频）。
+     * 只应由「真的需要逐帧推进」的叶子节点收集：进度条与歌词高亮。
+     */
+    val positionMs: StateFlow<Long> = playback.uiState
+        .map { it.positionMs }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+
     /** 当前歌曲的解析后歌词（无歌词文件时为 null） */
     private val _lyrics = MutableStateFlow<ParsedLyrics?>(null)
     val lyrics: StateFlow<ParsedLyrics?> = _lyrics.asStateFlow()
@@ -97,8 +123,15 @@ class PlayerViewModel @Inject constructor(
                 }
         }
         // P0-3：「启动时续播」接线。等曲库首帧到达（Room 已可查，无论空与否），
-        // 仅当设置开启时恢复上次会话；只尝试一次。恢复本身在 PlaybackManager 内
-        // 以 autoPlay=false 入队并暂停，不会打扰用户。
+        // 仅当设置开启时恢复上次会话；本实例只尝试一次。
+        //
+        // 注意（Bugfix：进播放页被自动暂停）：本类会被创建多次——根部一个，
+        // 每个导航目的地各自一个（hiltViewModel() 是 NavBackStackEntry 作用域），
+        // 每个实例的 init 都会走到这里。仅靠实例级 restoreAttempted 挡不住跨实例
+        // 的重复恢复，而恢复是以 autoPlay=false 重建队列并 pause() 的，会打断播放。
+        // 真正的权威守卫在 PlaybackManager.restoreLastSession()（canRestoreSession：
+        // 播放器已有内容/正在播放时拒绝恢复）。此处只做「本实例不重复调用」的廉价去重。
+        // 各目的地统一复用根部实例见 PureToneApp 的 NavHost。
         viewModelScope.launch {
             runCatching { repo.observeLibrary().first() }
             if (!restoreAttempted) {
@@ -111,8 +144,8 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun togglePlay() = playback.togglePlayPause()
-    fun play() = playback.play()
-    fun pause() = playback.pause()
+    // P4：删除无调用方的 play()/pause()——UI 一律走 togglePlay()（播放/暂停互斥），
+    // 留着两个裸入口反而容易被误用
     fun next() = playback.next()
     fun prev() = playback.previous()
     fun seek(positionMs: Long) = playback.seekTo(positionMs)
@@ -204,7 +237,11 @@ class PlayerViewModel @Inject constructor(
     fun playSongById(id: Long) {
         viewModelScope.launch {
             val library = runCatching { repo.observeLibrary().first() }.getOrNull() ?: return@launch
-            val index = library.indexOfFirst { it.id == id }.coerceAtLeast(0)
+            // P2-18：歌曲已从曲库删除时 indexOfFirst 返回 -1——旧实现
+            // `.coerceAtLeast(0)` 把它压成 0，静默播放第一首歌（统计页
+            // 「最爱歌曲」点到已删歌就中招）。找不到就应该无操作。
+            val index = library.indexOfFirst { it.id == id }
+            if (index < 0) return@launch
             playSongs(library, index)
         }
     }

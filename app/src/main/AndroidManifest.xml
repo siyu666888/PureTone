@@ -18,9 +18,12 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <!-- P2-15：本地播放器没有账号/令牌，但 Room 库里是完整的播放历史与歌单，
+         DataStore 里是听歌偏好。默认 allowBackup=true 会让这些数据被 adb 备份或
+         云备份整体抽走；这里按「隐私最小化」关闭（用户数据随 App 卸载清理即可）。 -->
     <application
         android:name=".PureToneApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"

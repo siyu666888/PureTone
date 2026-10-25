@@ -4,8 +4,17 @@
     <!-- API 27+ 才支持 windowLayoutInDisplayCutoutMode（minSdk 26）。
          从 values/themes.xml 移至此处，消除 lint error「requires API 27」。
          注意：AAPT2 对无 parent 的带点样式名会推断隐式父名（Theme.PureTone → Theme），
-         故这里必须显式声明与 values/themes.xml 相同的父主题。 -->
+         故这里必须显式声明与 values/themes.xml 相同的父主题。
+
+         P1-5：同名 <style> 在配置限定符目录里是「整体替换」而非合并——
+         API 27+ 只会命中本文件的这份定义。旧写法只留了刘海那一项，
+         于是 windowBackground / 透明状态栏 / 透明导航栏三项目标全部丢失
+         （冷启动窗口背景变平台默认灰、系统栏区域露出默认色）。
+         因此这里必须把 values/themes.xml 的 item 全部复制过来。 -->
     <style name="Theme.PureTone" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/surface_light</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 

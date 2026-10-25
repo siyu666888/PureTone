@@ -57,10 +57,12 @@ import com.puretone.player.ui.components.formatTime
 @Composable
 fun StatsScreen(
     navController: NavHostController,
-    vm: StatsViewModel = hiltViewModel()
+    vm: StatsViewModel = hiltViewModel(),
+    // 由 PureToneApp 下发根部实例：自己 hiltViewModel() 会拿到目的地作用域的新实例，
+    // 其 init 再跑一次「恢复上次会话」→ 以暂停态重建队列，打断正在播放
+    playerVm: PlayerViewModel = hiltViewModel()
 ) {
     val s by vm.state.collectAsStateWithLifecycle()
-    val playerVm = hiltViewModel<PlayerViewModel>()
     val scope = rememberCoroutineScope()
     var showClear by remember { mutableStateOf(false) }
 
@@ -118,7 +120,7 @@ fun StatsScreen(
                 .maxByOrNull { it.value.listenMs }?.index ?: -1
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("每日听歌（近 ${trend.size} 天）", style = MaterialTheme.typography.titleMedium)
+                    Text("每日听歌（近 ${trend.size} 天）", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(12.dp))
                     if (trend.all { it.listenMs == 0L }) {
                         Text("近 ${trend.size} 天还没有听歌记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -141,7 +143,7 @@ fun StatsScreen(
             // 时段分布（0-23 时）
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("时段分布", style = MaterialTheme.typography.titleMedium)
+                    Text("时段分布", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(12.dp))
                     BarChart(
                         values = s.hourPlays.map { it.second },
@@ -162,7 +164,7 @@ fun StatsScreen(
             if (s.topArtists.isNotEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("最爱歌手", style = MaterialTheme.typography.titleMedium)
+                        Text("最爱歌手", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.height(8.dp))
                         s.topArtists.forEachIndexed { i, a ->
                             Row(
@@ -185,7 +187,7 @@ fun StatsScreen(
             if (s.topSongs.isNotEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("最爱歌曲", style = MaterialTheme.typography.titleMedium)
+                        Text("最爱歌曲", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.height(8.dp))
                         s.topSongs.forEachIndexed { i, t ->
                             Row(
@@ -193,7 +195,8 @@ fun StatsScreen(
                                     .fillMaxWidth()
                                     .clickable {
                                         scope.launch { playerVm.playSongById(t.id) }
-                                        navController.navigate(Routes.PLAYER)
+                                        // P3-27：launchSingleTop，避免重复压入播放页
+                                        navController.navigate(Routes.PLAYER) { launchSingleTop = true }
                                     }
                                     .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -211,7 +214,7 @@ fun StatsScreen(
             if (s.totalPlays > 0) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("趣味标签", style = MaterialTheme.typography.titleMedium)
+                        Text("趣味标签", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                         val favArtist = s.topArtists.firstOrNull()?.name
                         if (favArtist != null) Text("🎤 最爱歌手：${favArtist}")
                         if (s.isNightOwl) Text("🌙 深夜听众：最爱在 ${s.peakHour}:00 听歌")
@@ -253,7 +256,7 @@ private fun StatCard(label: String, value: String, modifier: Modifier = Modifier
         Column(modifier = Modifier.padding(14.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(4.dp))
-            Text(value, style = MaterialTheme.typography.titleLarge)
+            Text(value, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
         }
     }
 }

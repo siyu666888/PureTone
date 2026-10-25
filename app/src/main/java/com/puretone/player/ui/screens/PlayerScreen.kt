@@ -79,6 +79,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -119,7 +120,9 @@ fun PlayerScreen(
     vm: PlayerViewModel = hiltViewModel(),
     metadataVm: MetadataViewModel = hiltViewModel()
 ) {
-    val state by vm.state.collectAsStateWithLifecycle()
+    // P2-10：根部只订阅「离散」状态（positionMs 已抹平），避免整屏 2Hz 重组；
+    // 高频进度由 ProgressSection / 歌词面板各自在子树内收集。
+    val state by vm.discreteState.collectAsStateWithLifecycle()
     val lyrics by vm.lyrics.collectAsStateWithLifecycle()
     val favorite by vm.favorite.collectAsStateWithLifecycle()
     val currentSong by vm.currentSong.collectAsStateWithLifecycle()
@@ -191,9 +194,12 @@ fun PlayerScreen(
                 flipped = coverFlipped,
                 onFlippedChange = { coverFlipped = it },
                 backContent = {
+                    // P2-10：进度在这个 lambda 作用域内收集——重组范围被限制在歌词面板，
+                    // 不会带着封面/按钮/队列一起每 500ms 重组
+                    val lyricPositionMs by vm.positionMs.collectAsStateWithLifecycle()
                     LyricsFace(
                         lyrics = lyrics,
-                        positionMs = state.positionMs,
+                        positionMs = lyricPositionMs,
                         fontSizeSp = lyricFontSize,
                         onFontSize = { lyricFontSize = it }
                     )
@@ -230,7 +236,9 @@ fun PlayerScreen(
                 Text(
                     state.error!!,
                     color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall
+                    style = MaterialTheme.typography.bodySmall,
+                    // P3-27：可点掉，不必等它自己消失
+                    modifier = Modifier.clickable { vm.dismissError() }
                 )
             }
 
@@ -263,21 +271,9 @@ fun PlayerScreen(
             }
 
             // 进度（加热区 + 拖动时间气泡）
+            // P2-10：progress 是唯一需要高频刷新的部分，收集下沉到 ProgressSection 内部
             val duration = if (state.durationMs > 0) state.durationMs else entry.durationMs
-            val position = state.positionMs.coerceAtMost(duration)
-            PlayerProgressBar(
-                positionMs = position,
-                durationMs = duration,
-                onSeek = vm::seek,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(formatTime(position), style = MaterialTheme.typography.labelMedium)
-                Text(formatTime(duration), style = MaterialTheme.typography.labelMedium)
-            }
+            ProgressSection(vm = vm, durationMs = duration)
 
             Spacer(Modifier.height(2.dp))
 
@@ -415,6 +411,31 @@ fun PlayerScreen(
             metadataVm = metadataVm,
             onDismiss = { showInfo = false }
         )
+    }
+}
+
+/**
+ * 进度条 + 起止时间标签（P2-10）。
+ *
+ * positionMs 是 2Hz 高频字段，收集放在本组件内部：重组范围被限制在进度条这一小块，
+ * 而旧实现在 PlayerScreen 根部收集整个 state，导致封面/按钮/队列每 500ms 跟着重组一遍。
+ */
+@Composable
+private fun ProgressSection(vm: PlayerViewModel, durationMs: Long) {
+    val positionMs by vm.positionMs.collectAsStateWithLifecycle()
+    val position = positionMs.coerceAtMost(durationMs)
+    PlayerProgressBar(
+        positionMs = position,
+        durationMs = durationMs,
+        onSeek = vm::seek,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(formatTime(position), style = MaterialTheme.typography.labelMedium)
+        Text(formatTime(durationMs), style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -779,7 +800,12 @@ private fun LyricsBackFace(
 }
 
 /**
- * 封面背面歌词页：字号调节 + 高亮当前行并随播放位置自动滚动。
+ * 封面背面歌词页：字号调节 + 高亮当前行并「上下居中悬浮」显示。
+ *
+ * 居中悬浮方案：歌词区上下各留 (区域高 - 行高)/2 的对称内边距，使当前高亮行始终
+ * 停在歌词区的垂直中线；前/后歌词随播放位置从两侧平滑流过（animateScrollToItem
+ * 自带过渡），当前行切换时自动滚动到新行的中心。保留原交互：用户手动拖动浏览
+ * 歌词后，自动居中避让 4 秒，避免强制拉回打断阅读。
  */
 @Composable
 private fun LyricsFace(
@@ -824,17 +850,18 @@ private fun LyricsFace(
 
         val currentIndex = lyrics.lineIndexAt(positionMs)
         val listState = rememberLazyListState()
-        // P2-4：用户手动滚动歌词后，自动滚动避让几秒。
-        // 旧实现只要 currentIndex 变化就 animateScrollToItem，用户正看着
-        // 上面的句子时会被下一次 500ms 高亮强行拉回当前行，手动浏览被打断。
-        var userScrollPauseUntil by remember { mutableLongStateOf(0L) }
-        LaunchedEffect(currentIndex) {
-            if (currentIndex < 0) return@LaunchedEffect
-            if (android.os.SystemClock.uptimeMillis() < userScrollPauseUntil) return@LaunchedEffect
-            listState.animateScrollToItem(currentIndex)
+        // 歌词区实际高度（px）：用于计算上下对称内边距，把当前行精确居中
+        var areaHeightPx by remember { mutableStateOf(0) }
+        // 估算单行高度（px）= 字号(sp, 含系统字体缩放) + 上下各 6.dp 内边距，
+        // 作为居中内边距与行高的近似
+        val density = LocalDensity.current
+        val lineHeightPx = with(density) { ((fontSizeSp * fontScale + 12).dp).toPx() }
+        val halfPadDp = with(density) {
+            ((areaHeightPx - lineHeightPx) / 2f).coerceAtLeast(0f).toDp()
         }
-        // 检测用户主动滚动：拖动 LazyColumn 会派发 DragInteraction.Start，
-        // 而程序化 animateScrollToItem 不会，借此区分并避让几秒。
+
+        // 用户手动滚动歌词后，自动居中避让几秒（沿用原交互逻辑）
+        var userScrollPauseUntil by remember { mutableLongStateOf(0L) }
         LaunchedEffect(listState) {
             listState.interactionSource.interactions.collect { interaction ->
                 if (interaction is DragInteraction.Start) {
@@ -842,23 +869,33 @@ private fun LyricsFace(
                 }
             }
         }
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            items(lyrics.lines.size) { i ->
-                Text(
-                    text = lyrics.lines[i].text,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = fontSizeSp.sp),
-                    color = if (i == currentIndex) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                    },
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(vertical = 6.dp)
-                )
+        // 当前行变化时平滑滚动到该行中心；处于手动浏览窗口内则不打断
+        LaunchedEffect(currentIndex, areaHeightPx) {
+            if (currentIndex < 0) return@LaunchedEffect
+            if (android.os.SystemClock.uptimeMillis() < userScrollPauseUntil) return@LaunchedEffect
+            listState.animateScrollToItem(currentIndex)
+        }
+
+        Box(modifier = Modifier.fillMaxSize().onSizeChanged { areaHeightPx = it.height }) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(vertical = halfPadDp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                items(lyrics.lines.size) { i ->
+                    Text(
+                        text = lyrics.lines[i].text,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = fontSizeSp.sp),
+                        color = if (i == currentIndex) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        },
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+                }
             }
         }
     }

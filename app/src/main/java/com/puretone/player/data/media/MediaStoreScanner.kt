@@ -77,8 +77,11 @@ class MediaStoreScanner @Inject constructor(
         // 按路径去重：主卷可能同时经旧版 URI 与命名卷 URI 返回
         val songsByPath = LinkedHashMap<String, ScannedSong>()
         val candidatePaths = HashSet<String>()
-        // albumart 占位 URI 存在性缓存：同一专辑只需校验一次（跨卷共享）
-        val albumArtCache = HashMap<Long, Boolean>()
+        // albumart 占位 URI 存在性缓存：同一专辑只需校验一次。
+        // P1-6：键必须带卷名——ALBUM_ID 是「每卷独立」编号，SD 卡与内部存储会撞号，
+        // 只用 albumId 做键会把「A 卷有图」的结论错用到 B 卷同名 id 上
+        //（写入实际打不开的封面 URI → 列表封面空白；反之漏记可用封面）。
+        val albumArtCache = HashMap<String, Boolean>()
 
         externalVolumeQueries().forEach { (uri, volumeName) ->
             context.contentResolver.query(
@@ -129,7 +132,7 @@ class MediaStoreScanner @Inject constructor(
         cursor: Cursor,
         volumeName: String,
         songsByPath: LinkedHashMap<String, ScannedSong>,
-        albumArtCache: MutableMap<Long, Boolean>
+        albumArtCache: MutableMap<String, Boolean>
     ): Set<String> {
         val candidatePaths = HashSet<String>()
         val idIdx = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
@@ -173,7 +176,10 @@ class MediaStoreScanner @Inject constructor(
                 } else null,
                 mimeType = cursor.getString(mimeIdx) ?: "",
                 year = cursor.getInt(yearIdx),
-                trackNumber = cursor.getInt(trackIdx) % 1000,
+                // P4：不再对 TRACK 取 %1000。MediaStore 对多碟片专辑的常见写法是
+                // 「碟号*1000 + 轨号」（如 2003 = 第 2 碟第 3 轨），取模会把碟号抹掉，
+                // 导致多碟专辑在「按轨号排序」时两碟交错。保留原值，排序自然按碟号分段。
+                trackNumber = cursor.getInt(trackIdx),
                 dateAdded = cursor.getLong(addedIdx) * 1000,
                 dateModified = cursor.getLong(modifiedIdx) * 1000
             )
@@ -222,14 +228,16 @@ class MediaStoreScanner @Inject constructor(
     private fun albumArtExists(
         albumId: Long,
         volumeName: String,
-        cache: MutableMap<Long, Boolean>
+        cache: MutableMap<String, Boolean>
     ): Boolean {
-        cache[albumId]?.let { return it }
+        // P1-6：键带卷名（ALBUM_ID 每卷独立，见 scan() 里的缓存声明）
+        val key = "$volumeName:$albumId"
+        cache[key]?.let { return it }
         val uri = Uri.parse("content://media/$volumeName/audio/albumart/$albumId")
         val exists = runCatching {
             context.contentResolver.openInputStream(uri)?.use { input -> input.read() != -1 } ?: false
         }.getOrDefault(false)
-        cache[albumId] = exists
+        cache[key] = exists
         return exists
     }
 

@@ -11,6 +11,7 @@ import com.puretone.player.data.local.entity.PlaylistEntity
 import com.puretone.player.data.local.entity.PlaylistSongEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 @Dao
 interface PlaylistDao {
@@ -103,6 +104,12 @@ interface PlaylistDao {
      * 两条 Room Flow 组合：歌单元数据 + 关联行。Room 失效追踪覆盖
      * playlists / playlist_songs / songs 三张表，任一变化都会重算；
      * 空歌单保留（关联行为空），「我的」页显示 0 首。
+     *
+     * P2-5：combine 后必须 `distinctUntilChanged`——addSongsAtEnd 等
+     * 事务同批写 playlist_songs + playlists，两条上游 Flow 同批失效，
+     * combine 会拿着相同数据连发两次；下游（「我的」页列表）没有去重时
+     * 会把同一份数据重复重组/重绘。PlaylistWithSongs 是 data class，
+     * 结构相等即可去重。
      */
     fun observeAllWithSongs(): Flow<List<PlaylistWithSongs>> =
         observePlaylists().combine(observePlaylistSongRows()) { playlists, rows ->
@@ -113,13 +120,19 @@ interface PlaylistDao {
                     songs = byPlaylist[playlist.id]?.map { it.song } ?: emptyList()
                 )
             }
-        }
+        }.distinctUntilChanged()
 
-    /** 单个歌单及其歌曲（按 position 排序；歌单不存在时发 null） */
+    /**
+     * 单个歌单及其歌曲（按 position 排序；歌单不存在时发 null）。
+     *
+     * 详情查询带 `WHERE playlist_id`（对比 [observePlaylistSongRows] 的全量
+     * 关联行），任意 songs 行更新（播放中每次 play_count+1）不会重查全部
+     * 歌单关联；combine 后同样去重，理由同 [observeAllWithSongs]。
+     */
     fun observeWithSongs(playlistId: Long): Flow<PlaylistWithSongs?> =
         observePlaylistById(playlistId).combine(observePlaylistSongRowsOf(playlistId)) { playlist, rows ->
             playlist?.let { p -> PlaylistWithSongs(p, rows.map { it.song }) }
-        }
+        }.distinctUntilChanged()
 
     // ---------- 关联 ----------
 

@@ -13,7 +13,18 @@ import androidx.room.PrimaryKey
  */
 @Entity(
     tableName = "songs",
-    indices = [Index(value = ["path"], unique = true), Index("album_id"), Index("artist")]
+    indices = [
+        Index(value = ["path"], unique = true),
+        Index("album_id"),
+        Index("artist"),
+        // P2-3：曲库页四个排序 Flow（按添加时间 / 播放次数 / 时长）与
+        // 「最爱歌曲榜」的支撑列。无索引时任意 songs 写操作（每次完整播放的
+        // play_count+1、收藏、封面更新）都触发全表扫描 + 临时排序，大库掉帧。
+        // Room 不会为既有装机自动补索引，v5 迁移负责创建（见 MIGRATION_4_5）。
+        Index("date_added"),
+        Index(value = ["play_count", "last_played_at"]),
+        Index("duration")
+    ]
 )
 data class SongEntity(
     @PrimaryKey(autoGenerate = true)

@@ -63,6 +63,10 @@ class MusicRepository @Inject constructor(
     private val settings: SettingsRepository
 ) {
 
+    /** 上次清理过期播放历史的时间戳（P3-19，见 [recordPlay]） */
+    @Volatile
+    private var lastHistoryCleanupAt: Long = 0L
+
     // ---------- 曲库 ----------
 
     fun observeLibrary(): Flow<List<SongEntity>> = songDao.observeAll()
@@ -77,7 +81,12 @@ class MusicRepository @Inject constructor(
         SongSortOrder.PLAY_COUNT -> songDao.observeAllByPlayCount()
     }
 
-    fun search(query: String): Flow<List<SongEntity>> = songDao.search(query)
+    /**
+     * 模糊搜索（标题 / 歌手 / 专辑）。
+     * P3-26：查询词里的 `%` `_` `\` 必须先转义，否则 `LIKE '%' || :q || '%'`
+     * 会把用户输入当通配符（输入 `_` 匹配任意单字符、`%` 直接全表命中）。
+     */
+    fun search(query: String): Flow<List<SongEntity>> = songDao.search(escapeLike(query))
 
     fun observeRecentlyPlayed(limit: Int = 50): Flow<List<SongEntity>> =
         songDao.observeRecentlyPlayed(limit)
@@ -92,13 +101,34 @@ class MusicRepository @Inject constructor(
     fun observeSongsByArtist(artist: String): Flow<List<SongEntity>> =
         songDao.getSongsByArtist(artist)
 
-    /** 某文件夹下的歌曲（文件夹由 path 父目录派生） */
+    /**
+     * 某文件夹下的歌曲（文件夹由 path 父目录派生）。
+     *
+     * P2-11：改为 SQL 侧 `LIKE '<folder>/%'` 过滤——旧实现订阅整库再在内存 filter，
+     * 开一次文件夹页（以及曲库每次变化）就要全表遍历一遍，大库掉帧。
+     * 文件夹名同样要转义（路径里可能含 `%` `_`）。
+     */
     fun observeSongsByFolder(folder: String): Flow<List<SongEntity>> =
-        observeLibrary().map { list -> list.filter { folderOf(it.path) == folder } }
+        songDao.observeSongsByFolder("${escapeLike(folder)}/%")
 
     suspend fun getSong(id: Long): SongEntity? = songDao.getById(id)
 
-    suspend fun getSongs(ids: List<Long>): List<SongEntity> = songDao.getByIds(ids)
+    /**
+     * 按 id 批量取歌（顺序与去重由调用方处理）。
+     *
+     * 分片原因（P0-1）：Room 的 `IN (:ids)` 把每个 id 绑定成一个 SQL 参数，
+     * 而 Android ≤ 11（SQLite < 3.32）`SQLITE_MAX_VARIABLE_NUMBER = 999`，
+     * 超限直接抛 SQLiteException——续播恢复大队列（> 999 首）时必崩。
+     *
+     * P2-6：空列表必须短路——Room 为 `IN (:ids)` 生成的 SQL 是
+     * `... IN ()`，SQLite 直接语法错误抛 SQLiteException。当前调用方虽都
+     * 自行判空，但这是仓库公开方法，不能把正确性寄托在调用方记得判空上。
+     */
+    suspend fun getSongs(ids: List<Long>): List<SongEntity> = when {
+        ids.isEmpty() -> emptyList()
+        ids.size <= ID_CHUNK -> songDao.getByIds(ids)
+        else -> ids.chunked(ID_CHUNK).flatMap { songDao.getByIds(it) }
+    }
 
     // ---------- 收藏 ----------
 
@@ -170,7 +200,7 @@ class MusicRepository @Inject constructor(
                     playCount = old?.playCount ?: 0,
                     lastPlayedAt = old?.lastPlayedAt ?: 0L,
                     preservedCoverUri = old?.coverUri?.takeIf { prev ->
-                        prev.isNotBlank() && !prev.startsWith(ALBUM_ART_URI_PREFIX)
+                        prev.isNotBlank() && !isAlbumArtPlaceholder(prev)
                     }
                 )
             }
@@ -178,7 +208,11 @@ class MusicRepository @Inject constructor(
 
         db.withTransaction {
             if (toUpsert.isNotEmpty()) {
-                songDao.upsertAll(toUpsert)
+                // 分片写入（P0-1）：Room 的批量 @Insert/@Update 生成的是单条多值
+                // INSERT/UPDATE，参数量 = 行数 × 列数（songs 表除自增 id 外 18 列），
+                // API ≤ 30 的 SQLite 上限 999 → 约 55 行即超限崩溃。
+                // 大库首次同步/大量文件改写是最容易踩中的路径，故必须分片。
+                toUpsert.chunked(UPSERT_CHUNK).forEach { songDao.upsertAll(it) }
             }
             // 分片删除（规避 SQLite 参数上限）——删除集合"之内"的路径
             removed.toList().chunked(500).forEach { chunk ->
@@ -198,12 +232,19 @@ class MusicRepository @Inject constructor(
      * mediaStoreId 变化（媒体库重扫分配新 id）、文件被改写（dateModified/size）、
      * 或封面从「无/占位」变为「可用」。标题等标签变化一定伴随文件改写，
      * 故无需逐一比对展示字段。
+     *
+     * P2-1：还有一类「变坏」也要算变化——本次仍解析不出封面（s.coverUri == null），
+     * 但库里存的是 albumart 占位 URI。不判变化的话该行被增量逻辑整行跳过，
+     * 占位 URI 原样留在 cover_uri（既非 NULL 也非 ''，「补全缺失封面」永远
+     * 判不中，坏图常驻 UI）。判为变化后走重写路径，[preservedCoverUri] 会滤掉
+     * 占位，封面落为 NULL，之后即可进入补全队列。
      */
     private fun hasChanged(old: SongEntity, s: ScannedSong): Boolean =
         old.mediaStoreId != s.mediaStoreId ||
             old.dateModified != s.dateModified ||
             old.size != s.size ||
-            (s.coverUri != null && (old.coverUri == null || old.coverUri.startsWith(ALBUM_ART_URI_PREFIX)))
+            (s.coverUri != null && (old.coverUri == null || isAlbumArtPlaceholder(old.coverUri))) ||
+            (s.coverUri == null && isAlbumArtPlaceholder(old.coverUri))
 
     // ---------- 播放历史 ----------
 
@@ -217,9 +258,15 @@ class MusicRepository @Inject constructor(
         }
         // 注意：此处不再累加 play_count。播放次数只统计「完整播放完成」，
         // 见 recordCompletion()——否则跳过/拖动的部分播放会污染“最爱歌曲/歌手”。
-        // 历史保留 1 年：足够覆盖月度/年度趋势；「最近播放」查询本身只取最近若干条
-        val yearAgo = System.currentTimeMillis() - HISTORY_RETENTION_MS
-        playHistoryDao.clearOlderThan(yearAgo)
+        // 历史保留 1 年：足够覆盖月度/年度趋势；「最近播放」查询本身只取最近若干条。
+        // P3-19：旧实现每次播放都跑一次全表 DELETE（切歌频繁时写放大+全表扫描），
+        // 改为至少间隔 [HISTORY_CLEANUP_INTERVAL_MS] 清理一次——保留时长是以「年」计的，
+        // 晚几小时清理没有任何可观察差异。
+        val now = System.currentTimeMillis()
+        if (now - lastHistoryCleanupAt >= HISTORY_CLEANUP_INTERVAL_MS) {
+            lastHistoryCleanupAt = now
+            playHistoryDao.clearOlderThan(now - HISTORY_RETENTION_MS)
+        }
     }
 
     /**
@@ -291,8 +338,21 @@ class MusicRepository @Inject constructor(
         playlistDao.getById(playlistId)?.let { playlistDao.delete(it) }
     }
 
-    suspend fun addToPlaylist(playlistId: Long, songIds: List<Long>) =
-        playlistDao.addSongsAtEnd(playlistId, songIds.distinct())
+    /**
+     * 加歌到歌单末尾（幂等）。
+     *
+     * P3-25：先过滤掉曲库里已经不存在的 id。playlist_songs 对 songs.id 有外键
+     * （v4 起带 CASCADE），插入一条指向已删除歌曲的行会直接触发约束失败；
+     * 竞态下（歌单页打开时后台同步刚删掉某首歌）这就是一次崩溃。
+     * [getSongs] 内部已按 SQLite 参数上限分片，大歌单也安全。
+     */
+    suspend fun addToPlaylist(playlistId: Long, songIds: List<Long>) {
+        val distinct = songIds.distinct()
+        if (distinct.isEmpty()) return
+        val validIds = getSongs(distinct).map { it.id }
+        if (validIds.isEmpty()) return
+        playlistDao.addSongsAtEnd(playlistId, validIds)
+    }
 
     suspend fun removeFromPlaylist(playlistId: Long, songId: Long) =
         playlistDao.removeSongAndTouch(playlistId, songId)
@@ -356,10 +416,47 @@ class MusicRepository @Inject constructor(
             return if (idx > 0) path.substring(0, idx) else path
         }
 
-        /** MediaStore albumart 占位 URI 前缀（无内嵌封面的专辑也会生成，实际解析不出图） */
-        const val ALBUM_ART_URI_PREFIX = "content://media/external/audio/albumart/"
+        /**
+         * MediaStore albumart 占位 URI 判定片段。
+         *
+         * P1-7：不能写死 `content://media/external/...`——API 29+ 扫描写入的 URI 里
+         * 卷名是 `external_primary` 或 SD 卡卷名（`content://media/<卷名>/audio/albumart/`），
+         * 只匹配 external 会让 SD 卡上的占位 URI 被当成「真实封面」保留下来，
+         * 结果是坏图常驻 + 「补全缺失封面」永远判不中。这里只认关键路径片段。
+         */
+        const val ALBUM_ART_URI_MARK = "/audio/albumart/"
+
+        /** 是否 MediaStore albumart 占位 URI（可能为任意卷） */
+        fun isAlbumArtPlaceholder(uri: String?): Boolean =
+            uri != null && uri.contains(ALBUM_ART_URI_MARK)
+
+        /**
+         * SQL `IN (:ids)` 分片大小（P0-1）。
+         * SQLite 变量上限 999（Android ≤ 11），留足余量取 900。
+         */
+        const val ID_CHUNK = 900
+
+        /**
+         * 批量 upsert 分片大小（P0-1）。
+         * songs 表除自增 id 外 18 列，多值 INSERT 参数量 = 行数 × 18，
+         * 999 / 18 ≈ 55，取 50 留足余量。
+         */
+        const val UPSERT_CHUNK = 50
+
+        /**
+         * LIKE 通配符转义（P3-26）：用户输入或文件路径里可能含 `%` `_` `\`，
+         * 直接拼进 LIKE 会匹配到意外结果（甚至全表）。
+         * 配套 SQL 必须写 `ESCAPE '\'`。
+         */
+        fun escapeLike(value: String): String = value
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
 
         /** 播放历史保留 1 年（支撑月度/年度听歌趋势统计） */
         const val HISTORY_RETENTION_MS = 365L * 24 * 60 * 60 * 1000
+
+        /** 过期历史清理的最小间隔（P3-19）：1 小时 */
+        const val HISTORY_CLEANUP_INTERVAL_MS = 60L * 60 * 1000
     }
 }

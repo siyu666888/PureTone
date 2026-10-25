@@ -172,8 +172,11 @@ class MetadataViewModel @Inject constructor(
 
     /**
      * 撤销最近一次自动填充：恢复原歌曲信息（P2-2）。
+     * @param onUndone 撤销成功回调，入参为被恢复的原始歌曲实体
+     *                 （供调用方把表单字段一并还原，避免「库里撤回了、
+     *                 表单还留着自动填充的值」——再点保存会把候选值又写回去）。
      */
-    fun undoAutoFill(onUndone: () -> Unit = {}) {
+    fun undoAutoFill(onUndone: (SongEntity) -> Unit = {}) {
         val original = lastAutoFilled ?: return
         viewModelScope.launch {
             runCatching {
@@ -189,7 +192,7 @@ class MetadataViewModel @Inject constructor(
                 lastAutoFilled = null
                 _canUndoAutoFill.value = false
                 _message.value = "已撤销自动填充"
-                onUndone()
+                onUndone(original)
             }.onFailure {
                 _message.value = "撤销失败：${it.message}"
             }
@@ -273,9 +276,12 @@ class MetadataViewModel @Inject constructor(
                     val term = "${song.artist} ${song.title}".trim()
                     val candidate = runCatching { provider.search(term, 1).firstOrNull() }.getOrNull()
                     if (candidate?.artworkUrl != null) {
-                        // P2-2：仅当确实写入了封面才计入成功
-                        runCatching { repo.updateCover(song.id, candidate.artworkUrl) }
-                        done++
+                        // P2-8：旧实现丢弃 updateCover 的結果、无条件 done++，
+                        // 与上面「仅当确实写入了封面才计入成功」的注释自相矛盾
+                        // （写库失败也被算成成功，进度数字误导用户）。
+                        if (runCatching { repo.updateCover(song.id, candidate.artworkUrl) }.isSuccess) {
+                            done++
+                        }
                     }
                     delay(700) // P2-2：限流，避免触发数据源配额导致大量失败
                 }
