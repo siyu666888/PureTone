@@ -130,13 +130,33 @@ class PureToneDatabaseMigrationTest {
     }
 
     /** 查询表上真实存在的索引名集合 */
-    private fun indexNamesOf(db: PureToneDatabase, table: String): Set<String> {
+    private fun indexNamesOf(db: PureToneDatabase, table: String): Set<String> =
+        indexNamesOf(db.openHelper.writableDatabase, table)
+
+    private fun indexNamesOf(db: SupportSQLiteDatabase, table: String): Set<String> {
         val names = mutableSetOf<String>()
-        db.openHelper.writableDatabase.query("PRAGMA index_list(`$table`)").use { c ->
+        db.query("PRAGMA index_list(`$table`)").use { c ->
             val nameCol = c.getColumnIndexOrThrow("name")
             while (c.moveToNext()) names += c.getString(nameCol)
         }
         return names
+    }
+
+    /**
+     * 造库保真度自检：v3 / v4 的真实库都带这三个 songs 索引。
+     *
+     * 若造库漏建索引，后续「4→5 纯加索引」的迁移会拿一个残缺的旧库做校验，
+     * 反而给出错误结论（本地 Windows 曾因此假绿，Linux CI 才暴露）。
+     * 加这道断言后，造库逻辑一旦退化，本地也会立刻失败。
+     */
+    private fun assertLegacySongIndexes(db: SupportSQLiteDatabase) {
+        val found = indexNamesOf(db, "songs")
+        assertTrue(
+            "造出的旧库缺少历史索引：$found",
+            found.containsAll(
+                listOf("index_songs_path", "index_songs_album_id", "index_songs_artist")
+            )
+        )
     }
 
     /** 按导出的 3.json 建库并灌入数据（含两条悬空引用） */
@@ -160,6 +180,7 @@ class PureToneDatabaseMigrationTest {
                 .build()
         )
         helper.writableDatabase.use { db ->
+            assertLegacySongIndexes(db)
             db.execSQL(
                 """
                 INSERT INTO songs (id, media_store_id, title, artist, album, album_id, duration,
@@ -215,6 +236,7 @@ class PureToneDatabaseMigrationTest {
                 .build()
         )
         helper.writableDatabase.use { db ->
+            assertLegacySongIndexes(db)
             db.execSQL(
                 """
                 INSERT INTO songs (id, media_store_id, title, artist, album, album_id, duration,
@@ -248,7 +270,21 @@ class PureToneDatabaseMigrationTest {
         }
         val setup = database.getJSONArray("setupQueries")
         val setupQueries = (0 until setup.length()).map { setup.getString(it) }
-        return ddls to setupQueries
+
+        // 必须补建索引：Room 的 createSql 只含 CREATE TABLE，索引由 Room 运行时
+        // 单独下发 CREATE INDEX。旧实现只执行建表 + setupQueries，造出的「旧库」
+        // 比真实旧库少掉全部索引——于是 4→5 这种「纯加索引」的迁移永远看起来
+        // 没问题（本地 Windows 因此假绿），而 Linux 上 Room 的 schema 校验会
+        // 实测出索引缺失并抛 IllegalStateException。
+        val indexQueries = (0 until entities.length()).flatMap { i ->
+            val e = entities.getJSONObject(i)
+            val table = e.getString("tableName")
+            val indices = e.optJSONArray("indices") ?: return@flatMap emptyList<String>()
+            (0 until indices.length()).map { j ->
+                indices.getJSONObject(j).getString("createSql").replace("\${TABLE_NAME}", table)
+            }
+        }
+        return ddls to (setupQueries + indexQueries)
     }
 
     private companion object {
