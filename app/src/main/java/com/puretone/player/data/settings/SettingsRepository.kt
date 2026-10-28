@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.io.IOException
 import javax.inject.Inject
@@ -274,6 +275,24 @@ class SettingsRepository @Inject constructor(
         it.remove(keyLastQueueIds)
         it.remove(keyLastIndex)
         it.remove(keyLastPosition)
+    }
+
+    // ---------- 曲库扫描 ----------
+
+    private val keyLastScanMs = longPreferencesKey("library_last_scan_ms")
+
+    /**
+     * 上次成功同步曲库的时间戳；0 表示从未同步（下次必须走全量）。
+     *
+     * 增量扫描用它作为「只看这之后改动的行」的下界。
+     */
+    suspend fun lastScanMs(): Long = dataStore.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { it[keyLastScanMs] ?: 0L }
+        .first()
+
+    suspend fun setLastScanMs(ms: Long) = edit {
+        it[keyLastScanMs] = ms
     }
 
     /** 上次播放会话快照 */

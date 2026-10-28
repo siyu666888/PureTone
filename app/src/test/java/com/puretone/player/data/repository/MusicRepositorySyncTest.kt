@@ -39,6 +39,7 @@ class MusicRepositorySyncTest {
 
     private lateinit var db: PureToneDatabase
     private lateinit var repo: MusicRepository
+    private lateinit var settings: SettingsRepository
     private lateinit var settingsFile: File
 
     @Before
@@ -52,6 +53,7 @@ class MusicRepositorySyncTest {
         val dataStore = PreferenceDataStoreFactory.create(
             scope = CoroutineScope(Dispatchers.IO + Job())
         ) { settingsFile }
+        settings = SettingsRepository(dataStore)
         repo = MusicRepository(
             db = db,
             songDao = db.songDao(),
@@ -59,7 +61,7 @@ class MusicRepositorySyncTest {
             playHistoryDao = db.playHistoryDao(),
             statsDao = db.statsDao(),
             scanner = MediaStoreScanner(context),
-            settings = SettingsRepository(dataStore)
+            settings = settings
         )
     }
 
@@ -128,6 +130,56 @@ class MusicRepositorySyncTest {
         assertEquals(2, result.total)
         // 收藏标记不因同步丢失
         assertTrue(remaining.first { it.path == musicA }.favorite)
+    }
+
+    /**
+     * 库为空时必须走全量，即使存在历史扫描时间戳。
+     *
+     * 场景：用户清了 App 数据（或数据被外部清除），但 DataStore 里的 lastScanMs
+     * 可能仍在。此时若走增量，只会拉到「上次之后的变更行」——一个空库永远补不回来。
+     *
+     * 判别原理：测试环境下增量路径查询拿不到数据（见下一条用例），会命中安全闸
+     * 返回 total=0；只有真正走了全量才会有 added=2 / total=2。
+     */
+    @Test
+    fun `empty library forces full scan even with previous timestamp`() = runTest {
+        settings.setLastScanMs(System.currentTimeMillis() - 60_000)
+        registerMediaStore(
+            "/storage/emulated/0/Music/a.mp3",
+            "/storage/emulated/0/Music/b.flac"
+        )
+
+        val result = repo.syncLibrary()
+
+        assertEquals("空库应走全量并入库 2 首", 2, result.added)
+        assertEquals(2, result.total)
+        assertEquals(2, db.songDao().getAll().size)
+    }
+
+    /**
+     * 增量同步拿不到路径清单时，绝不删除任何歌曲。
+     *
+     * 删除对账的依据是「当前媒体库全量路径」。若这份额外查询失败（返回空），
+     * 说明本次同步不可信——此时按安全闸处理，而不是把库里所有行都当成「已删除」。
+     * 注意这与全量扫描不同：增量下「变更行」为空是完全正常的（没有改动），
+     * 所以安全闸的判据必须是路径清单，不能是变更行。
+     */
+    @Test
+    fun `incremental sync without path list never deletes`() = runTest {
+        db.songDao().upsertAll(
+            listOf(
+                song("/storage/emulated/0/Music/a.mp3", id = 1L),
+                song("/storage/emulated/0/Music/b.flac", id = 2L)
+            )
+        )
+        settings.setLastScanMs(System.currentTimeMillis() - 60_000)
+        // 库非空 + 有时间戳 → 走增量；路径清单在测试环境下必然为空
+        registerMediaStore("/storage/emulated/0/Music/a.mp3")
+
+        val result = repo.syncLibrary()
+
+        assertEquals("路径清单不可信时不得删歌", 0, result.removed)
+        assertEquals("曲库应保持原样", 2, db.songDao().getAll().size)
     }
 
     @Test

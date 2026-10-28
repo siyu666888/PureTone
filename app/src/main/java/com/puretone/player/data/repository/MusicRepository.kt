@@ -157,28 +157,48 @@ class MusicRepository @Inject constructor(
      *   即使文件没变也重写整表 → Room 全表失效、所有 Flow 重发、UI 重新分组；
      * - upsert + 删除包在同一事务：中途失败不会留下半套数据。
      */
-    suspend fun syncLibrary(): SyncResult = withContext(Dispatchers.IO) {
-        val scan = scanner.scan()
-        val scanned = scan.songs
+    suspend fun syncLibrary(forceFull: Boolean = false): SyncResult = withContext(Dispatchers.IO) {
         val existing = songDao.getAll()
+        val sinceMs = if (forceFull) 0L else settings.lastScanMs()
 
-        // 安全闸：扫描结果为空但库里已有歌曲时，不执行任何删除。
+        // 走增量的三个前提：非强制全量、有上次时间戳、库里已有数据。
+        // 最后一条是硬要求：若用户清了 App 数据（或被外部清空），时间戳可能还在，
+        // 此时增量只会拉到「上次之后的变更行」，库永远补不回来——必须全量。
+        val incremental = !forceFull && sinceMs > 0L && existing.isNotEmpty()
+
+        val scanned: List<ScannedSong>
+        val currentPaths: Set<String>
+        val skippedNonMusic: Int
+        if (incremental) {
+            val result = scanner.scanChanged(sinceMs)
+            scanned = result.changed
+            currentPaths = result.currentPaths
+            skippedNonMusic = result.skippedNonMusic
+        } else {
+            val result = scanner.scan()
+            scanned = result.songs
+            currentPaths = HashSet<String>(scanned.size).apply { scanned.mapTo(this) { it.path } }
+            skippedNonMusic = result.skippedNonMusic
+        }
+
+        // 安全闸：媒体库里一个有效音乐文件都读不到时，不执行任何删除。
         // 否则一次授权失败/读取异常会把整个曲库清空（历史 bug：删除方向写反，
         // 传 [SongDao.deleteByPathNotIn] 导致"删音乐、留录音"）。
-        if (scanned.isEmpty()) {
+        // 注意判据用的是 currentPaths（当前媒体库全量路径）而不是 scanned：
+        // 增量下 scanned 为空是**正常**的（没有变更），不能据此判定异常。
+        if (currentPaths.isEmpty()) {
             return@withContext SyncResult(
-                added = 0, removed = 0, total = existing.size, skippedNonMusic = scan.skippedNonMusic
+                added = 0, removed = 0, total = existing.size, skippedNonMusic = skippedNonMusic
             )
         }
 
         val existingByPath = existing.associateBy { it.path }
         val existingPaths = existingByPath.keys
-        val scannedPaths = scanned.map { it.path }.toSet()
 
         val added = scanned.count { it.path !in existingPaths }
-        // 仅这些路径应从曲库移除：存在于本地库、但已不在本次扫描结果中
+        // 仅这些路径应从曲库移除：存在于本地库、但已不在当前媒体库中
         // （文件被删、或被本次过滤规则判定为非音乐，如录音）。
-        val removed = existingPaths - scannedPaths
+        val removed = existingPaths - currentPaths
 
         // 保留已存在歌曲的本地 id（维持歌单 / 历史引用）、收藏与统计字段
         // （upsert 为 INSERT OR IGNORE + UPDATE 两段式，冲突行走 UPDATE，
@@ -219,11 +239,15 @@ class MusicRepository @Inject constructor(
                 songDao.deleteByPathIn(chunk)
             }
         }
+        // 只在整轮同步成功后推进时间戳：中途异常则下次仍从上次时间点增量，
+        // 不会把「本次没扫到的变更」永久跳过。
+        settings.setLastScanMs(System.currentTimeMillis())
+
         SyncResult(
             added = added,
             removed = removed.size,
-            total = scanned.size,
-            skippedNonMusic = scan.skippedNonMusic
+            total = currentPaths.size,
+            skippedNonMusic = skippedNonMusic
         )
     }
 

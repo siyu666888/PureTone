@@ -37,6 +37,19 @@ data class ScanResult(
 )
 
 /**
+ * 增量扫描结果。
+ *
+ * [changed] 只含「上次扫描之后有改动」的行（新增 / 文件被改写）；
+ * [currentPaths] 是当前媒体库里**全部**有效音乐路径——删除对账必须以它为准，
+ * 否则「文件被删」这类变化在增量下永远发现不了（增量查询看不到已消失的行）。
+ */
+data class IncrementalScanResult(
+    val changed: List<ScannedSong>,
+    val currentPaths: Set<String>,
+    val skippedNonMusic: Int
+)
+
+/**
  * 系统媒体库扫描器。
  *
  * 覆盖面（P1-6）：
@@ -73,6 +86,56 @@ class MediaStoreScanner @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
 
+    /**
+     * 增量扫描：只回传 [sinceMs] 之后改动过的行，外加当前全量路径清单。
+     *
+     * 为什么要两份数据：
+     * - **变更行**（带时间条件）：只有这些行需要构建对象、校验专辑封面。
+     *   全量扫描里最贵的一步正是封面校验（每个专辑一次 `openInputStream`），
+     *   大曲库下增量能把它从「全部专辑」降到「变动的专辑」；
+     * - **路径清单**（不带时间条件）：被删除的文件不会出现在任何增量查询里，
+     *   只有拿到当前全量路径，才能算出「库里有、媒体库里没了」的差集。
+     *   该查询只取 `DATA`/`MIME_TYPE` 两列（不取 14 列、不做封面校验），成本低得多。
+     *
+     * [sinceMs] <= 0 时退化为全量（所有行都算变更）。
+     */
+    suspend fun scanChanged(sinceMs: Long): IncrementalScanResult = withContext(Dispatchers.IO) {
+        val sinceSec = if (sinceMs <= 0L) null else sinceMs / 1000
+        val changedByPath = LinkedHashMap<String, ScannedSong>()
+        val candidatePaths = HashSet<String>()
+        val albumArtCache = HashMap<String, Boolean>()
+        val allPaths = HashSet<String>()
+
+        externalVolumeQueries().forEach { (uri, volumeName) ->
+            // 1) 变更行
+            context.contentResolver.query(
+                uri,
+                PROJECTION,
+                buildSelection(sinceSec),
+                buildSelectionArgs(sinceSec),
+                SORT_TITLE
+            )?.use { cursor ->
+                candidatePaths += readRows(cursor, volumeName, changedByPath, albumArtCache)
+            }
+            // 2) 当前全量路径（删除对账用）
+            context.contentResolver.query(
+                uri,
+                PATH_PROJECTION,
+                buildSelection(null),
+                buildSelectionArgs(null),
+                null
+            )?.use { cursor ->
+                allPaths += readPaths(cursor)
+            }
+        }
+
+        IncrementalScanResult(
+            changed = changedByPath.values.toList(),
+            currentPaths = allPaths,
+            skippedNonMusic = (candidatePaths.size - changedByPath.size).coerceAtLeast(0)
+        )
+    }
+
     suspend fun scan(): ScanResult = withContext(Dispatchers.IO) {
         // 按路径去重：主卷可能同时经旧版 URI 与命名卷 URI 返回
         val songsByPath = LinkedHashMap<String, ScannedSong>()
@@ -89,7 +152,7 @@ class MediaStoreScanner @Inject constructor(
                 PROJECTION,
                 buildSelection(),
                 buildSelectionArgs(),
-                "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC"
+                SORT_TITLE
             )?.use { cursor ->
                 candidatePaths += readRows(cursor, volumeName, songsByPath, albumArtCache)
             }
@@ -190,13 +253,38 @@ class MediaStoreScanner @Inject constructor(
     }
 
     /**
+     * 读取路径清单（删除对账用）：只取 `DATA`/`MIME_TYPE`，不构建对象、不校验封面。
+     *
+     * 与应用侧过滤保持一致：被判定为非音乐的路径不进清单，否则旧版本误入的
+     * 录音文件会一直留在库里（清单里有它 → 永远不算「已删除」）。
+     */
+    internal fun readPaths(cursor: Cursor): Set<String> {
+        val dataIdx = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
+        // 路径查询的投影固定带 MIME，但防御性处理：列缺失时按空 MIME 处理
+        val mimeIdx = cursor.getColumnIndex(MediaStore.Audio.Media.MIME_TYPE)
+        val paths = HashSet<String>()
+        while (cursor.moveToNext()) {
+            val path = cursor.getString(dataIdx)
+            if (path.isNullOrBlank()) continue
+            val mime = if (mimeIdx >= 0) cursor.getString(mimeIdx) ?: "" else ""
+            if (!isNonMusicPath(path, mime)) paths += path
+        }
+        return paths
+    }
+
+    /**
      * 扫描条件（所有卷共用）。
      * IS_PENDING / IS_TRASHED 是较新版本的列，老设备上加了会直接抛
      * "no such column"，按 API 级别条件拼接。
+     *
+     * [sinceSec] 非空时追加时间条件（MediaStore 的 DATE_MODIFIED 单位是**秒**）。
      */
-    private fun buildSelection(): String = buildString {
+    internal fun buildSelection(sinceSec: Long? = null): String = buildString {
         append("${MediaStore.Audio.Media.IS_MUSIC} != 0")
         append(" AND ${MediaStore.Audio.Media.DURATION} >= ?")
+        if (sinceSec != null) {
+            append(" AND ${MediaStore.Audio.Media.DATE_MODIFIED} >= ?")
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             append(" AND ${MediaStore.MediaColumns.IS_PENDING} = 0")
         }
@@ -212,8 +300,10 @@ class MediaStoreScanner @Inject constructor(
         }
     }
 
-    private fun buildSelectionArgs(): Array<String> = arrayOf(
+    /** 与 [buildSelection] 的 `?` 顺序严格对应：时长 → 时间下界 → 目录 → MIME */
+    internal fun buildSelectionArgs(sinceSec: Long? = null): Array<String> = arrayOf(
         MIN_DURATION_MS.toString(),
+        *(if (sinceSec != null) arrayOf(sinceSec.toString()) else emptyArray()),
         *EXCLUDED_DIRS.map { "%/$it/%" }.toTypedArray(),
         *RECORDING_MIME_TYPES.toTypedArray()
     )
@@ -247,6 +337,15 @@ class MediaStoreScanner @Inject constructor(
 
         /** 旧版主卷 URI 的卷名（albumart URI 拼装用） */
         private const val VOLUME_EXTERNAL = "external"
+
+        /** 删除对账用的轻量投影：只要路径与 MIME（判定排除规则需要） */
+        private val PATH_PROJECTION = arrayOf(
+            MediaStore.Audio.Media.DATA,
+            MediaStore.Audio.Media.MIME_TYPE
+        )
+
+        /** 扫描排序：标题（不区分大小写） */
+        private const val SORT_TITLE = "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC"
 
         private val PROJECTION = arrayOf(
             MediaStore.Audio.Media._ID,
@@ -310,10 +409,18 @@ class MediaStoreScanner @Inject constructor(
     }
 }
 
-/** 非音乐文件判定（路径大小写不敏感） */
-private fun ScannedSong.isNonMusic(): Boolean {
+/**
+ * 非音乐文件判定（路径大小写不敏感）。
+ *
+ * 抽取为独立函数：全量扫描（[ScannedSong]）与增量路径对账（只有路径+MIME）
+ * 必须用**同一套**规则，否则两份数据口径不一——被过滤的路径若进了路径清单，
+ * 旧版本误入的录音就永远不会被判定为「已删除」。
+ */
+internal fun isNonMusicPath(path: String, mimeType: String): Boolean {
     val lowerPath = path.lowercase()
     return MediaStoreScanner.EXCLUDED_DIRS.any { lowerPath.contains("/${it.lowercase()}/") } ||
         MediaStoreScanner.RECORDING_EXTENSIONS.any { lowerPath.endsWith(".$it") } ||
         MediaStoreScanner.RECORDING_MIME_TYPES.any { mimeType.equals(it, ignoreCase = true) }
 }
+
+private fun ScannedSong.isNonMusic(): Boolean = isNonMusicPath(path, mimeType)

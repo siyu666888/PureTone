@@ -2,12 +2,15 @@ package com.puretone.player
 
 import android.app.Application
 import android.util.Log
+import coil.Coil
+import coil.ImageLoader
 import dagger.hilt.android.HiltAndroidApp
 import java.io.File
 import java.io.PrintWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import javax.inject.Inject
 
 /**
  * PureTone 应用入口。
@@ -16,8 +19,14 @@ import java.util.Locale
 @HiltAndroidApp
 class PureToneApplication : Application() {
 
+    /** 封面加载器：全局注册后，`AsyncImage` 无需显式传 model loader 即走缓存 */
+    @Inject
+    lateinit var imageLoader: ImageLoader
+
     override fun onCreate() {
+        // Hilt 在 super.onCreate() 之前完成 Application 的字段注入，此处可安全使用
         super.onCreate()
+        Coil.setImageLoader(imageLoader)
         installCrashLogger()
     }
 

@@ -174,4 +174,74 @@ class MediaStoreScannerTest {
             MediaStore.Audio.Media.DATE_MODIFIED
         )
     }
+
+    // ------------------------------------------------------------ 增量扫描
+
+    /**
+     * selection 的 `?` 个数必须与 selectionArgs 长度严格相等。
+     *
+     * 增量扫描新加了 DATE_MODIFIED 条件，参数顺序是「时长 → 时间下界 → 目录 → MIME」。
+     * 将来再加条件时若忘了同步 args，SQLite 不会报错、只会把值绑到错误的列上
+     * （典型症状：扫描莫名其妙少歌/多歌）。这条断言把这类静默错误挡在 CI 之外。
+     */
+    @Test
+    fun `selection 占位符数量与参数数组长度一致`() {
+        val scanner = MediaStoreScanner(ApplicationProvider.getApplicationContext())
+
+        val fullSel = scanner.buildSelection(null)
+        val fullArgs = scanner.buildSelectionArgs(null)
+        assertEquals(
+            "全量：占位符数与参数数不符 → $fullSel / ${fullArgs.toList()}",
+            fullSel.count { it == '?' },
+            fullArgs.size
+        )
+        assertFalse("全量不应带时间条件", fullSel.contains("date_modified"))
+
+        val incSel = scanner.buildSelection(1_700_000_000L)
+        val incArgs = scanner.buildSelectionArgs(1_700_000_000L)
+        assertEquals(
+            "增量：占位符数与参数数不符 → $incSel / ${incArgs.toList()}",
+            incSel.count { it == '?' },
+            incArgs.size
+        )
+        assertTrue("增量必须带时间条件", incSel.contains("date_modified"))
+        // 参数顺序：0=时长下界，1=时间下界
+        assertEquals(MediaStoreScanner.MIN_DURATION_MS.toString(), incArgs[0])
+        assertEquals("1700000000", incArgs[1])
+        assertEquals(
+            "增量应比全量多一个时间参数",
+            fullArgs.size + 1,
+            incArgs.size
+        )
+    }
+
+    /**
+     * 路径清单（删除对账）必须与入库口径一致：录音/系统目录里的文件不能进清单。
+     *
+     * 否则旧版本误入的录音会一直留在库里——清单里有它，就永远不算「已删除」。
+     */
+    @Test
+    fun `readPaths 与入库口径一致，排除录音与系统目录`() {
+        val scanner = MediaStoreScanner(ApplicationProvider.getApplicationContext())
+        val cursor = RoboCursor()
+        cursor.setColumnNames(
+            listOf(MediaStore.Audio.Media.DATA, MediaStore.Audio.Media.MIME_TYPE)
+        )
+        cursor.setResults(
+            arrayOf(
+                arrayOf<Any?>("/storage/emulated/0/Music/a.mp3", "audio/mpeg"),
+                arrayOf<Any?>("/storage/emulated/0/Music/b.flac", "audio/flac"),
+                arrayOf<Any?>("/storage/emulated/0/Recordings/rec.m4a", "audio/mp4"),
+                arrayOf<Any?>("/storage/emulated/0/Sounds/voice.amr", "audio/amr")
+            )
+        )
+
+        val paths = scanner.readPaths(cursor)
+
+        assertTrue(paths.contains("/storage/emulated/0/Music/a.mp3"))
+        assertTrue(paths.contains("/storage/emulated/0/Music/b.flac"))
+        assertFalse("录音目录不应进清单", paths.contains("/storage/emulated/0/Recordings/rec.m4a"))
+        assertFalse("录音扩展名不应进清单", paths.contains("/storage/emulated/0/Sounds/voice.amr"))
+        assertEquals(2, paths.size)
+    }
 }
