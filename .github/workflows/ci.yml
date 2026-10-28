@@ -91,7 +91,17 @@ jobs:
         run: ./gradlew assembleRelease --no-daemon
 
       - name: 校验 Release 签名 (apksigner)
-        run: $ANDROID_HOME/build-tools/34.0.0/apksigner verify --verbose app/build/outputs/apk/release/*.apk
+        # apksigner 一次只接受一个 APK；本项目按 ABI 拆分出多个包，需逐个校验，
+        # 任一个失败即整体失败（否则签名问题会被静默放过）。
+        run: |
+          set -e
+          # 动态定位，避免 build-tools 版本号硬编码在 runner 镜像升级后失效
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | head -1)
+          echo "using apksigner: $APKSIGNER"
+          for apk in app/build/outputs/apk/release/*.apk; do
+            echo "==> verifying $apk"
+            "$APKSIGNER" verify --verbose "$apk"
+          done
 
       # lint 先只做「信息收集」：不因既有告警阻塞 CI，等告警清零后再去掉 continue-on-error。
       - name: 静态检查 (lint)
