@@ -1,0 +1,125 @@
+name: Android CI
+
+# PureTone CI：push / PR 自动验证，替代「改完手工跑一遍」。
+#
+# 三个环节：
+#   ① 单元测试（Robolectric）  ② Debug 包构建  ③ Release 包构建 + 签名校验
+#
+# 关于 Release 签名：
+#   真实 keystore 未入库（.gitignore 已排除 local.properties 与 *.jks），
+#   所以这里由 CI 生成一次性自签名密钥，目的只是验证 release 链路能编通——
+#   重点是 R8 混淆 + shrinkResources 下，ffmpeg-kit / Media3 / Room 的
+#   保留规则（app/proguard-rules.pro）是否仍然正确。这类问题只有在
+#   release 构建时才会暴露，debug 构建永远看不见。
+#   若希望 CI 产出正式签名包：配置仓库 Secrets 后，把「生成 CI 临时签名密钥」
+#   这一步替换为从 Secrets 还原 keystore 即可。
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: 构建与测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # ubuntu-latest 镜像已预装 Android SDK（ANDROID_HOME=/usr/local/lib/android/sdk），
+      # 无需 android-actions/setup-android（其新版会安装已废弃的 tools 包而失败），
+      # 只需用预装的 sdkmanager 补齐本项目需要的组件并接受许可。
+      - name: 安装 SDK 组件并接受许可
+        run: |
+          SDKM="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          echo "sdkmanager: $SDKM"
+          yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+          "$SDKM" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+
+      - name: 赋予 gradlew 执行权限
+        run: chmod +x gradlew
+
+      - name: 缓存 Gradle 依赖
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      - name: 运行单元测试 (Robolectric)
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      - name: 构建 Debug APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      # 用一次性自签名密钥编 release，仅为验证 release 链路（R8 / proguard 保留规则）。
+      # 该密钥不入库、不用于正式发布，因此不会引入任何密钥泄露风险。
+      - name: 生成 CI 临时签名密钥
+        run: |
+          keytool -genkeypair -v \
+            -keystore "${{ github.workspace }}/ci-release.jks" \
+            -storetype PKCS12 -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias puretone -storepass android -keypass android \
+            -dname "CN=CI, OU=CI, O=CI, L=CI, S=CI, C=CN"
+
+      - name: 写入 local.properties (sdk.dir + 签名)
+        run: |
+          {
+            echo "sdk.dir=$ANDROID_HOME"
+            echo "storeFile=${{ github.workspace }}/ci-release.jks"
+            echo "storePassword=android"
+            echo "keyAlias=puretone"
+            echo "keyPassword=android"
+          } > local.properties
+          echo "--- local.properties ---"
+          cat local.properties
+
+      - name: 构建 Release APK
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: 校验 Release 签名 (apksigner)
+        run: $ANDROID_HOME/build-tools/34.0.0/apksigner verify --verbose app/build/outputs/apk/release/*.apk
+
+      # lint 先只做「信息收集」：不因既有告警阻塞 CI，等告警清零后再去掉 continue-on-error。
+      - name: 静态检查 (lint)
+        continue-on-error: true
+        run: ./gradlew lintDebug --no-daemon
+
+      - name: 上传 APK 产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apks
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+          if-no-files-found: ignore
+
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+
+      - name: 上传 lint 报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-reports
+          path: app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
