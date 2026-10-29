@@ -6,6 +6,9 @@ import com.puretone.player.data.local.dao.HourCountRow
 import com.puretone.player.data.local.dao.NamedCountRow
 import com.puretone.player.data.local.dao.TopSongRow
 import com.puretone.player.data.repository.MusicRepository
+import com.puretone.player.domain.grouping.DayBucket
+import com.puretone.player.domain.grouping.TREND_DAYS
+import com.puretone.player.domain.grouping.buildFullTrend
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,13 +20,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import java.util.Calendar
 import javax.inject.Inject
-
-/** 单日听歌桶（用于趋势图，缺失日补 0） */
-data class DayBucket(
-    val dayKey: String,
-    val listenMs: Long,
-    val plays: Long
-)
 
 /** 听歌统计 UI 状态 */
 data class StatsUiState(
@@ -134,45 +130,4 @@ class StatsViewModel @Inject constructor(
         val topArtists: List<NamedCountRow>,
         val hours: List<HourCountRow>
     )
-
-    companion object {
-        const val TREND_DAYS = 30
-
-        /** 把稀疏的每日记录补全为连续 [TREND_DAYS] 天序列（缺失日 listenMs/plays=0） */
-        private fun buildFullTrend(
-            rows: List<com.puretone.player.data.local.dao.DailyTrendRow>,
-            sinceMs: Long
-        ): List<DayBucket> {
-            val byKey = rows.associateBy { it.dayKey }
-            val cal = Calendar.getInstance()
-            // 从最早一天开始逐日生成 key，保证连续
-            cal.timeInMillis = sinceMs
-            val start = Calendar.getInstance().apply { timeInMillis = sinceMs }
-            start.set(Calendar.HOUR_OF_DAY, 0)
-            start.set(Calendar.MINUTE, 0)
-            start.set(Calendar.SECOND, 0)
-            start.set(Calendar.MILLISECOND, 0)
-            val out = ArrayList<DayBucket>(TREND_DAYS)
-            val cursor = (start.clone() as Calendar)
-            val today = Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-            }
-            while (!cursor.after(today) && out.size < 400) {
-                val key = dayKey(cursor)
-                val row = byKey[key]
-                out += DayBucket(dayKey = key, listenMs = row?.listenMs ?: 0L, plays = row?.plays ?: 0L)
-                cursor.add(Calendar.DAY_OF_YEAR, 1)
-            }
-            cal.clear()
-            return out
-        }
-
-        private fun dayKey(cal: Calendar): String {
-            val y = cal.get(Calendar.YEAR)
-            val m = cal.get(Calendar.MONTH) + 1
-            val d = cal.get(Calendar.DAY_OF_MONTH)
-            return "%04d-%02d-%02d".format(y, m, d)
-        }
-    }
 }

@@ -121,7 +121,7 @@ Lcom/puretone/player/playback/TranscodeRequest;
 Lcom/puretone/player/playback/Transcoder;
 Lcom/puretone/player/ui/AlbumSummary;
 Lcom/puretone/player/ui/ArtistSummary;
-Lcom/puretone/player/ui/DayBucket;
+Lcom/puretone/player/domain/grouping/DayBucket;
 Lcom/puretone/player/ui/EqScreenState;
 Lcom/puretone/player/ui/EqViewModel;
 Lcom/puretone/player/ui/EqViewModel_Factory;
