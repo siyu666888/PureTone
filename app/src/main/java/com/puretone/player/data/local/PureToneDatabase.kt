@@ -34,6 +34,11 @@ import com.puretone.player.data.local.entity.SongEntity
  *              - songs(date_added / (play_count, last_played_at) / duration)：
  *                曲库页四个排序 Flow 与「最爱歌曲榜」的支撑列（迁移见
  *                [MIGRATION_4_5]）。纯 CREATE INDEX，无表重建、无数据搬运。
+ * version 6 —— 曲库新增 [SongEntity.volumeName] 列（P2-4 album_id 跨卷隔离）：
+ *              多卷设备（内部存储 + SD 卡）上 MediaStore 的 album_id 会跨卷撞号，
+ *              使不同卷同名 album_id 被误判为同一张专辑、专辑详情串页。专辑标识改为
+ *              (volumeName, albumId) 复合键，volume_name 用 ALTER 加列、默认空串，
+ *              旧数据按「主卷」归类（SD 卡歌曲重新扫描后即按真实卷名隔离）。
  * schema JSON 由 KSP room.schemaLocation 导出至 app/schemas，供后续迁移校验。
  */
 @Database(
@@ -43,7 +48,7 @@ import com.puretone.player.data.local.entity.SongEntity
         PlaylistSongEntity::class,
         PlayHistoryEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 abstract class PureToneDatabase : RoomDatabase() {
@@ -182,6 +187,23 @@ abstract class PureToneDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_play_history_played_at` " +
                         "ON `play_history` (`played_at`)"
+                )
+            }
+        }
+
+        /**
+         * v5 → v6：曲库新增 volume_name 列（P2-4 album_id 跨卷隔离）。
+         *
+         * SQLite 不支持 ALTER 加列带 DEFAULT 的跨版本一致语义问题——这里用
+         * `ADD COLUMN ... NOT NULL DEFAULT ''`：NOT NULL + 默认空串保证既有行
+         * （全部来自主卷时代）归类到「空卷名」，重新扫描后 SD 卡歌曲按真实卷名隔离。
+         * 纯加列、无数据搬运、无需重建表；新列无独立索引（album 查询以 album_id/
+         * album 为主过滤维度，volume_name 仅作卷隔离的附加等值条件，结果集小）。
+         */
+        val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `songs` ADD COLUMN `volume_name` TEXT NOT NULL DEFAULT ''"
                 )
             }
         }

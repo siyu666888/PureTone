@@ -385,7 +385,9 @@ fun BrowseScreen(
             MusicTab.ALBUMS -> AlbumsTabContent(
                 albums = albums,
                 onAlbumClick = { album ->
-                    navController.navigate(Routes.groupDetail("album", "${album.albumId}|${album.album}"))
+                    navController.navigate(
+                        Routes.groupDetail("album", "${album.volumeName}|${album.albumId}|${album.album}")
+                    )
                 }
             )
             MusicTab.ARTISTS -> ArtistsTabContent(
@@ -702,7 +704,7 @@ private fun AlbumsTabContent(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        items(albums, key = { "${it.albumId}|${it.album}" }) { album ->
+        items(albums, key = { "${it.volumeName}|${it.albumId}|${it.album}" }) { album ->
             AlbumCard(album = album, onClick = { onAlbumClick(album) })
         }
     }

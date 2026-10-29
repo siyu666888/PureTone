@@ -93,9 +93,9 @@ class MusicRepository @Inject constructor(
 
     // ---------- 专辑 / 歌手 / 文件夹分组详情 ----------
 
-    /** 某专辑下的歌曲（专辑二级详情页） */
-    fun observeSongsByAlbum(albumId: Long, album: String): Flow<List<SongEntity>> =
-        songDao.getSongsByAlbum(albumId, album)
+    /** 某专辑下的歌曲（专辑二级详情页），按 (volumeName, albumId) 复合键定位（P2-4） */
+    fun observeSongsByAlbum(albumId: Long, album: String, volumeName: String): Flow<List<SongEntity>> =
+        songDao.getSongsByAlbum(albumId, album, volumeName)
 
     /** 某歌手下的歌曲 */
     fun observeSongsByArtist(artist: String): Flow<List<SongEntity>> =
@@ -410,6 +410,7 @@ class MusicRepository @Inject constructor(
         artist = UnknownText.normalizeArtist(artist).ifBlank { UNKNOWN_ARTIST },
         album = UnknownText.normalizeAlbum(album).ifBlank { UNKNOWN_ALBUM },
         albumId = albumId,
+        volumeName = volumeName,
         duration = duration,
         path = path,
         size = size,

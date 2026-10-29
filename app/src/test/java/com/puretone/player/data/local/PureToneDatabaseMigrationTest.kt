@@ -59,7 +59,8 @@ class PureToneDatabaseMigrationTest {
                 PureToneDatabase.MIGRATION_1_2,
                 PureToneDatabase.MIGRATION_2_3,
                 PureToneDatabase.MIGRATION_3_4,
-                PureToneDatabase.MIGRATION_4_5
+                PureToneDatabase.MIGRATION_4_5,
+                PureToneDatabase.MIGRATION_5_6
             )
             .build()
 
@@ -105,7 +106,7 @@ class PureToneDatabaseMigrationTest {
         // 只注册 4 → 5：验证纯索引迁移 + v5 schema 校验（索引名/列序与实体
         // @Index 注解不一致会在这里抛错）
         val db = Room.databaseBuilder(context, PureToneDatabase::class.java, dbFile.absolutePath)
-            .addMigrations(PureToneDatabase.MIGRATION_4_5)
+            .addMigrations(PureToneDatabase.MIGRATION_4_5, PureToneDatabase.MIGRATION_5_6)
             .build()
 
         // 1) 触发真实打开：跑迁移 + schema 校验，数据完整保留
@@ -129,6 +130,32 @@ class PureToneDatabaseMigrationTest {
         db.close()
     }
 
+    @Test
+    fun `migrate 5 to 6 adds volume_name column and keeps data`() = runTest {
+        createV5DatabaseWithData()
+
+        // 只注册 5 → 6：验证纯加列迁移 + v6 schema 校验（缺列 / 列类型不一致会抛错）
+        val db = Room.databaseBuilder(context, PureToneDatabase::class.java, dbFile.absolutePath)
+            .addMigrations(PureToneDatabase.MIGRATION_5_6)
+            .build()
+
+        // 1) 触发真实打开：跑迁移 + schema 校验，数据完整保留
+        assertEquals(1, db.songDao().count())
+        val song = db.songDao().getById(SONG_ID)!!
+        assertEquals("Song A", song.title)
+
+        // 2) volume_name 列真实存在，且既有行默认空串（主卷时代旧数据）
+        assertTrue("songs 缺 volume_name 列：${columnNamesOf(db, "songs")}",
+            columnNamesOf(db, "songs").contains("volume_name"))
+        assertEquals("", song.volumeName)
+
+        // 3) 按 (volume_name, albumId) 复合键查询可用，且卷隔离生效
+        assertEquals(1, db.songDao().getSongsByAlbum(1L, "Album", "").first().size)
+        assertEquals(0, db.songDao().getSongsByAlbum(1L, "Album", "other_volume").first().size)
+
+        db.close()
+    }
+
     /** 查询表上真实存在的索引名集合 */
     private fun indexNamesOf(db: PureToneDatabase, table: String): Set<String> =
         indexNamesOf(db.openHelper.writableDatabase, table)
@@ -136,6 +163,19 @@ class PureToneDatabaseMigrationTest {
     private fun indexNamesOf(db: SupportSQLiteDatabase, table: String): Set<String> {
         val names = mutableSetOf<String>()
         db.query("PRAGMA index_list(`$table`)").use { c ->
+            val nameCol = c.getColumnIndexOrThrow("name")
+            while (c.moveToNext()) names += c.getString(nameCol)
+        }
+        return names
+    }
+
+    /** 查询表上真实存在的列名集合 */
+    private fun columnNamesOf(db: PureToneDatabase, table: String): Set<String> =
+        columnNamesOf(db.openHelper.writableDatabase, table)
+
+    private fun columnNamesOf(db: SupportSQLiteDatabase, table: String): Set<String> {
+        val names = mutableSetOf<String>()
+        db.query("PRAGMA table_info(`$table`)").use { c ->
             val nameCol = c.getColumnIndexOrThrow("name")
             while (c.moveToNext()) names += c.getString(nameCol)
         }
@@ -249,6 +289,41 @@ class PureToneDatabaseMigrationTest {
             db.execSQL(
                 "INSERT INTO play_history (id, song_id, played_at, duration_ms) " +
                     "VALUES (1, $SONG_ID, 100, 5000)"
+            )
+        }
+        helper.close()
+    }
+
+    /** 按导出的 5.json 建库并灌入数据（v5 真实库，尚无 volume_name 列） */
+    private fun createV5DatabaseWithData() {
+        val schema = readSchema(5)
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbFile.absolutePath)
+                .callback(object : SupportSQLiteOpenHelper.Callback(5) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        schema.first.forEach { (table, ddl) -> db.execSQL(ddl) }
+                        schema.second.forEach { db.execSQL(it) }
+                    }
+
+                    override fun onUpgrade(
+                        db: SupportSQLiteDatabase,
+                        oldVersion: Int,
+                        newVersion: Int
+                    ) = Unit
+                })
+                .build()
+        )
+        helper.writableDatabase.use { db ->
+            // 不写 volume_name：依赖迁移的 NOT NULL DEFAULT '' 兜底
+            db.execSQL(
+                """
+                INSERT INTO songs (id, media_store_id, title, artist, album, album_id, duration,
+                    path, size, cover_uri, mimeType, year, track_number, date_added, date_modified,
+                    favorite, play_count, last_played_at, user_edited)
+                VALUES ($SONG_ID, 100, 'Song A', 'Artist', 'Album', 1, 200000, '/music/a.mp3', 1000,
+                    NULL, 'audio/mpeg', 2024, 1, 1000, 2000, 1, 3, 99, 0)
+                """.trimIndent()
             )
         }
         helper.close()

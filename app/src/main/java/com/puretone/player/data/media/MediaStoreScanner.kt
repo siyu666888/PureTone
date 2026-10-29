@@ -20,6 +20,8 @@ data class ScannedSong(
     val album: String,
     val albumId: Long,
     val duration: Long,
+    /** 所属存储卷名（P2-4：专辑按卷隔离） */
+    val volumeName: String = "",
     val path: String,
     val size: Long,
     val coverUri: String?,
@@ -227,6 +229,7 @@ class MediaStoreScanner @Inject constructor(
                 album = UnknownText.normalizeAlbum(cursor.getString(albumIdx)),
                 albumId = albumId,
                 duration = cursor.getLong(durationIdx),
+                volumeName = volumeName,
                 path = path,
                 size = cursor.getLong(sizeIdx),
                 // 仅当 albumart URI 真能解析出图才写入；否则置空——

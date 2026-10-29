@@ -82,8 +82,8 @@ fun GroupDetailScreen(
     val first = songs.firstOrNull()
     val (title, subtitle, coverUri) = when (type) {
         "album" -> {
-            val seg = key.split("|", limit = 2)
-            val albumName = seg.getOrNull(1) ?: first?.album ?: "专辑"
+            val seg = key.split("|", limit = 3)
+            val albumName = seg.getOrNull(2) ?: first?.album ?: "专辑"
             Triple(first?.album ?: albumName, first?.artist, songs.firstNotNullOfOrNull { it.coverUri })
         }
         "artist" -> Triple(key, null, songs.firstNotNullOfOrNull { it.coverUri })

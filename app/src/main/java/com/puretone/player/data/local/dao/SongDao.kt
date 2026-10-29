@@ -120,18 +120,21 @@ interface SongDao {
 
     /**
      * 某专辑下的全部歌曲（用于专辑二级详情页）。
-     * albumId > 0 按专辑 id 精确匹配；未知专辑（albumId<=0）退化为按专辑名匹配，
-     * 避免把多张「未知专辑」错误合并。
+     * 专辑标识为 (volumeName, albumId) 复合键（P2-4，跨卷隔离）：
+     * - volumeName 先过滤卷，避免 SD 卡与内部存储同名 album_id 串页；
+     * - albumId > 0 按专辑 id 精确匹配；未知专辑（albumId<=0）退化为按专辑名匹配，
+     *   避免把多张「未知专辑」错误合并。
      */
     @Query(
         """
         SELECT * FROM songs
-        WHERE (:albumId > 0 AND album_id = :albumId)
-           OR (:albumId <= 0 AND album = :album)
+        WHERE volume_name = :volumeName
+          AND ((:albumId > 0 AND album_id = :albumId)
+               OR (:albumId <= 0 AND album = :album))
         ORDER BY track_number ASC, title COLLATE NOCASE ASC
         """
     )
-    fun getSongsByAlbum(albumId: Long, album: String): Flow<List<SongEntity>>
+    fun getSongsByAlbum(albumId: Long, album: String, volumeName: String): Flow<List<SongEntity>>
 
     /** 某歌手下的全部歌曲（用于歌手详情） */
     @Query(

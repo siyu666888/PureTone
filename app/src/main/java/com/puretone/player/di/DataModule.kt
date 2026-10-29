@@ -42,7 +42,8 @@ object DataModule {
                 PureToneDatabase.MIGRATION_1_2,
                 PureToneDatabase.MIGRATION_2_3,
                 PureToneDatabase.MIGRATION_3_4,
-                PureToneDatabase.MIGRATION_4_5
+                PureToneDatabase.MIGRATION_4_5,
+                PureToneDatabase.MIGRATION_5_6
             )
             .build()
 

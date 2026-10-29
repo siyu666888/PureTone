@@ -26,6 +26,7 @@ import javax.inject.Inject
 
 /** 专辑分组汇总（封面网格墙 / 二级详情页用） */
 data class AlbumSummary(
+    val volumeName: String = "",
     val albumId: Long,
     val album: String,
     val artist: String,
@@ -126,14 +127,15 @@ class LibraryViewModel @Inject constructor(
 
     /**
      * 分组详情页取歌：type ∈ {album, artist, folder}，key 为分组标识。
-     * album 的 key 形如 "albumId|album"（未知专辑 albumId=0）。
+     * album 的 key 形如 "volumeName|albumId|album"（P2-4：卷名隔离同名 album_id）。
      */
     fun observeGroupSongs(type: String, key: String): Flow<List<SongEntity>> = when (type) {
         "album" -> {
-            val seg = key.split("|", limit = 2)
-            val albumId = seg.firstOrNull()?.toLongOrNull() ?: 0L
-            val album = seg.getOrNull(1) ?: ""
-            repo.observeSongsByAlbum(albumId, album)
+            val seg = key.split("|", limit = 3)
+            val volumeName = seg.getOrNull(0) ?: ""
+            val albumId = seg.getOrNull(1)?.toLongOrNull() ?: 0L
+            val album = seg.getOrNull(2) ?: ""
+            repo.observeSongsByAlbum(albumId, album, volumeName)
         }
         "artist" -> repo.observeSongsByArtist(key)
         else -> repo.observeSongsByFolder(key)
@@ -198,12 +200,16 @@ class LibraryViewModel @Inject constructor(
     }
 }
 
-/** 按专辑分组：albumId>0 用 id 精确归类，未知专辑（id<=0）退化为按专辑名归类 */
+/**
+ * 按专辑分组：复合键 (volumeName, albumId>0?albumId:album)（P2-4）。
+ * 卷名参与分组，SD 卡与内部存储的同名 album_id 不再被误并为同一张专辑。
+ */
 private fun groupAlbums(songs: List<SongEntity>): List<AlbumSummary> {
-    return songs.groupBy { s -> s.albumId.takeIf { it > 0 } ?: s.album }
+    return songs.groupBy { s -> s.volumeName to (s.albumId.takeIf { it > 0 } ?: s.album) }
         .map { (_, group) ->
             val first = group.first()
             AlbumSummary(
+                volumeName = first.volumeName,
                 albumId = first.albumId,
                 album = first.album,
                 artist = first.artist,

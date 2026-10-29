@@ -40,6 +40,15 @@ data class SongEntity(
     @ColumnInfo(name = "album_id")
     val albumId: Long,
 
+    /**
+     * 所属存储卷名（MediaStore 卷名，如 "external_primary" / SD 卡 UUID）。
+     * 多卷设备（内部存储 + SD 卡）上 MediaStore 的 album_id 会跨卷撞号，
+     * 使不同卷同名 album_id 被误判为同一张专辑、专辑详情串页（P2-4）。
+     * 专辑标识改为 (volumeName, albumId) 复合键，按卷隔离。
+     */
+    @ColumnInfo(name = "volume_name")
+    val volumeName: String = "",
+
     /** 时长（毫秒） */
     val duration: Long,
 
