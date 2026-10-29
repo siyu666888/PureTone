@@ -44,7 +44,7 @@ data class PureToneSettings(
     val playbackSpeed: Float = 1.0f,
     /** 启动时续播上次歌曲 */
     val resumeOnStart: Boolean = true,
-    /** 睡眠定时分钟数，0 = 关闭（仅用于 UI 分段选中态与设置展示） */
+    /** 睡眠定时分钟数，0 = 关闭（UI 分段选中态）。定时到期/过期后由 [settings] 读取层归一化为 0。 */
     val sleepTimerMinutes: Int = 0,
     /**
      * 睡眠定时「到期时刻」，基于 [SystemClock.elapsedRealtime]（毫秒），0 = 无定时。
@@ -172,7 +172,19 @@ class SettingsRepository @Inject constructor(
                 bassBoostStrength = prefs[Keys.bassBoost] ?: defaults.bassBoostStrength,
                 virtualizerStrength = prefs[Keys.virtualizer] ?: defaults.virtualizerStrength,
                 eqCustomPresets = decodeCustomPresets(prefs[Keys.eqCustomPresets])
-            )
+            ).let { s ->
+                // 定时过期归一化：到期时刻已过但「分钟数」仍残留时（例如定时到期瞬间进程被杀，
+                // 异步清理没来得及落库），读取一律归一化为「关」。这样设置页分段控件不会在
+                // 重启后仍高亮上次档位，播放层也不会把它误当成仍待倒计时的定时。
+                // 判定复用下面两个纯函数，保证「UI 显示」与「实际计时」口径完全一致。
+                if (hasSleepTimer(s) && sleepRemainingMs(s) <= 0L) {
+                    s.copy(
+                        sleepTimerMinutes = 0,
+                        sleepTimerDeadlineMs = 0L,
+                        sleepTimerWallDeadlineMs = 0L
+                    )
+                } else s
+            }
         }
 
     // ---------- 写入 ----------
@@ -199,12 +211,6 @@ class SettingsRepository @Inject constructor(
             // P2-14：同时写墙钟到期时刻（重启后仍然准确）
             it[Keys.sleepTimerWallDeadline] = System.currentTimeMillis() + minutes * 60_000L
         }
-    }
-
-    /** 定时到期后调用：只清「到期时刻」，保留分钟数供 UI 显示上次选择 */
-    suspend fun clearSleepTimerDeadline() = edit {
-        it[Keys.sleepTimerDeadline] = 0L
-        it[Keys.sleepTimerWallDeadline] = 0L
     }
 
     /** 是否存在未到期的定时（用于决定是否需要清理） */

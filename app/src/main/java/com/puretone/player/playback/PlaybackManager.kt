@@ -332,8 +332,9 @@ class PlaybackManager @Inject constructor(
 
     /**
      * 睡眠定时：以「到期时刻」为准恢复/取消。
-     * 到期后由 job 暂停并把设置里的到期时刻清零——否则进程重启后
-     * 会按完整时长重新倒计时（旧实现只存分钟数导致的「定时复活」bug）。
+     * 到期后由 job 暂停并把设置里的定时三字段（分钟数 + 两个到期时刻）全部清零——
+     * 否则进程重启后既会按完整时长重新倒计时（旧「定时复活」bug），设置页分段控件
+     * 也会残留上次档位而不回到「关」。另见 [SettingsRepository] 读取层的过期归一化。
      */
     private fun applySleepTimer(s: PureToneSettings) {
         val remaining = settings.sleepRemainingMs(s)
@@ -341,9 +342,13 @@ class PlaybackManager @Inject constructor(
             // 无定时，或已过期（例如到期瞬间进程被杀）→ 收尾并清零
             sleepTimerJob?.cancel()
             sleepTimerJob = null
-            // P2-14：两个基准的到期时刻都要能触发清理
+            // 到期后三字段一次性全清（分钟数 + 两个到期时刻）。
+            // 原实现只清到期时刻、保留分钟数「供 UI 显示上次选择」，导致定时结束后重启
+            // 设置页分段仍高亮上次档位——用户反馈要求定时结束后回到「关」。
+            // 读取层 settings 已对过期定时归一化（UI 立即正确）；此处为持久化兜底，
+            // 若仍收到带到期时刻的过期态则一并全清，用 setSleepTimerMinutes(0) 不残留分钟数。
             if (settings.hasSleepTimer(s)) {
-                scope.launch { settings.clearSleepTimerDeadline() }
+                scope.launch { settings.setSleepTimerMinutes(0) }
             }
             _uiState.update { it.copy(sleepRemainingMs = 0L) }
             return
