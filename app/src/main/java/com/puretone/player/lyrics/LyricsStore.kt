@@ -32,7 +32,7 @@ class LyricsStore @Inject constructor(
         val raw = File(audioPath).nameWithoutExtension.ifBlank { "lyrics" }
         // P2-10：ext4/FUSE 文件名上限约 255 字节；base 过长会令「base_<hash>.lrc」
         // 超出上限导致 writeText 抛 ENAMETOOLONG（被 runCatching 吞掉，歌词静默存不上）。
-        // 截到 220 字节前缀 + 8 位哈希后缀 + "_" + ".lrc"(13 字节) = 233 ≤ 255，留足余量。
+        // 截到 220 字节前缀 + 12 位哈希后缀 + "_" + ".lrc"(17 字节) = 237 ≤ 255，留足余量。
         // 哈希后缀已保证不同路径唯一，截断前缀不影响去重。
         val base = truncateToBytes(raw, 220)
         return File(dir, "${base}_${hash(audioPath)}.lrc")
@@ -57,11 +57,24 @@ class LyricsStore @Inject constructor(
 
     /** 保存歌词文本；成功返回 true */
     fun save(audioPath: String, lrc: String): Boolean = runCatching {
-        fileFor(audioPath).writeText(lrc, Charsets.UTF_8)
+        val target = fileFor(audioPath)
+        // P3-6：先写 .tmp 再原子 rename——进程在 writeText 中途崩溃会残留半截文件，
+        // 旧实现直接 writeText(target) 会留下损坏的 .lrc，下次加载读到残缺歌词。
+        val tmp = File(target.parentFile, "${target.name}.tmp")
+        tmp.writeText(lrc, Charsets.UTF_8)
+        val ok = tmp.renameTo(target) || runCatching {
+            tmp.copyTo(target, overwrite = true).also { tmp.delete() }
+            true
+        }.getOrDefault(false)
+        if (!ok) tmp.delete()
+        ok
     }.isSuccess
 
     private fun hash(path: String): String {
         val md = MessageDigest.getInstance("MD5").digest(path.toByteArray())
-        return md.joinToString("") { "%02x".format(it) }.take(8)
+        // P3-22：8 位十六进制（32 位空间）碰撞概率虽低，歌曲多到百万级时不可忽略；
+        // 加长到 12 位（48 位空间），且仍守住 255 字节文件名预算
+        // （220 前缀 + 1 下划线 + 12 哈希 + 4 「.lrc」= 237 ≤ 255）。
+        return md.joinToString("") { "%02x".format(it) }.take(12)
     }
 }

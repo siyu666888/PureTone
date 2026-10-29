@@ -1,5 +1,6 @@
 package com.puretone.player.effect
 
+import com.puretone.player.data.settings.PureToneSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -63,5 +64,18 @@ class AudioEffectControllerTest {
         val before = c.currentBandLevels()
         c.applyPreset("不存在")
         assertEquals(before, c.currentBandLevels())
+    }
+
+    @Test
+    fun `P3-19 applySettings 对等长越界频段也钳制到量程`() {
+        // 旧实现 normalizeBands 在长度相等时直接返回，绕过 setBandLevel 的 coerceIn 兜底，
+        // DataStore 存了越界 mB 值时原样进入 bandLevels。
+        val c = AudioEffectController()
+        val over = List(10) { if (it % 2 == 0) 99999 else -99999 }
+        c.applySettings(PureToneSettings(eqEnabled = false, eqBandLevels = over))
+        c.currentBandLevels().forEachIndexed { i, v ->
+            val expected = if (i % 2 == 0) AudioEffectController.MAX_LEVEL_MB else AudioEffectController.MIN_LEVEL_MB
+            assertEquals("第 $i 段应被钳制", expected, v)
+        }
     }
 }

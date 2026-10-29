@@ -90,4 +90,17 @@ class M3uCodecTest {
             text
         )
     }
+
+    @Test
+    fun `P3-10 标题含换行时序列化不破坏条目结构`() {
+        // 标题里的 \r\n 若直接写出，会被当成新条目/路径，parse 回来条目数暴涨。
+        val entries = listOf(M3uEntry("/m/a.mp3", "第一行\n第二行\r第三行", 10.0))
+        val serialized = M3uCodec.serialize(entries)
+        val reparsed = M3uCodec.parse(serialized)
+        assertEquals(1, reparsed.size)
+        assertEquals("/m/a.mp3", reparsed[0].path)
+        // 换行被替换为空格，往返后标题不再含换行
+        assertEquals("第一行 第二行 第三行", reparsed[0].title)
+        assertEquals(10.0, reparsed[0].durationSec, 0.0)
+    }
 }

@@ -21,7 +21,7 @@ import javax.inject.Inject
  *
  * 持有 ExoPlayer 与 MediaSession（通知/锁屏控制由 Media3 据此自动生成）。
  * 在 onCreate 创建二者并 [PlaybackManager.bind] 注入单例；onDestroy 解绑并释放，
- * 释放顺序符合 MediaSessionService 约定（先解绑 manager，再释放 player/session）。
+ * 释放顺序为 unbind → session → player → super（P3-21，对齐官方 demo）。
  */
 // ConnectionResult.DEFAULT_* 常量是 Media3 的 UnstableApi（与 PlaybackManager 同）
 @OptIn(UnstableApi::class)
@@ -122,12 +122,17 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
-        super.onDestroy()
-        // 释放顺序：先解绑 manager（含 detach 音效），再释放 player/session。
+        // P3-21：释放顺序对齐官方 demo —— session → player → super。
+        // 旧实现把 super.onDestroy() 放在最前、且 player 先于 session 释放：
+        //   - super 提前调用意味着基类清理跑在我们释放资源之前，语义倒置；
+        //   - session 持有 player 引用，先释放 player 会让 session 短暂持有已死对象。
+        // unbind() 必须最先执行：它要从 player 上摘 listener 并 detach 音效，
+        // 对已 release 的 player 调用 removeListener 会抛异常。
         // 每步独立 runCatching，避免某一步异常导致后续资源泄漏或进程崩溃。
         runCatching { playbackManager.unbind() }
-        runCatching { player.release() }
         runCatching { session.release() }
+        runCatching { player.release() }
+        super.onDestroy()
     }
 
     private companion object {

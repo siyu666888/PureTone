@@ -120,21 +120,30 @@ interface SongDao {
 
     /**
      * 某专辑下的全部歌曲（用于专辑二级详情页）。
-     * 专辑标识为 (volumeName, albumId) 复合键（P2-4，跨卷隔离）：
-     * - volumeName 先过滤卷，避免 SD 卡与内部存储同名 album_id 串页；
-     * - albumId > 0 按专辑 id 精确匹配；未知专辑（albumId<=0）退化为按专辑名匹配，
-     *   避免把多张「未知专辑」错误合并。
+     * 专辑标识为 (volumeName, albumId) 复合键（P2-4，跨卷隔离）。
+     *
+     * P3-25：旧实现用 `((:albumId > 0 AND album_id=:albumId) OR (:albumId<=0 AND album=:album))`
+     * 的 OR 双分支参数化条件，SQLite 无法对带 OR 的复合条件使用 album_id 索引，
+     * 退化为全表扫描。拆成两条查询：albumId>0 走精确 id 匹配（命中 album_id 索引），
+     * albumId<=0 退化为按专辑名匹配（未知专辑，极少数）。由调用方按条件分支选择。
      */
     @Query(
         """
         SELECT * FROM songs
-        WHERE volume_name = :volumeName
-          AND ((:albumId > 0 AND album_id = :albumId)
-               OR (:albumId <= 0 AND album = :album))
+        WHERE volume_name = :volumeName AND album_id = :albumId
         ORDER BY track_number ASC, title COLLATE NOCASE ASC
         """
     )
-    fun getSongsByAlbum(albumId: Long, album: String, volumeName: String): Flow<List<SongEntity>>
+    fun getSongsByAlbumId(albumId: Long, volumeName: String): Flow<List<SongEntity>>
+
+    @Query(
+        """
+        SELECT * FROM songs
+        WHERE volume_name = :volumeName AND album = :album
+        ORDER BY track_number ASC, title COLLATE NOCASE ASC
+        """
+    )
+    fun getSongsByAlbumName(album: String, volumeName: String): Flow<List<SongEntity>>
 
     /** 某歌手下的全部歌曲（用于歌手详情） */
     @Query(

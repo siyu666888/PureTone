@@ -2,6 +2,7 @@ package com.puretone.player.playback
 
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -55,7 +56,17 @@ class FfmpegKitTranscoder @Inject constructor() : Transcoder {
                 )
             ) { s -> done.complete(ReturnCode.isSuccess(s.returnCode)) }
 
-            val success = withTimeoutOrNull(request.timeoutMs) { done.await() }
+            // P3-8：withTimeoutOrNull 仅在超时返回 null；协程被取消时它**重抛**
+            // CancellationException（不会返回 null）。用 runCatching 接住取消，
+            // 主动终止 ffmpeg 进程——否则切歌/清队列这类「超时之外的取消路径」
+            // 会让孤儿进程继续写（已删除 inode 的）临时文件、空耗 CPU。
+            val success = runCatching {
+                withTimeoutOrNull(request.timeoutMs) { done.await() }
+            }.getOrElse { e ->
+                runCatching { FFmpegKit.cancel(session.sessionId) }
+                if (e is CancellationException) throw e
+                null
+            }
             if (success == null) {
                 // 超时：终止 ffmpeg，避免残留进程继续写这个目标文件
                 runCatching { FFmpegKit.cancel(session.sessionId) }

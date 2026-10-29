@@ -8,14 +8,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -138,16 +135,15 @@ fun MeScreen(
             }
         }
 
-        // 我喜欢（收藏）—— 改为懒加载列表，收藏较多时不卡顿
+        // 我喜欢（收藏）
         if (favorites.isNotEmpty()) {
             SectionTitle("我喜欢（${favorites.size}）")
+            // P3-1：原先内层用 LazyColumn + 外层整页 verticalScroll，两个同向滚动容器
+            // 互相抢手势（收藏区拖动时外层滚不动）。整页已用 verticalScroll 滚动，
+            // 这里改用普通 Column，消除嵌套滚动冲突；收藏上千首的极端场景性能可接受。
             Card(modifier = Modifier.fillMaxWidth()) {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 480.dp)
-                ) {
-                    itemsIndexed(favorites) { index, song ->
+                Column {
+                    favorites.forEachIndexed { index, song ->
                         SongRow(
                             song = song,
                             onClick = { playerVm.playSongs(favorites, index) }
@@ -178,9 +174,12 @@ fun MeScreen(
                 contentPadding = PaddingValues(horizontal = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(playlists) { pw ->
+                // P3-2：传 key，歌单增删时只重组受影响项而非整行
+                items(playlists, key = { it.playlist.id }) { pw ->
+                    // P3-24：LazyRow 给子项的最大宽度即视口宽，fillMaxWidth 会让每张卡片
+                    // 占满整屏（一屏只见一张）；固定宽度实现横向多卡预览。
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.width(160.dp),
                         onClick = { playerVm.playSongs(pw.songs, 0) }
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -212,14 +211,17 @@ fun MeScreen(
     }
 
     // P2-3：删除歌单确认弹窗
-    if (playlistToDelete != null) {
+    // P3-3：先捕获局部 pw 再判空，避免判空后跨 lambda 取用 playlistToDelete!! 时，
+    // 若状态被其它重组置 null 触发 NPE（智能转换让下面直接用 pw）。
+    val pw = playlistToDelete
+    if (pw != null) {
         AlertDialog(
             onDismissRequest = { playlistToDelete = null },
             title = { Text("删除歌单") },
-            text = { Text("确定删除歌单「${playlistToDelete!!.playlist.name}」吗？此操作不可撤销。") },
+            text = { Text("确定删除歌单「${pw.playlist.name}」吗？此操作不可撤销。") },
             confirmButton = {
                 TextButton(onClick = {
-                    libVm.deletePlaylist(playlistToDelete!!.playlist.id)
+                    libVm.deletePlaylist(pw.playlist.id)
                     playlistToDelete = null
                 }) { Text("删除") }
             },

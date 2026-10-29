@@ -12,7 +12,7 @@ import org.robolectric.annotation.Config
 
 /**
  * [LyricsStore] 文件名约束测试（P2-10）。
- * 验证超长歌名会被截断，使最终文件名（含 8 位哈希后缀 + "_" + ".lrc"）不超 255 字节，
+ * 验证超长歌名会被截断，使最终文件名（含 12 位哈希后缀 + "_" + ".lrc"）不超 255 字节，
  * 避免 ext4/FUSE 的 ENAMETOOLONG 导致歌词静默保存失败。
  */
 @RunWith(RobolectricTestRunner::class)
@@ -31,8 +31,8 @@ class LyricsStoreTest {
 
         val nameBytes = file.name.toByteArray(Charsets.UTF_8)
         assertTrue("文件名应 ≤ 255 字节，实际 ${nameBytes.size}", nameBytes.size <= 255)
-        // 后缀固定为 14 字节（"_"+8 位哈希+".lrc"），前缀应被截到 220 字节内
-        assertTrue("base 过长：${file.name}", file.name.length <= 220 + 14)
+        // 后缀固定为 18 字节（"_"+12 位哈希+".lrc"），前缀应被截到 220 字节内
+        assertTrue("base 过长：${file.name}", file.name.length <= 220 + 18)
     }
 
     @Test
@@ -59,6 +59,8 @@ class LyricsStoreTest {
 
     private fun hash(path: String): String {
         val md = java.security.MessageDigest.getInstance("MD5").digest(path.toByteArray())
-        return md.joinToString("") { "%02x".format(it) }.take(8)
+        // P3-22：哈希后缀已从 8 位加长到 12 位（降低碰撞概率），后缀总长随之
+        // 从 14 字节变成 18 字节（"_" + 12 位哈希 + ".lrc"）。
+        return md.joinToString("") { "%02x".format(it) }.take(12)
     }
 }

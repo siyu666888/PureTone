@@ -150,8 +150,17 @@ class PureToneDatabaseMigrationTest {
         assertEquals("", song.volumeName)
 
         // 3) 按 (volume_name, albumId) 复合键查询可用，且卷隔离生效
-        assertEquals(1, db.songDao().getSongsByAlbum(1L, "Album", "").first().size)
-        assertEquals(0, db.songDao().getSongsByAlbum(1L, "Album", "other_volume").first().size)
+        // P3-25：DAO 已拆成 albumId>0 与 albumId<=0 两条查询（避免 OR 条件让索引失效），
+        // 两条分支都要验。
+        // albumId>0 分支：精确匹配 album_id=1
+        assertEquals(1, db.songDao().getSongsByAlbumId(1L, "").first().size)
+        assertEquals(0, db.songDao().getSongsByAlbumId(1L, "other_volume").first().size)
+        // albumId<=0 回退分支：按专辑名匹配（该行 album='Album'，故命中 1 首），
+        // 同样受 volume_name 隔离约束
+        assertEquals(1, db.songDao().getSongsByAlbumName("Album", "").first().size)
+        assertEquals(0, db.songDao().getSongsByAlbumName("Album", "other_volume").first().size)
+        // 未匹配到的专辑名返回空
+        assertEquals(0, db.songDao().getSongsByAlbumName("不存在的专辑", "").first().size)
 
         db.close()
     }

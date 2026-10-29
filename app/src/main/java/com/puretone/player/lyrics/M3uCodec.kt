@@ -64,11 +64,16 @@ object M3uCodec {
             append(if (d % 1.0 == 0.0) d.toLong().toString() else d.toString())
             if (!entry.title.isNullOrBlank()) {
                 append(',')
-                append(entry.title)
+                // P3-10：标题里的换行（\r/\n）会让本行被拆成多条记录、污染后续条目；
+                // 统一替换为空格，保证 serialize → parse 往返不破坏格式与条目数量。
+                append(escapeTitle(entry.title))
             }
             append('\n')
             append(entry.path)
             append('\n')
         }
     }
+
+    /** 把标题中的换行替换为空格（P3-10），避免其被 M3U 行结构误判为新条目 */
+    private fun escapeTitle(title: String): String = title.replace(Regex("[\r\n]"), " ")
 }

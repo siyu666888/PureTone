@@ -61,7 +61,11 @@ data class PureToneSettings(
      */
     val sleepTimerWallDeadlineMs: Long = 0L,
     /** 循环模式：OFF / ALL / ONE */
-    val repeatMode: String = REPEAT_OFF,
+    // P3-13：默认改为 ALL（列表放完循环）。旧默认 REPEAT_OFF 会让全新安装的
+    // 激活态是 OFF——UI 把 OFF 归并为「顺序播放」循环图标，但底层行为是「放完即停」，
+    // 图标/状态/行为三者不一致。三态循环（顺序→随机→单曲）本就不含「停止」态，
+    // 故 OFF 规整为 ALL：SEQUENTIAL 始终表示「列表循环」，与图标一致。
+    val repeatMode: String = REPEAT_ALL,
     val shuffle: Boolean = false,
 
     // ---------- eq_ ----------

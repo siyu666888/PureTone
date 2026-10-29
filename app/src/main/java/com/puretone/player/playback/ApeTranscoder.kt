@@ -86,31 +86,40 @@ class ApeTranscoder @Inject constructor(
                 val tmp = File(cacheDir, "${fileName(songId)}.tmp")
                 tmp.delete()
                 // 超时由 TranscodeRequest 携带（P3-22），转码器负责到点终止底层进程
-                val transcoded = transcoder.transcode(
-                    TranscodeRequest(
-                        source = source,
-                        destination = tmp,
-                        timeoutMs = TranscodeRequest.DEFAULT_TIMEOUT_MS,
+                // P3-8：转码 + 落地整体包进 try/finally，保证任意退出路径（含协程取消）
+                // 都清理半截 .tmp，否则取消时残留 .tmp 会让 cacheDir 缓慢堆积、
+                // 并可能污染同名缓存的命中判定。
+                val result = try {
+                    val transcoded = transcoder.transcode(
+                        TranscodeRequest(
+                            source = source,
+                            destination = tmp,
+                            timeoutMs = TranscodeRequest.DEFAULT_TIMEOUT_MS,
+                        )
                     )
-                )
 
-                if (transcoded) {
-                    val ok = tmp.renameTo(target) || runCatching {
-                        tmp.copyTo(target, overwrite = true).let { tmp.delete(); true }
-                    }.getOrDefault(false)
-                    if (!ok) {
-                        tmp.delete()
-                        return@withContext null
+                    if (transcoded) {
+                        val ok = tmp.renameTo(target) || runCatching {
+                            tmp.copyTo(target, overwrite = true).let { tmp.delete(); true }
+                        }.getOrDefault(false)
+                        if (!ok) {
+                            tmp.delete()
+                            null
+                        } else {
+                            // 记录源指纹，供后续命中校验（P2-15）
+                            writeMeta(songId, source)
+                            touch(target)
+                            trimCache()
+                            target
+                        }
+                    } else {
+                        null
                     }
-                    // 记录源指纹，供后续命中校验（P2-15）
-                    writeMeta(songId, source)
-                    touch(target)
-                    trimCache()
-                    target
-                } else {
-                    tmp.delete()
-                    null
+                } finally {
+                    // 仅当尚未成功落地为 target 时才删 tmp（成功路径里 tmp 已被 rename/copy 消费）
+                    if (!target.exists()) tmp.delete()
                 }
+                result
             }
         }
 

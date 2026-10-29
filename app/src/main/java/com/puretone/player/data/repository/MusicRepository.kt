@@ -95,7 +95,9 @@ class MusicRepository @Inject constructor(
 
     /** 某专辑下的歌曲（专辑二级详情页），按 (volumeName, albumId) 复合键定位（P2-4） */
     fun observeSongsByAlbum(albumId: Long, album: String, volumeName: String): Flow<List<SongEntity>> =
-        songDao.getSongsByAlbum(albumId, album, volumeName)
+        // P3-25：albumId>0 走精确 id 查询（命中 album_id 索引）；未知专辑（<=0）退化为按名匹配。
+        if (albumId > 0) songDao.getSongsByAlbumId(albumId, volumeName)
+        else songDao.getSongsByAlbumName(album, volumeName)
 
     /** 某歌手下的歌曲 */
     fun observeSongsByArtist(artist: String): Flow<List<SongEntity>> =

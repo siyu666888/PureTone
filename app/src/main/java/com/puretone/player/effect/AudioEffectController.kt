@@ -170,39 +170,46 @@ class AudioEffectController @Inject constructor() {
         )
     }
 
+    @Synchronized
     fun detach() {
         releaseEffects()
         sessionId = 0
         _status.value = EffectStatus()
     }
 
+    @Synchronized
     fun setEnabled(value: Boolean) {
         enabled = value
         if (value) ensureEffects() else disableAllEffects()
     }
 
+    @Synchronized
     fun setBandLevel(band: Int, levelMb: Int) {
         if (band !in bandLevels.indices) return
         bandLevels = bandLevels.toMutableList().also { it[band] = levelMb.coerceIn(MIN_LEVEL_MB, MAX_LEVEL_MB) }
         applyBands()
     }
 
+    @Synchronized
     fun setBandLevels(levels: List<Int>) {
         if (levels.size != CENTER_FREQS.size) return
         bandLevels = levels.map { it.coerceIn(MIN_LEVEL_MB, MAX_LEVEL_MB) }
         applyBands()
     }
 
+    @Synchronized
     fun applyPreset(presetName: String) {
         val preset = PRESETS[presetName] ?: return
         setBandLevels(preset.map { it * 100 })
     }
 
+    @Synchronized
     fun setBassBoostStrength(strength: Int) {
         bassStrength = strength.coerceIn(MIN_STRENGTH, MAX_STRENGTH)
         applyBass()
     }
 
+    @Synchronized
     fun setVirtualizerStrength(strength: Int) {
         virtualizerStrength = strength.coerceIn(MIN_STRENGTH, MAX_STRENGTH)
         applyVirtualizer()
@@ -232,7 +239,9 @@ class AudioEffectController @Inject constructor() {
 
     /** 把任意长度的频段列表归一为 10 段（长度不符时按比例取值/补零） */
     private fun normalizeBands(levels: List<Int>): List<Int> {
-        if (levels.size == CENTER_FREQS.size) return levels
+        // P3-19：等长输入也要按量程钳制——DataStore 若存了越界 mB 值，
+        // 旧实现原样进入 bandLevels，绕过 setBandLevel 的 coerceIn 兜底。
+        if (levels.size == CENTER_FREQS.size) return levels.map { it.coerceIn(MIN_LEVEL_MB, MAX_LEVEL_MB) }
         return List(CENTER_FREQS.size) { i ->
             levels.getOrNull(i) ?: 0
         }.map { it.coerceIn(MIN_LEVEL_MB, MAX_LEVEL_MB) }
@@ -257,26 +266,32 @@ class AudioEffectController @Inject constructor() {
         }
     }
 
+    @Synchronized
     private fun applyEnabled() {
         runCatching { equalizer?.enabled = enabled }.onFailure { Log.w(TAG, "set eq enabled failed", it) }
     }
 
+    @Synchronized
     private fun applyBands() {
         val eq = equalizer ?: return
         val levels = deviceBandLevels() ?: return
         val range = runCatching { eq.bandLevelRange }.getOrNull()
-        runCatching {
-            levels.forEachIndexed { band, level ->
+        // P3-20：逐段 runCatching——旧实现单个 runCatching 包住整个循环，
+        // 任一 band 的 setBandLevel 抛异常（越界/设备缺陷）会让后续频段全部静默跳过，
+        // 用户听到「半套 EQ」。逐段隔离后，单点失败只丢该段。
+        levels.forEachIndexed { band, level ->
+            runCatching {
                 val clamped = if (range != null) {
                     level.coerceIn(range.first().toInt(), range.last().toInt())
                 } else {
                     level
                 }
                 eq.setBandLevel(band.toShort(), clamped.toShort())
-            }
-        }.onFailure { Log.w(TAG, "set band level failed", it) }
+            }.onFailure { Log.w(TAG, "set band $band level failed", it) }
+        }
     }
 
+    @Synchronized
     private fun applyBass() {
         val bb = bassBoost ?: return
         runCatching {
@@ -288,6 +303,7 @@ class AudioEffectController @Inject constructor() {
         }.onFailure { Log.w(TAG, "bass failed", it) }
     }
 
+    @Synchronized
     private fun applyVirtualizer() {
         val v = virtualizer ?: return
         runCatching {
@@ -299,12 +315,14 @@ class AudioEffectController @Inject constructor() {
     }
 
     /** 主开关关闭时统一关闭三个效果（历史 bug：只关 Equalizer，重低音/环绕仍按厂商默认生效） */
+    @Synchronized
     private fun disableAllEffects() {
         runCatching { equalizer?.enabled = false }.onFailure { Log.w(TAG, "disable eq failed", it) }
         runCatching { bassBoost?.enabled = false }.onFailure { Log.w(TAG, "disable bass failed", it) }
         runCatching { virtualizer?.enabled = false }.onFailure { Log.w(TAG, "disable virtualizer failed", it) }
     }
 
+    @Synchronized
     private fun releaseEffects() {
         runCatching { equalizer?.release() }
         runCatching { bassBoost?.release() }

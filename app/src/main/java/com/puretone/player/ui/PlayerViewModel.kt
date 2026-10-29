@@ -16,6 +16,7 @@ import com.puretone.player.playback.RepeatMode
 import com.puretone.player.playback.next
 import com.puretone.player.playback.toPlayMode
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
@@ -34,6 +36,7 @@ import javax.inject.Inject
 /**
  * 播放控制视图模型：桥接 UI 与 [PlaybackManager] 单例。
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     private val playback: PlaybackManager,
@@ -183,11 +186,18 @@ class PlayerViewModel @Inject constructor(
      * 收藏 / 取消收藏当前歌曲。
      *
      * Room 是唯一真源，写库后由 [favorite] 的观察管线推送到 UI，无需乐观更新 / 回滚。
+     *
+     * P3-4：旧实现读 `favorite.value`（一个 WhileSubscribed(5000) 的 StateFlow 的
+     * 上次发射值）来取反。问题有二：① 该流在无订阅 5s 后停 collect、值被重置为初值
+     * false，读到的是陈旧值；② 快速连点两次时，第一次写入尚未经 Room 流回，第二次仍读到
+     * 旧值、写出同一目标值，把「取消收藏」的意图吞掉（双击无效）。改为协程内直接查库
+     * 取当前真值再取反——每次点击都基于最新状态，双击必生效。
      */
     fun toggleFavorite() {
         val id = state.value.currentSongId ?: return
         viewModelScope.launch {
-            runCatching { repo.setFavorite(id, !favorite.value) }
+            val current = runCatching { repo.isFavorite(id) }.getOrDefault(false)
+            runCatching { repo.setFavorite(id, !current) }
         }
     }
 
@@ -244,8 +254,13 @@ class PlayerViewModel @Inject constructor(
      *
      * 纯查找/解析逻辑已抽到 [LoadLyricsUseCase]，本方法只负责「先清后填」的状态同步。
      */
+    // P3-5：保存 Job 引用，每次切歌先取消上一次未完成的加载——否则连续切换时
+    // 先发的慢请求（读同目录 .lrc 或下载歌词）可能后完成，把上一首的歌词写进
+    // 当前曲的 _lyrics，UI 显示错位歌词。
+    private var loadLyricsJob: Job? = null
     fun loadLyrics(audioPath: String?) {
+        loadLyricsJob?.cancel()
         _lyrics.value = null
-        viewModelScope.launch { _lyrics.value = loadLyricsUseCase(audioPath) }
+        loadLyricsJob = viewModelScope.launch { _lyrics.value = loadLyricsUseCase(audioPath) }
     }
 }

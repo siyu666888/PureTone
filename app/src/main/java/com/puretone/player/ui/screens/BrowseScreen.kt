@@ -124,9 +124,6 @@ fun BrowseScreen(
     val backfill by metadataVm.backfill.collectAsStateWithLifecycle()
     val metaMessage by metadataVm.message.collectAsStateWithLifecycle()
     val playlists by libVm.playlists.collectAsStateWithLifecycle()
-    val albums by libVm.albums.collectAsStateWithLifecycle()
-    val artists by libVm.artists.collectAsStateWithLifecycle()
-    val folders by libVm.folders.collectAsStateWithLifecycle()
 
     var searching by remember { mutableStateOf(false) }
     var sortMenuOpen by remember { mutableStateOf(false) }
@@ -383,7 +380,7 @@ fun BrowseScreen(
                 }
             }
             MusicTab.ALBUMS -> AlbumsTabContent(
-                albums = albums,
+                vm = libVm,
                 onAlbumClick = { album ->
                     navController.navigate(
                         Routes.groupDetail("album", "${album.volumeName}|${album.albumId}|${album.album}")
@@ -391,13 +388,13 @@ fun BrowseScreen(
                 }
             )
             MusicTab.ARTISTS -> ArtistsTabContent(
-                artists = artists,
+                vm = libVm,
                 onArtistClick = { artist ->
                     navController.navigate(Routes.groupDetail("artist", artist.artist))
                 }
             )
             MusicTab.FOLDERS -> FoldersTabContent(
-                folders = folders,
+                vm = libVm,
                 onFolderClick = { folder ->
                     navController.navigate(Routes.groupDetail("folder", folder.folder))
                 }
@@ -691,9 +688,13 @@ private fun Modifier.clickableRow(onClick: () -> Unit): Modifier =
 /** 专辑封面网格墙 */
 @Composable
 private fun AlbumsTabContent(
-    albums: List<AlbumSummary>,
+    vm: LibraryViewModel,
     onAlbumClick: (AlbumSummary) -> Unit
 ) {
+    // P3-14：仅在「专辑」页签被组合时才订阅该流；停留在其它页签（如「歌曲」）时
+    // 本 composable 不参与组合，albums 的 StateFlow 无下游订阅 → 上游分组计算不触发，
+    // 避免任何曲库变化都白白跑三次全库分组。
+    val albums by vm.albums.collectAsStateWithLifecycle()
     if (albums.isEmpty()) {
         EmptyState(modifier = Modifier.fillMaxSize(), text = "暂无专辑")
         return
@@ -757,9 +758,11 @@ private fun AlbumCard(album: AlbumSummary, onClick: () -> Unit) {
 /** 歌手列表 */
 @Composable
 private fun ArtistsTabContent(
-    artists: List<ArtistSummary>,
+    vm: LibraryViewModel,
     onArtistClick: (ArtistSummary) -> Unit
 ) {
+    // P3-14：见 AlbumsTabContent——仅在「歌手」页签组合时订阅。
+    val artists by vm.artists.collectAsStateWithLifecycle()
     if (artists.isEmpty()) {
         EmptyState(modifier = Modifier.fillMaxSize(), text = "暂无歌手")
         return
@@ -818,9 +821,11 @@ private fun ArtistsTabContent(
 /** 文件夹列表 */
 @Composable
 private fun FoldersTabContent(
-    folders: List<FolderSummary>,
+    vm: LibraryViewModel,
     onFolderClick: (FolderSummary) -> Unit
 ) {
+    // P3-14：见 AlbumsTabContent——仅在「文件夹」页签组合时订阅。
+    val folders by vm.folders.collectAsStateWithLifecycle()
     if (folders.isEmpty()) {
         EmptyState(modifier = Modifier.fillMaxSize(), text = "暂无文件夹")
         return

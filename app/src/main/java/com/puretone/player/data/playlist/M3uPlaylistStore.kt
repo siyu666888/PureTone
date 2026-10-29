@@ -34,19 +34,32 @@ class M3uPlaylistStore @Inject constructor(
         M3uCodec.parse(content)
     }
 
+    /** 导出歌单目录（P3-9：getExternalFilesDir 可能为 null，回退到内部 filesDir 避免变成相对路径） */
+    private fun playlistsDir(): File =
+        File(context.getExternalFilesDir(null) ?: context.filesDir, "playlists").apply { mkdirs() }
+
     /** 导出歌单到应用外部目录，返回文件 */
     suspend fun export(playlistName: String, entries: List<M3uEntry>): File =
         withContext(Dispatchers.IO) {
-            val dir = File(context.getExternalFilesDir(null), "playlists").apply { mkdirs() }
+            // P3-9：getExternalFilesDir(null) 返回 null 时（无外部存储的极少数设备）
+            // File(null, "playlists") 会变成相对路径，写入位置不可控；统一回退内部目录。
+            val dir = playlistsDir()
             val safeName = playlistName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
             val file = File(dir, "$safeName.m3u")
-            file.writeText(M3uCodec.serialize(entries), Charsets.UTF_8)
+            // P3-6：先写 .tmp 再原子 rename，进程中途崩溃不残留半截歌单文件。
+            val tmp = File(dir, "$safeName.m3u.tmp")
+            tmp.writeText(M3uCodec.serialize(entries), Charsets.UTF_8)
+            val ok = tmp.renameTo(file) || runCatching {
+                tmp.copyTo(file, overwrite = true).also { tmp.delete() }
+                true
+            }.getOrDefault(false)
+            if (!ok) tmp.delete()
             file
         }
 
     /** 应用目录下已导出的歌单文件列表 */
     suspend fun listExported(): List<File> = withContext(Dispatchers.IO) {
-        val dir = File(context.getExternalFilesDir(null), "playlists")
+        val dir = playlistsDir()
         dir.listFiles()?.filter { it.extension.equals("m3u", ignoreCase = true) }
             ?.sortedBy { it.name } ?: emptyList()
     }

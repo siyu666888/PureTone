@@ -64,7 +64,9 @@ data class PlaybackUiState(
     val isTranscoding: Boolean = false,
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
-    val repeatMode: RepeatMode = RepeatMode.OFF,
+    // P3-13：初始态与设置默认值对齐为 ALL（列表循环），避免 UI 首次渲染
+    // 显示「顺序播放」图标但底层实际是放完即停（OFF）。
+    val repeatMode: RepeatMode = RepeatMode.ALL,
     val shuffle: Boolean = false,
     val speed: Float = 1.0f,
     /** 睡眠定时剩余毫秒（0 = 未设置/已到期） */
@@ -236,6 +238,10 @@ class PlaybackManager @Inject constructor(
 
     /** 由 [PlaybackService] 在 onCreate 注入播放器与媒体会话 */
     fun bind(player: ExoPlayer, session: MediaSession) {
+        // P3-17：防御 bind 重复调用（正常生命周期 unbind→bind 各一次，不可达）。
+        // 先清上一次的 settingsJob 与监听器注册，避免重复订阅设置流 / 重复回调。
+        settingsJob?.cancel()
+        this.player?.removeListener(playerListener)
         this.player = player
         this.session = session
         player.addListener(playerListener)
@@ -294,12 +300,19 @@ class PlaybackManager @Inject constructor(
         audioEffectController.applySettings(s)
     }
 
-    /** 播放顺序（顺序/随机/单曲）来自设置：既灌给播放器，也写回 uiState */
+    /**
+     * 播放顺序（顺序/随机/单曲）来自设置：既灌给播放器，也写回 uiState。
+     *
+     * P3-13：任何非 ALL/ONE 的持久化值（含历史遗留的 OFF 默认）统归并为 ALL——
+     * 三态循环（顺序→随机→单曲）不包含「停止」态，OFF 在 UI 被显示为「顺序播放」循环
+     * 图标却「放完即停」，图标/状态/行为割裂。规整后 SEQUENTIAL 始终表示「列表循环」，
+     * 与图标一致；点击循环图标进入随机也符合三态循环预期。
+     */
     private fun applyPlayOrder(s: PureToneSettings) {
         val repeat = when (s.repeatMode) {
             PureToneSettings.REPEAT_ALL -> RepeatMode.ALL
             PureToneSettings.REPEAT_ONE -> RepeatMode.ONE
-            else -> RepeatMode.OFF
+            else -> RepeatMode.ALL
         }
         if (repeat != _uiState.value.repeatMode) {
             _uiState.update { it.copy(repeatMode = repeat) }
@@ -404,7 +417,7 @@ class PlaybackManager @Inject constructor(
             if (index == startIndex) {
                 song.toMediaItem(startUri)
             } else if (song.isApe) {
-                song.toMediaItem(Uri.parse(song.path))
+                song.toMediaItem(rawPathUri(song.path))
             } else {
                 song.toMediaItem(mediaStoreUri(song))
             }
@@ -597,6 +610,11 @@ class PlaybackManager @Inject constructor(
         }
         // 让仍在途的旧队列任务失效（例如 APE 转码挂起中）
         queueGeneration++
+        // P3-16：作废挂起的播放请求——否则服务重启（bind 重新执行 pendingPlay）
+        // 会把这次已停止的队列又播出来，与用户「显式停止」意图相反。
+        pendingPlay = null
+        pendingEnqueue = null
+        pendingRestore = false
         // P2-14：APE 重试标记随旧队列一并作废——否则新队列同索引的 APE
         // 首次出错时会被误判为「已重试过」，跳过转码重试直接卡在 IDLE。
         apeRetryIndex = -1
@@ -608,7 +626,19 @@ class PlaybackManager @Inject constructor(
     fun next() {
         val p = player ?: return
         if (p.hasNextMediaItem()) p.seekToNextMediaItem()
-        else if (_uiState.value.repeatMode == RepeatMode.ALL && p.mediaItemCount > 0) p.seekTo(0, 0L)
+        else if (_uiState.value.repeatMode == RepeatMode.ALL && p.mediaItemCount > 0) {
+            // P3-15：循环到末尾回绕时，须回到「当前播放顺序」的首位，而非 timeline 的
+            // 首位——开启随机时 seekTo(0) 会跳到随机序列之外的第一首，打乱随机体验。
+            //
+            // 注意：Media3 1.4.1 的 ExoPlayer **没有公开的 shuffleOrder getter**
+            // （只有 setShuffleOrder），review 里建议的 player.shuffleOrder 无法编译。
+            // 这里改用 Timeline.getFirstWindowIndex(shuffleModeEnabled)——它正是
+            // Media3 自身在 REPEAT_ALL 回绕时使用的索引（见 Timeline.getNextWindowIndex
+            // 实现：命中末窗口时返回 getFirstWindowIndex(shuffleModeEnabled)），
+            // 因此与播放器内部语义完全一致，且是公开 API。
+            val first = p.currentTimeline.getFirstWindowIndex(p.shuffleModeEnabled)
+            p.seekTo(if (first >= 0) first else 0, 0L)
+        }
     }
 
     fun previous() {
@@ -840,12 +870,21 @@ class PlaybackManager @Inject constructor(
      * 这样「追加/插播」不必等待整队转码，APE 队列也能秒级入队。
      */
     private fun SongEntity.toMediaItemLazy(): MediaItem {
-        val uri = if (isApe) Uri.parse(path) else mediaStoreUri(this)
+        val uri = if (isApe) rawPathUri(path) else mediaStoreUri(this)
         return toMediaItem(uri)
     }
 
     private fun mediaStoreUri(song: SongEntity): Uri =
         Uri.parse("content://media/external/audio/media/${song.mediaStoreId}")
+
+    /**
+     * 把裸文件路径转成 URI，转义 `#` / `?`（P3-23）。
+     * 这两个字符会被 [Uri.parse] 误判为 fragment / query，导致路径被截断或解析异常。
+     * 用于 APE 占位源（本就设计为解码失败）与「playUri 缺失」的回退路径，
+     * 使错误类型更准确、避免偶发的路径截断误播。
+     */
+    private fun rawPathUri(path: String): Uri =
+        Uri.parse(path.replace("#", "%23").replace("?", "%3F"))
 
     private fun SongEntity.toMediaItem(playUri: Uri?): MediaItem {
         val metadata = MediaMetadata.Builder()
@@ -858,7 +897,7 @@ class PlaybackManager @Inject constructor(
             .setDurationMs(duration)
             .build()
         return MediaItem.Builder()
-            .setUri(playUri ?: Uri.parse(path))
+            .setUri(playUri ?: rawPathUri(path))
             .setMediaId(id.toString())
             .setMediaMetadata(metadata)
             .build()
