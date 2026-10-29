@@ -443,6 +443,9 @@ class PlaybackManager @Inject constructor(
             return
         }
         if (songs.isEmpty()) return
+        // P2-13：先递增代次，使任何在途的 setQueueAndPlay（如 APE 首播挂起在 ensureWav）
+        // 恢复后检测到代次不符而放弃，避免用户的追加被旧队列覆盖。
+        queueGeneration++
         val entries = songs.map { it.toQueueEntry() }
         scope.launch {
             p.addMediaItems(songs.map { it.toMediaItemLazy() })
@@ -462,6 +465,8 @@ class PlaybackManager @Inject constructor(
             return
         }
         if (songs.isEmpty()) return
+        // P2-13：先递增代次，使在途 setQueueAndPlay 恢复后失效，避免插播被旧队列覆盖。
+        queueGeneration++
         val entries = songs.map { it.toQueueEntry() }
         scope.launch {
             val insertAt = (_uiState.value.queueIndex + 1).coerceIn(0, _uiState.value.queue.size)
@@ -502,6 +507,8 @@ class PlaybackManager @Inject constructor(
     fun removeFromQueue(index: Int) {
         val p = player ?: return
         if (index !in _uiState.value.queue.indices) return
+        // P2-13：先递增代次，使在途 setQueueAndPlay 恢复后失效，避免删除被旧队列还原。
+        queueGeneration++
         val currentIndex = p.currentMediaItemIndex
         p.removeMediaItem(index)
         _uiState.update { state ->

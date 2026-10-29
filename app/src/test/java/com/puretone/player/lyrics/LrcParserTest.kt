@@ -119,6 +119,26 @@ class LrcParserTest {
     }
 
     @Test
+    fun `P2-9 offset after lyrics still applies to preceding lines`() {
+        // offset 标签出现在歌词行之后（非头部）：之前的行必须以同一 offset 计算，
+        // 否则时间轴整体错位（单遍解析的历史 bug）。
+        val lrc = """
+            [00:10.00]第一句
+            [00:20.00]第二句
+            [offset:+500]
+            [00:30.00]第三句
+        """.trimIndent()
+
+        val result = LrcParser.parse(lrc)
+
+        assertEquals(3, result.lines.size)
+        assertEquals("第一句", result.lines[0].text)
+        assertEquals(9_500L, result.lines[0].timeMs)   // 10s - 500ms
+        assertEquals(19_500L, result.lines[1].timeMs)  // 20s - 500ms
+        assertEquals(29_500L, result.lines[2].timeMs)  // 30s - 500ms
+    }
+
+    @Test
     fun `formatTime`() {
         assertEquals("01:02.03", LrcParser.formatTime(62_030))
         assertEquals("00:00.00", LrcParser.formatTime(-5))

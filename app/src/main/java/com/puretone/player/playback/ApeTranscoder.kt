@@ -60,17 +60,24 @@ class ApeTranscoder @Inject constructor(
     /**
      * 确保歌曲已转码为 WAV 并返回文件；失败返回 null。
      * 已缓存则直接返回（幂等）；同一首歌并发调用只会真正转码一次。
+     *
+     * P2-15：缓存 key 除 songId 外还隐含源文件指纹（长度 + 最后修改时间）。
+     * 命中时会校验指纹元文件，源文件被替换（同名覆盖 / 重新下载）后旧 WAV 视为失效，
+     * 重新转码，避免用户听到替换前的内容。
      */
     suspend fun ensureWav(songId: Long, sourcePath: String): File? =
         withContext(Dispatchers.IO) {
             val target = File(cacheDir, fileName(songId))
             lockFor(songId).withLock {
-                if (target.exists() && target.length() > 0) {
+                val source = File(sourcePath)
+                if (!source.exists()) return@withContext null
+                // 命中且源指纹一致才复用；否则丢弃旧缓存（源已变更）
+                if (target.exists() && target.length() > 0 && metaMatches(songId, source)) {
                     touch(target)
                     return@withContext target
                 }
-                val source = File(sourcePath)
-                if (!source.exists()) return@withContext null
+                target.delete()
+                metaFile(songId).delete()
                 // 引擎不可用（如原生库缺失）时快速失败：转码必然失败，与其让用户
                 // 卡在「转码中」不如立刻返回 null 走失败分支
                 if (!transcoder.isAvailable()) return@withContext null
@@ -95,6 +102,8 @@ class ApeTranscoder @Inject constructor(
                         tmp.delete()
                         return@withContext null
                     }
+                    // 记录源指纹，供后续命中校验（P2-15）
+                    writeMeta(songId, source)
                     touch(target)
                     trimCache()
                     target
@@ -110,28 +119,58 @@ class ApeTranscoder @Inject constructor(
         cacheDir.listFiles()?.forEach { it.delete() }
     }
 
-    /** 缓存总大小（字节） */
+    /** 缓存总大小（字节，仅计入 WAV，排除 .meta/.tmp 簿记文件） */
     suspend fun cacheSize(): Long = withContext(Dispatchers.IO) {
-        cacheDir.listFiles()?.sumOf { it.length() } ?: 0L
+        cacheDir.listFiles()
+            ?.filter { it.isFile && it.extension == "wav" }
+            ?.sumOf { it.length() } ?: 0L
     }
 
     private fun touch(file: File) = file.setLastModified(System.currentTimeMillis())
 
     /** 超出字节上限时淘汰最久未使用的缓存（按 lastModified LRU） */
     private fun trimCache() {
-        // P2-16：排除正在写的 .tmp——它也会被算进总字节并参与 LRU，
-        // 缓存接近上限时可能把「正在转码」的临时文件删掉，导致该次转码白做
+        // 仅 WAV 参与 LRU 与字节统计；指纹元文件（.meta）与临时文件（.tmp）是簿记，
+        // 不计入额度、不参与淘汰（P2-15 引入 .meta 后必须排除，否则会挤掉真实缓存）。
+        // 被淘汰的 WAV 一并删除其 .meta，避免遗留孤儿元文件。
         val files = cacheDir.listFiles()
-            ?.filter { it.isFile && !it.name.endsWith(".tmp") }
+            ?.filter { it.isFile && it.extension == "wav" }
             ?.sortedBy { it.lastModified() } ?: return
         var total = files.sumOf { it.length() }
         if (total <= cachePolicy.maxBytes) return
         for (f in files) {
             if (total <= cachePolicy.maxBytes) break
             val len = f.length()
-            if (f.delete()) total -= len
+            if (f.delete()) {
+                metaFileFor(f)?.delete()
+                total -= len
+            }
         }
     }
 
+    /** 由 wav 文件反推其指纹元文件（P2-15） */
+    private fun metaFileFor(wav: File): File? {
+        if (wav.extension != "wav") return null
+        return File(wav.parentFile, "${wav.nameWithoutExtension}.meta")
+    }
+
     private fun fileName(songId: Long) = "ape_$songId.wav"
+
+    /** 源文件指纹：长度 + 最后修改时间（毫秒）。源被替换即失效，触发重转（P2-15） */
+    private fun fingerprint(source: File): String = "${source.length()}_${source.lastModified()}"
+
+    /** 指纹元文件（与 wav 同目录，记录源指纹） */
+    private fun metaFile(songId: Long) = File(cacheDir, "ape_$songId.meta")
+
+    /** 命中校验：元文件存在且记录的源指纹与当前源一致（P2-15） */
+    private fun metaMatches(songId: Long, source: File): Boolean {
+        val meta = metaFile(songId)
+        if (!meta.isFile) return false
+        return runCatching { meta.readText() == fingerprint(source) }.getOrDefault(false)
+    }
+
+    /** 写入源指纹（P2-15） */
+    private fun writeMeta(songId: Long, source: File) {
+        runCatching { metaFile(songId).writeText(fingerprint(source)) }
+    }
 }

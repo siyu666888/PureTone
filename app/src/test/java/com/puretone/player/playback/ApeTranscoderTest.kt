@@ -190,6 +190,47 @@ class ApeTranscoderTest {
         assertEquals(0L, transcoder.cacheSize())
     }
 
+    // ---------------------------------------------------------------- 源指纹失效 (P2-15)
+
+    @Test
+    fun `源文件被替换后缓存失效并重新转码`() = runTest {
+        val fake = FakeTranscoder()
+        val transcoder = ApeTranscoder(context, fake, ApeCachePolicy(maxBytes = 4096))
+        val source = newSourceFile(1)
+
+        assertNotNull(transcoder.ensureWav(1, source.absolutePath))
+        assertEquals("首次应转码", 1, fake.callCount())
+
+        // 模拟源文件被替换：改变长度与最后修改时间（同名覆盖 / 重新下载）
+        Thread.sleep(15)
+        source.setLastModified(System.currentTimeMillis())
+        source.writeBytes(ByteArray(64))
+        assertEquals(64L, source.length())
+
+        val again = transcoder.ensureWav(1, source.absolutePath)
+        assertNotNull(again)
+        assertEquals("源变更后应重新转码", 2, fake.callCount())
+
+        // 再次请求应命中新缓存，不再转码
+        transcoder.ensureWav(1, source.absolutePath)
+        assertEquals(2, fake.callCount())
+    }
+
+    @Test
+    fun `源指纹缺失元文件时视为未命中`() = runTest {
+        // 旧版本没有 .meta 文件；命中校验应返回 false，触发重新转码（避免读到脏缓存）
+        val fake = FakeTranscoder()
+        val transcoder = ApeTranscoder(context, fake, ApeCachePolicy(maxBytes = 4096))
+        val source = newSourceFile(1)
+        val target = File(cacheDir, "ape_1.wav").apply { writeBytes(ByteArray(64)) }
+
+        // 仅存在 wav、无 meta：ensureWav 应重新转码并补齐 meta
+        assertNotNull(transcoder.ensureWav(1, source.absolutePath))
+        assertEquals(1, fake.callCount())
+        assertTrue("应补齐指纹元文件", File(cacheDir, "ape_1.meta").isFile)
+        assertEquals("仅一份 wav 缓存", 64L, transcoder.cacheSize())
+    }
+
     // ---------------------------------------------------------------- 测试替身
 
     /** 建立一个非空源文件（ensureWav 要求源存在） */

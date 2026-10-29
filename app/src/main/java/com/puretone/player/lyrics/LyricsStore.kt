@@ -29,8 +29,27 @@ class LyricsStore @Inject constructor(
 
     /** 下载歌词文件路径（与音频绝对路径稳定映射，避免同名歌曲冲突） */
     fun fileFor(audioPath: String): File {
-        val base = File(audioPath).nameWithoutExtension.ifBlank { "lyrics" }
+        val raw = File(audioPath).nameWithoutExtension.ifBlank { "lyrics" }
+        // P2-10：ext4/FUSE 文件名上限约 255 字节；base 过长会令「base_<hash>.lrc」
+        // 超出上限导致 writeText 抛 ENAMETOOLONG（被 runCatching 吞掉，歌词静默存不上）。
+        // 截到 220 字节前缀 + 8 位哈希后缀 + "_" + ".lrc"(13 字节) = 233 ≤ 255，留足余量。
+        // 哈希后缀已保证不同路径唯一，截断前缀不影响去重。
+        val base = truncateToBytes(raw, 220)
         return File(dir, "${base}_${hash(audioPath)}.lrc")
+    }
+
+    /** 按 UTF-8 字节数截断，避免长歌名产生超长文件名（P2-10） */
+    private fun truncateToBytes(s: String, maxBytes: Int): String {
+        if (s.toByteArray(Charsets.UTF_8).size <= maxBytes) return s
+        val sb = StringBuilder()
+        var bytes = 0
+        for (ch in s) {
+            val len = ch.toString().toByteArray(Charsets.UTF_8).size
+            if (bytes + len > maxBytes) break
+            sb.append(ch)
+            bytes += len
+        }
+        return sb.toString()
     }
 
     /** 已下载的歌词文件（存在才返回） */

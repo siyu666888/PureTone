@@ -69,6 +69,9 @@ class MetadataViewModel @Inject constructor(
     /** 批量补全任务（用于取消） */
     private var backfillJob: Job? = null
 
+    /** 当前搜索任务（P2-16：连点时取消上一个在途请求，避免旧结果覆盖新结果） */
+    private var searchJob: Job? = null
+
     fun setQuery(q: String) {
         _query.value = q
         _results.value = emptyList()   // P2-2：改查询词时清空上一轮候选，避免结果残留
@@ -114,7 +117,9 @@ class MetadataViewModel @Inject constructor(
             _message.value = "请输入歌手或歌名"
             return
         }
-        viewModelScope.launch {
+        // P2-16：先取消上一个在途搜索，连点时只保留最新结果、且不会提前清掉转圈
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
             _searching.value = true
             val list = runCatching { provider.search(term) }.getOrDefault(emptyList()).map { simplify(it) }
             _searching.value = false

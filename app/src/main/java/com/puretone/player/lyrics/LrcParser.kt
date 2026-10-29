@@ -80,7 +80,9 @@ object LrcParser {
         var artist: String? = null
         var album: String? = null
         var offsetMs = 0L
-        val lines = mutableListOf<LyricLine>()
+        // 两遍解析（P2-9）：先收集 (原始时间, 文本)，遍历结束后再统一减 offset。
+        // 否则 offset 标签出现在歌词行之后时，之前的行会以 offset=0 计算，导致时间轴整体错位。
+        val rawLines = mutableListOf<Pair<Long, String>>()
 
         body.lineSequence().forEach { rawLine ->
             val line = rawLine.trimEnd('\r', ' ').removePrefix(BOM)
@@ -118,14 +120,15 @@ object LrcParser {
             }.toList()
 
             if (times.isEmpty()) return@forEach
-            times.forEach { timeMs ->
-                lines += LyricLine(timeMs = (timeMs - offsetMs).coerceAtLeast(0L), text = text)
-            }
+            times.forEach { timeMs -> rawLines += timeMs to text }
         }
 
-        val sorted = lines.sortedBy { it.timeMs }
+        val lines = rawLines.map { (timeMs, text) ->
+            LyricLine(timeMs = (timeMs - offsetMs).coerceAtLeast(0L), text = text)
+        }.sortedBy { it.timeMs }
+
         return ParsedLyrics(
-            lines = sorted,
+            lines = lines,
             title = title,
             artist = artist,
             album = album,
