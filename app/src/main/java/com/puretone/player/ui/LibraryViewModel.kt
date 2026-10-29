@@ -6,9 +6,15 @@ import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.MusicRepository
 import com.puretone.player.data.repository.SongSortOrder
 import com.puretone.player.data.repository.SyncResult
-import com.puretone.player.data.playlist.M3uPlaylistStore
-import com.puretone.player.data.playlist.PlaylistImportResolver
-import com.puretone.player.lyrics.M3uEntry
+import com.puretone.player.domain.grouping.AlbumSummary
+import com.puretone.player.domain.grouping.ArtistSummary
+import com.puretone.player.domain.grouping.FolderSummary
+import com.puretone.player.domain.grouping.groupAlbums
+import com.puretone.player.domain.grouping.groupArtists
+import com.puretone.player.domain.grouping.groupFolders
+import com.puretone.player.domain.usecase.CreatePlaylistWithSongsUseCase
+import com.puretone.player.domain.usecase.ExportPlaylistUseCase
+import com.puretone.player.domain.usecase.ImportM3uPlaylistUseCase
 import com.puretone.player.playback.PlaybackManager
 import android.net.Uri
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -28,38 +34,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import javax.inject.Inject
 
-/** 专辑分组汇总（封面网格墙 / 二级详情页用） */
-data class AlbumSummary(
-    val volumeName: String = "",
-    val albumId: Long,
-    val album: String,
-    val artist: String,
-    val coverUri: String?,
-    val songs: List<SongEntity>
-) {
-    val songCount: Int get() = songs.size
-}
-
-/** 歌手分组汇总 */
-data class ArtistSummary(
-    val artist: String,
-    val coverUri: String?,
-    val songs: List<SongEntity>
-) {
-    val songCount: Int get() = songs.size
-}
-
-/** 文件夹分组汇总（文件夹由 path 父目录派生） */
-data class FolderSummary(
-    val folder: String,
-    val songs: List<SongEntity>
-) {
-    val songCount: Int get() = songs.size
-    /** 展示名：取路径最后一段 */
-    val name: String
-        get() = folder.substringAfterLast('/').ifBlank { folder }
-}
-
 /**
  * 曲库视图模型：暴露歌曲/最近播放/歌单流，封装扫描与播放动作。
  */
@@ -67,7 +41,9 @@ data class FolderSummary(
 class LibraryViewModel @Inject constructor(
     private val repo: MusicRepository,
     private val playback: PlaybackManager,
-    private val m3uStore: M3uPlaylistStore
+    private val importM3uUseCase: ImportM3uPlaylistUseCase,
+    private val exportPlaylistUseCase: ExportPlaylistUseCase,
+    private val createPlaylistWithSongsUseCase: CreatePlaylistWithSongsUseCase
 ) : ViewModel() {
 
     /** 音乐页排序方式（默认按标题） */
@@ -188,7 +164,7 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun createPlaylist(name: String) = viewModelScope.launch {
-        repo.createPlaylist(name.trim().ifBlank { "新建歌单" })
+        createPlaylistWithSongsUseCase(name)
     }
 
     fun deletePlaylist(id: Long) = viewModelScope.launch { repo.deletePlaylist(id) }
@@ -200,8 +176,7 @@ class LibraryViewModel @Inject constructor(
 
     /** 新建歌单并立即把一批歌曲加入（"新建并加入"） */
     fun createPlaylistAndAdd(name: String, songIds: List<Long>) = viewModelScope.launch {
-        val id = repo.createPlaylist(name.trim().ifBlank { "新建歌单" })
-        if (songIds.isNotEmpty()) repo.addToPlaylist(id, songIds)
+        createPlaylistWithSongsUseCase(name, songIds)
     }
 
     // ---------- M3U 导入 / 导出（P2：歌单 M3U 导入导出）----------
@@ -216,90 +191,11 @@ class LibraryViewModel @Inject constructor(
      * 匹配不到任何歌曲时仍给出明确提示，不静默失败。
      */
     fun importM3u(uri: Uri) = viewModelScope.launch {
-        val entries = runCatching { m3uStore.import(uri) }.getOrNull()
-        if (entries == null || entries.isEmpty()) {
-            _m3uMessage.value = "无法读取或非空歌单文件"
-            return@launch
-        }
-        val library = runCatching { repo.getAllSongs() }.getOrDefault(emptyList())
-        val matched = PlaylistImportResolver.resolve(entries, library)
-        if (matched.isEmpty()) {
-            _m3uMessage.value = "未匹配到任何歌曲（共 ${entries.size} 条）"
-            return@launch
-        }
-        val name = runCatching { m3uStore.nameOf(uri) }.getOrNull() ?: "导入歌单"
-        val id = repo.createPlaylist(name)
-        repo.addToPlaylist(id, matched.map { it.id })
-        _m3uMessage.value = "已导入歌单「$name」：匹配 ${matched.size}/${entries.size} 首"
+        _m3uMessage.value = importM3uUseCase(uri)
     }
 
     /** 把歌单导出为 .m3u 到应用外部目录（免权限） */
     fun exportPlaylist(playlistId: Long) = viewModelScope.launch {
-        val pw = runCatching { repo.getPlaylistWithSongs(playlistId) }.getOrNull()
-        if (pw == null) {
-            _m3uMessage.value = "歌单不存在"
-            return@launch
-        }
-        if (pw.songs.isEmpty()) {
-            _m3uMessage.value = "歌单为空，无可导出歌曲"
-            return@launch
-        }
-        val entries = pw.songs.map { s ->
-            val title = buildString {
-                if (s.title.isNotBlank()) append(s.title.trim())
-                if (s.artist.isNotBlank()) {
-                    if (isNotEmpty()) append(" - ")
-                    append(s.artist.trim())
-                }
-            }.takeIf { it.isNotBlank() }
-            M3uEntry(path = s.path, title = title, durationSec = s.duration / 1000.0)
-        }
-        val file = runCatching { m3uStore.export(pw.playlist.name, entries) }.getOrNull()
-        _m3uMessage.value = if (file != null) "已导出：${file.absolutePath}" else "导出失败"
+        _m3uMessage.value = exportPlaylistUseCase(playlistId)
     }
-}
-
-/**
- * 按专辑分组：复合键 (volumeName, albumId>0?albumId:album)（P2-4）。
- * 卷名参与分组，SD 卡与内部存储的同名 album_id 不再被误并为同一张专辑。
- */
-private fun groupAlbums(songs: List<SongEntity>): List<AlbumSummary> {
-    return songs.groupBy { s -> s.volumeName to (s.albumId.takeIf { it > 0 } ?: s.album) }
-        .map { (_, group) ->
-            val first = group.first()
-            AlbumSummary(
-                volumeName = first.volumeName,
-                albumId = first.albumId,
-                album = first.album,
-                artist = first.artist,
-                coverUri = group.firstNotNullOfOrNull { it.coverUri },
-                songs = group.sortedWith(compareBy({ it.trackNumber }, { it.title.lowercase() }))
-            )
-        }
-        .sortedBy { it.album.lowercase() }
-}
-
-/** 按歌手分组 */
-private fun groupArtists(songs: List<SongEntity>): List<ArtistSummary> {
-    return songs.groupBy { it.artist }
-        .map { (artist, group) ->
-            ArtistSummary(
-                artist = artist,
-                coverUri = group.firstNotNullOfOrNull { it.coverUri },
-                songs = group.sortedWith(compareBy({ it.album.lowercase() }, { it.trackNumber }, { it.title.lowercase() }))
-            )
-        }
-        .sortedBy { it.artist.lowercase() }
-}
-
-/** 按文件夹（path 父目录）分组 */
-private fun groupFolders(songs: List<SongEntity>): List<FolderSummary> {
-    return songs.groupBy { MusicRepository.folderOf(it.path) }
-        .map { (folder, group) ->
-            FolderSummary(
-                folder = folder,
-                songs = group.sortedWith(compareBy({ it.album.lowercase() }, { it.title.lowercase() }))
-            )
-        }
-        .sortedBy { it.folder.lowercase() }
 }

@@ -83,9 +83,9 @@ import coil.compose.AsyncImage
 import com.puretone.player.data.local.dao.PlaylistWithSongs
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.SongSortOrder
-import com.puretone.player.ui.AlbumSummary
-import com.puretone.player.ui.ArtistSummary
-import com.puretone.player.ui.FolderSummary
+import com.puretone.player.domain.grouping.AlbumSummary
+import com.puretone.player.domain.grouping.ArtistSummary
+import com.puretone.player.domain.grouping.FolderSummary
 import com.puretone.player.ui.LibraryViewModel
 import com.puretone.player.ui.MetadataViewModel
 import com.puretone.player.ui.PlayerViewModel

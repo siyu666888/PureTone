@@ -5,8 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.MusicRepository
 import com.puretone.player.data.settings.SettingsRepository
-import com.puretone.player.lyrics.LrcParser
-import com.puretone.player.lyrics.LyricsStore
+import com.puretone.player.domain.usecase.LoadLyricsUseCase
+import com.puretone.player.domain.usecase.PlaySongInLibraryUseCase
+import com.puretone.player.domain.usecase.SaveSongInfoUseCase
 import com.puretone.player.lyrics.ParsedLyrics
 import com.puretone.player.playback.PlaybackManager
 import com.puretone.player.playback.PlaybackUiState
@@ -15,7 +16,6 @@ import com.puretone.player.playback.RepeatMode
 import com.puretone.player.playback.next
 import com.puretone.player.playback.toPlayMode
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,8 +38,10 @@ import javax.inject.Inject
 class PlayerViewModel @Inject constructor(
     private val playback: PlaybackManager,
     private val repo: MusicRepository,
-    private val lyricsStore: LyricsStore,
-    private val settings: SettingsRepository
+    private val settings: SettingsRepository,
+    private val loadLyricsUseCase: LoadLyricsUseCase,
+    private val playSongInLibraryUseCase: PlaySongInLibraryUseCase,
+    private val saveSongInfoUseCase: SaveSongInfoUseCase
 ) : ViewModel() {
 
     val state: StateFlow<PlaybackUiState> = playback.uiState
@@ -205,9 +207,7 @@ class PlayerViewModel @Inject constructor(
         coverUri: String?,
         year: Int
     ): Boolean {
-        val ok = runCatching {
-            repo.updateSongInfo(songId, title, artist, album, coverUri, year)
-        }.isSuccess
+        val ok = saveSongInfoUseCase(songId, title, artist, album, coverUri, year)
         // 编辑的正是当前播放曲时，顺手刷新弹窗上方的只读摘要（Room Flow 会驱动列表/播放页）
         if (ok && songId == state.value.currentSongId) {
             _currentSong.value = runCatching { repo.getSong(songId) }.getOrNull()
@@ -234,45 +234,18 @@ class PlayerViewModel @Inject constructor(
      * 在完整曲库上下文中播放指定歌曲（使上一首/下一首可用）。
      * 供统计页「最爱歌曲」跳转使用。
      */
-    fun playSongById(id: Long) {
-        viewModelScope.launch {
-            val library = runCatching { repo.observeLibrary().first() }.getOrNull() ?: return@launch
-            // P2-18：歌曲已从曲库删除时 indexOfFirst 返回 -1——旧实现
-            // `.coerceAtLeast(0)` 把它压成 0，静默播放第一首歌（统计页
-            // 「最爱歌曲」点到已删歌就中招）。找不到就应该无操作。
-            val index = library.indexOfFirst { it.id == id }
-            if (index < 0) return@launch
-            playSongs(library, index)
-        }
-    }
+    fun playSongById(id: Long) = viewModelScope.launch { playSongInLibraryUseCase(id) }
 
     /**
      * 加载歌词。查找顺序：
      * 1. 与音频同目录、同名（去扩展名）的 .lrc（用户手动放置，优先）；
-     * 2. App 外部目录中下载的歌词（[LyricsStore]）。
+     * 2. App 外部目录中下载的歌词（[com.puretone.player.lyrics.LyricsStore]）。
      * 找不到或解析失败时置空，UI 据此显示「暂无歌词」。
+     *
+     * 纯查找/解析逻辑已抽到 [LoadLyricsUseCase]，本方法只负责「先清后填」的状态同步。
      */
     fun loadLyrics(audioPath: String?) {
         _lyrics.value = null
-        if (audioPath.isNullOrBlank()) return
-        viewModelScope.launch(Dispatchers.IO) {
-            val file = File(audioPath)
-            val dir = file.parentFile
-            val base = file.nameWithoutExtension
-            val candidates = buildList {
-                if (dir != null) {
-                    add(File(dir, "$base.lrc"))
-                    add(File(dir, "$base.LRC"))
-                }
-                lyricsStore.existing(audioPath)?.let { add(it) }
-            }
-            val lrc = candidates.firstOrNull { it.exists() && it.isFile }
-            _lyrics.value = if (lrc != null) {
-                runCatching { LrcParser.parse(LrcParser.decode(lrc.readBytes())) }
-                    .getOrDefault(ParsedLyrics.Empty)
-            } else {
-                null
-            }
-        }
+        viewModelScope.launch { _lyrics.value = loadLyricsUseCase(audioPath) }
     }
 }
