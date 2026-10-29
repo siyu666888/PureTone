@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.map
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * PureTone 全量设置快照。
@@ -71,7 +73,12 @@ data class PureToneSettings(
     /** 重低音强度 0 ~ 1000 */
     val bassBoostStrength: Int = 0,
     /** 环绕声强度 0 ~ 1000 */
-    val virtualizerStrength: Int = 0
+    val virtualizerStrength: Int = 0,
+    /**
+     * 用户自定义均衡器预设：名称 → 10 段增益（dB，mB）。
+     * 非 DataStore 直存字段，由 [Keys.eqCustomPresets] 经 JSON 编解码派生。
+     */
+    val eqCustomPresets: Map<String, List<Int>> = emptyMap()
 ) {
     companion object {
         const val THEME_SYSTEM = "SYSTEM"
@@ -127,6 +134,8 @@ class SettingsRepository @Inject constructor(
         val eqBandLevels = stringPreferencesKey("eq_band_levels")
         val bassBoost = intPreferencesKey("eq_bass_boost")
         val virtualizer = intPreferencesKey("eq_virtualizer")
+        /** 用户自定义均衡器预设（JSON：名称 → 10 段增益列表） */
+        val eqCustomPresets = stringPreferencesKey("eq_custom_presets")
     }
 
     /**
@@ -157,7 +166,8 @@ class SettingsRepository @Inject constructor(
                 eqPreset = prefs[Keys.eqPreset] ?: defaults.eqPreset,
                 eqBandLevels = decodeBands(prefs[Keys.eqBandLevels]) ?: defaults.eqBandLevels,
                 bassBoostStrength = prefs[Keys.bassBoost] ?: defaults.bassBoostStrength,
-                virtualizerStrength = prefs[Keys.virtualizer] ?: defaults.virtualizerStrength
+                virtualizerStrength = prefs[Keys.virtualizer] ?: defaults.virtualizerStrength,
+                eqCustomPresets = decodeCustomPresets(prefs[Keys.eqCustomPresets])
             )
         }
 
@@ -245,6 +255,55 @@ class SettingsRepository @Inject constructor(
         it[Keys.eqPreset] = preset
         it[Keys.eqBandLevels] = bandLevels.joinToString(",")
     }
+
+    /**
+     * 保存当前 10 段曲线为用户自定义预设（按名称覆盖）。
+     * 名称去首尾空白；同名视为更新。
+     */
+    suspend fun saveCustomEqPreset(name: String, levels: List<Int>) = edit { prefs ->
+        if (levels.size != PureToneSettings.EQ_BAND_COUNT) return@edit
+        val current = decodeCustomPresets(prefs[Keys.eqCustomPresets])
+        val next = current.toMutableMap().apply { put(name.trim(), levels) }
+        prefs[Keys.eqCustomPresets] = encodeCustomPresets(next)
+    }
+
+    /** 删除指定名称的自定义预设（不存在则无操作） */
+    suspend fun deleteCustomEqPreset(name: String) = edit { prefs ->
+        val current = decodeCustomPresets(prefs[Keys.eqCustomPresets])
+        if (name in current) {
+            val next = current.toMutableMap().apply { remove(name) }
+            prefs[Keys.eqCustomPresets] = encodeCustomPresets(next)
+        }
+    }
+
+    /** 应用用户自定义预设：写入频段并把 eqPreset 标记为自定义名称 */
+    suspend fun applyCustomEqPreset(name: String) = edit { prefs ->
+        val bands = decodeCustomPresets(prefs[Keys.eqCustomPresets])[name] ?: return@edit
+        prefs[Keys.eqPreset] = name
+        prefs[Keys.eqBandLevels] = bands.joinToString(",")
+    }
+
+    /** 解码自定义预设 JSON（损坏/为空返回空 Map，不崩溃） */
+    private fun decodeCustomPresets(s: String?): Map<String, List<Int>> {
+        if (s.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            val obj = JSONObject(s)
+            val map = LinkedHashMap<String, List<Int>>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val arr = obj.getJSONArray(key)
+                if (arr.length() == PureToneSettings.EQ_BAND_COUNT) {
+                    map[key] = (0 until arr.length()).map { arr.getInt(it) }
+                }
+            }
+            map
+        }.getOrDefault(emptyMap())
+    }
+
+    /** 编码自定义预设为 JSON */
+    private fun encodeCustomPresets(map: Map<String, List<Int>>): String =
+        JSONObject().apply { map.forEach { (k, v) -> put(k, JSONArray(v)) } }.toString()
 
     // ---------- 续播会话 ----------
 

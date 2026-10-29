@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -18,9 +19,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -50,6 +54,9 @@ fun EqScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val status by vm.status.collectAsStateWithLifecycle()
+    val customPresets by vm.customPresets.collectAsStateWithLifecycle()
+    var showSavePreset by remember { mutableStateOf(false) }
+    var presetName by remember { mutableStateOf("") }
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
@@ -79,6 +86,46 @@ fun EqScreen(
                 vm.presets.keys.forEach { preset ->
                     ChipEq(selected = state.preset.equals(preset, ignoreCase = true), label = presetLabel(preset)) {
                         vm.applyPreset(preset)
+                    }
+                }
+            }
+
+            // 我的预设（② 均衡器自定义：保存/应用/删除用户曲线）
+            Text("我的预设", style = MaterialTheme.typography.titleMedium)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+            ) {
+                // 入口：把当前 10 段曲线保存为命名预设
+                Card(modifier = Modifier.clickable { showSavePreset = true }) {
+                    Text(
+                        "+ 保存当前",
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+                // 已保存的自定义预设：点击应用，右侧图标删除
+                customPresets.forEach { (name, _) ->
+                    Card(modifier = Modifier.clickable { vm.applyCustomPreset(name) }) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+                        ) {
+                            Text(
+                                name,
+                                modifier = Modifier.padding(vertical = 6.dp),
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                            Icon(
+                                imageVector = Icons.Filled.Delete,
+                                contentDescription = "删除预设 $name",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clickable { vm.deleteCustomPreset(name) }
+                            )
+                        }
                     }
                 }
             }
@@ -152,6 +199,36 @@ fun EqScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+
+    // 保存当前曲线为自定义预设的弹窗（② 均衡器自定义）
+    if (showSavePreset) {
+        AlertDialog(
+            onDismissRequest = { showSavePreset = false },
+            title = { Text("保存为预设") },
+            text = {
+                OutlinedTextField(
+                    value = presetName,
+                    onValueChange = { presetName = it },
+                    label = { Text("预设名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val name = presetName.trim()
+                    if (name.isNotEmpty()) {
+                        vm.saveCustomPreset(name)
+                        presetName = ""
+                        showSavePreset = false
+                    }
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSavePreset = false }) { Text("取消") }
+            }
+        )
     }
 }
 

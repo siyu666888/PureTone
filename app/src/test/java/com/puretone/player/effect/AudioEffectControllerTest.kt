@@ -1,5 +1,6 @@
 package com.puretone.player.effect
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,5 +38,30 @@ class AudioEffectControllerTest {
     @Test
     fun `主开关关闭且强度为0时不启用`() {
         assertFalse(AudioEffectController.shouldEnableEffect(masterEnabled = false, strength = 0))
+    }
+
+    @Test
+    fun `内置预设均为10段`() {
+        AudioEffectController.PRESETS.forEach { (name, bands) ->
+            assertEquals("预设 $name 应为 10 段", 10, bands.size)
+        }
+    }
+
+    @Test
+    fun `applyPreset 把预设值放大100倍写入频段`() {
+        val c = AudioEffectController()
+        c.applyPreset("POP")
+        assertEquals(
+            AudioEffectController.PRESETS["POP"]!!.map { it * 100 },
+            c.currentBandLevels()
+        )
+    }
+
+    @Test
+    fun `未知预设名 applyPreset 不改变频段`() {
+        val c = AudioEffectController()
+        val before = c.currentBandLevels()
+        c.applyPreset("不存在")
+        assertEquals(before, c.currentBandLevels())
     }
 }

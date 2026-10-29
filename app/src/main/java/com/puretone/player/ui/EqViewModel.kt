@@ -62,6 +62,15 @@ class EqViewModel @Inject constructor(
             EqScreenState()
         )
 
+    /** 用户自定义预设（名称 → 10 段增益，mB） */
+    val customPresets: StateFlow<Map<String, List<Int>>> = settingsState
+        .map { it.eqCustomPresets }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            emptyMap()
+        )
+
     fun setEnabled(enabled: Boolean) {
         viewModelScope.launch { runCatching { settings.setEqEnabled(enabled) } }
     }
@@ -77,6 +86,22 @@ class EqViewModel @Inject constructor(
     fun applyPreset(name: String) {
         val bands = AudioEffectController.PRESETS[name] ?: return
         viewModelScope.launch { runCatching { settings.applyEqPreset(name, bands.map { it * 100 }) } }
+    }
+
+    /** 应用用户自定义预设（名称已在 [customPresets] 中） */
+    fun applyCustomPreset(name: String) {
+        viewModelScope.launch { runCatching { settings.applyCustomEqPreset(name) } }
+    }
+
+    /** 把当前 10 段曲线保存为自定义预设（去空白名后覆盖同名） */
+    fun saveCustomPreset(name: String) {
+        val levels = settingsState.value.eqBandLevels
+        viewModelScope.launch { runCatching { settings.saveCustomEqPreset(name, levels) } }
+    }
+
+    /** 删除自定义预设 */
+    fun deleteCustomPreset(name: String) {
+        viewModelScope.launch { runCatching { settings.deleteCustomEqPreset(name) } }
     }
 
     fun setBassBoost(strength: Int) {
