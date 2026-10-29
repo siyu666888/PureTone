@@ -6,13 +6,11 @@ name: Android CI
 #   ① 单元测试（Robolectric）  ② Debug 包构建  ③ Release 包构建 + 签名校验
 #
 # 关于 Release 签名：
-#   真实 keystore 未入库（.gitignore 已排除 local.properties 与 *.jks），
-#   所以这里由 CI 生成一次性自签名密钥，目的只是验证 release 链路能编通——
-#   重点是 R8 混淆 + shrinkResources 下，ffmpeg-kit / Media3 / Room 的
-#   保留规则（app/proguard-rules.pro）是否仍然正确。这类问题只有在
-#   release 构建时才会暴露，debug 构建永远看不见。
-#   若希望 CI 产出正式签名包：配置仓库 Secrets 后，把「生成 CI 临时签名密钥」
-#   这一步替换为从 Secrets 还原 keystore 即可。
+#   真实 keystore 未入库（.gitignore 已排除 local.properties 与 *.jks）。
+#   推荐做法：用 scripts/backup-keystore.sh 生成密钥库 base64，存入仓库 Secrets
+#   (SIGNING_KEY)，由 CI 在「还原签名密钥」步骤从 Secrets 还原正式签名。
+#   未配置 Secrets 时（如外部 fork 的 PR 无权访问 Secrets），CI 自动回退到一次性
+#   临时密钥，仅用于验证 release 链路（R8/proguard 保留规则）能编通，不用于正式发布。
 
 on:
   push:
@@ -65,27 +63,48 @@ jobs:
       - name: 构建 Debug APK
         run: ./gradlew assembleDebug --no-daemon
 
-      # 用一次性自签名密钥编 release，仅为验证 release 链路（R8 / proguard 保留规则）。
-      # 该密钥不入库、不用于正式发布，因此不会引入任何密钥泄露风险。
-      - name: 生成 CI 临时签名密钥
+      # Release 签名：优先用仓库 Secrets 中的正式 keystore；
+      # 缺失时（如外部 fork 的 PR 无 Secrets 访问权）回退到一次性临时密钥，保证 CI 仍可编通。
+      # 需在仓库 Settings → Secrets and variables → Actions 配置：
+      #   SIGNING_KEY        = base64(app/keystore/puretone-release.jks)（由 scripts/backup-keystore.sh 生成）
+      #   KEY_STORE_PASSWORD = storePassword
+      #   KEY_PASSWORD       = keyPassword
+      #   KEY_ALIAS          = puretone
+      - name: 还原签名密钥 (Secrets 优先)
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          keytool -genkeypair -v \
-            -keystore "${{ github.workspace }}/ci-release.jks" \
-            -storetype PKCS12 -keyalg RSA -keysize 2048 -validity 10000 \
-            -alias puretone -storepass android -keypass android \
-            -dname "CN=CI, OU=CI, O=CI, L=CI, S=CI, C=CN"
-
-      - name: 写入 local.properties (sdk.dir + 签名)
-        run: |
+          if [ -n "$SIGNING_KEY" ]; then
+            echo "使用 Secrets 中的正式签名密钥"
+            echo "$SIGNING_KEY" | base64 -d > "${{ github.workspace }}/release-keystore.jks"
+            STORE_FILE="${{ github.workspace }}/release-keystore.jks"
+            ALIAS="${KEY_ALIAS:-puretone}"
+            SP="$KEY_STORE_PASSWORD"
+            KP="$KEY_PASSWORD"
+          else
+            echo "SIGNING_KEY 未配置，回退到 CI 临时密钥（仅验证 release 链路，非正式签名）"
+            keytool -genkeypair -v \
+              -keystore "${{ github.workspace }}/ci-release.jks" \
+              -storetype PKCS12 -keyalg RSA -keysize 2048 -validity 10000 \
+              -alias puretone -storepass android -keypass android \
+              -dname "CN=CI, OU=CI, O=CI, L=CI, S=CI, C=CN"
+            STORE_FILE="${{ github.workspace }}/ci-release.jks"
+            ALIAS="puretone"
+            SP="android"
+            KP="android"
+          fi
           {
             echo "sdk.dir=$ANDROID_HOME"
-            echo "storeFile=${{ github.workspace }}/ci-release.jks"
-            echo "storePassword=android"
-            echo "keyAlias=puretone"
-            echo "keyPassword=android"
+            echo "storeFile=$STORE_FILE"
+            echo "storePassword=$SP"
+            echo "keyAlias=$ALIAS"
+            echo "keyPassword=$KP"
           } > local.properties
-          echo "--- local.properties ---"
-          cat local.properties
+          echo "--- local.properties (口令已隐去) ---"
+          sed -E 's/(Password=).*/\1<redacted>/' local.properties
 
       - name: 构建 Release APK
         run: ./gradlew assembleRelease --no-daemon
