@@ -91,4 +91,21 @@ class PlaylistImportResolverTest {
     fun `empty inputs`() {
         assertEquals(emptyList<Long>(), PlaylistImportResolver.resolve(emptyList(), emptyList()).map { it.id })
     }
+
+    @Test
+    fun `P2-8 剥离 file 前缀并 URL 解码后匹配`() {
+        // 很多导出工具把条目写成 file:///... 且空格编码为 %20
+        val library = listOf(song(1, "/storage/emulated/0/Music/my song.mp3"))
+        val entries = listOf(M3uEntry("file:///storage/emulated/0/Music/my%20song.mp3"))
+        val result = PlaylistImportResolver.resolve(entries, library)
+        assertEquals(listOf(1L), result.map { it.id })
+    }
+
+    @Test
+    fun `P2-8 仅 URL 解码（无 file 前缀）也可匹配`() {
+        val library = listOf(song(1, "/Music/a&b.mp3"))
+        val entries = listOf(M3uEntry("/Music/a%26b.mp3"))
+        val result = PlaylistImportResolver.resolve(entries, library)
+        assertEquals(listOf(1L), result.map { it.id })
+    }
 }

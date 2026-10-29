@@ -39,6 +39,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
+import android.widget.Toast
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -60,7 +66,34 @@ fun MeScreen(
     val recently by libVm.recentlyPlayed.collectAsStateWithLifecycle()
     val favorites by libVm.favorites.collectAsStateWithLifecycle()
     val playlists by libVm.playlists.collectAsStateWithLifecycle()
+    val m3uMessage by libVm.m3uMessage.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var showCreate by remember { mutableStateOf(false) }
+
+    // 导入 M3U：SAF 选文件（P2：歌单 M3U 导入导出）
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val isM3u = runCatching {
+            val name = context.contentResolver.query(uri, null, null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(c.getColumnIndexOrThrow(android.provider.OpenableColumns.DISPLAY_NAME)) else "" } ?: ""
+            name.endsWith(".m3u", ignoreCase = true) || name.endsWith(".m3u8", ignoreCase = true)
+        }.getOrDefault(false)
+        if (!isM3u) {
+            Toast.makeText(context, "请选择 .m3u / .m3u8 歌单文件", Toast.LENGTH_SHORT).show()
+            return@rememberLauncherForActivityResult
+        }
+        libVm.importM3u(uri)
+    }
+
+    // M3U 操作结果提示
+    LaunchedEffect(m3uMessage) {
+        m3uMessage?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            libVm.consumeM3uMessage()
+        }
+    }
     // P2-3：删除歌单前先确认，避免误触立即删除
     var playlistToDelete by remember { mutableStateOf<PlaylistWithSongs?>(null) }
 
@@ -127,6 +160,11 @@ fun MeScreen(
         // 歌单
         Row(verticalAlignment = Alignment.CenterVertically) {
             SectionTitle("歌单（${playlists.size}）", modifier = Modifier.weight(1f))
+            TextButton(onClick = {
+                importLauncher.launch(arrayOf("*/*"))
+            }) {
+                Text("导入")
+            }
             TextButton(onClick = { showCreate = true }) {
                 Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
@@ -151,6 +189,9 @@ fun MeScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = { playerVm.playSongs(pw.songs, 0) }) {
                                     Icon(Icons.Default.PlayArrow, contentDescription = "播放歌单", tint = PureToneBrand.Primary)
+                                }
+                                TextButton(onClick = { libVm.exportPlaylist(pw.playlist.id) }) {
+                                    Text("导出")
                                 }
                                 IconButton(onClick = { playlistToDelete = pw }) {
                                     Icon(Icons.Default.Delete, contentDescription = "删除歌单")

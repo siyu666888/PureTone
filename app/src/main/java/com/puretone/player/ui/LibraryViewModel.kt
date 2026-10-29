@@ -6,7 +6,11 @@ import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.MusicRepository
 import com.puretone.player.data.repository.SongSortOrder
 import com.puretone.player.data.repository.SyncResult
+import com.puretone.player.data.playlist.M3uPlaylistStore
+import com.puretone.player.data.playlist.PlaylistImportResolver
+import com.puretone.player.lyrics.M3uEntry
 import com.puretone.player.playback.PlaybackManager
+import android.net.Uri
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,7 +66,8 @@ data class FolderSummary(
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
     private val repo: MusicRepository,
-    private val playback: PlaybackManager
+    private val playback: PlaybackManager,
+    private val m3uStore: M3uPlaylistStore
 ) : ViewModel() {
 
     /** 音乐页排序方式（默认按标题） */
@@ -197,6 +202,60 @@ class LibraryViewModel @Inject constructor(
     fun createPlaylistAndAdd(name: String, songIds: List<Long>) = viewModelScope.launch {
         val id = repo.createPlaylist(name.trim().ifBlank { "新建歌单" })
         if (songIds.isNotEmpty()) repo.addToPlaylist(id, songIds)
+    }
+
+    // ---------- M3U 导入 / 导出（P2：歌单 M3U 导入导出）----------
+
+    /** M3U 操作结果提示（导入/导出成功或失败），UI 消费后清空 */
+    private val _m3uMessage = MutableStateFlow<String?>(null)
+    val m3uMessage: StateFlow<String?> = _m3uMessage
+    fun consumeM3uMessage() { _m3uMessage.value = null }
+
+    /**
+     * 从 SAF 选中的 .m3u 文件导入：解析 → 与曲库匹配 → 新建歌单。
+     * 匹配不到任何歌曲时仍给出明确提示，不静默失败。
+     */
+    fun importM3u(uri: Uri) = viewModelScope.launch {
+        val entries = runCatching { m3uStore.import(uri) }.getOrNull()
+        if (entries == null || entries.isEmpty()) {
+            _m3uMessage.value = "无法读取或非空歌单文件"
+            return@launch
+        }
+        val library = runCatching { repo.getAllSongs() }.getOrDefault(emptyList())
+        val matched = PlaylistImportResolver.resolve(entries, library)
+        if (matched.isEmpty()) {
+            _m3uMessage.value = "未匹配到任何歌曲（共 ${entries.size} 条）"
+            return@launch
+        }
+        val name = runCatching { m3uStore.nameOf(uri) }.getOrNull() ?: "导入歌单"
+        val id = repo.createPlaylist(name)
+        repo.addToPlaylist(id, matched.map { it.id })
+        _m3uMessage.value = "已导入歌单「$name」：匹配 ${matched.size}/${entries.size} 首"
+    }
+
+    /** 把歌单导出为 .m3u 到应用外部目录（免权限） */
+    fun exportPlaylist(playlistId: Long) = viewModelScope.launch {
+        val pw = runCatching { repo.getPlaylistWithSongs(playlistId) }.getOrNull()
+        if (pw == null) {
+            _m3uMessage.value = "歌单不存在"
+            return@launch
+        }
+        if (pw.songs.isEmpty()) {
+            _m3uMessage.value = "歌单为空，无可导出歌曲"
+            return@launch
+        }
+        val entries = pw.songs.map { s ->
+            val title = buildString {
+                if (s.title.isNotBlank()) append(s.title.trim())
+                if (s.artist.isNotBlank()) {
+                    if (isNotEmpty()) append(" - ")
+                    append(s.artist.trim())
+                }
+            }.takeIf { it.isNotBlank() }
+            M3uEntry(path = s.path, title = title, durationSec = s.duration / 1000.0)
+        }
+        val file = runCatching { m3uStore.export(pw.playlist.name, entries) }.getOrNull()
+        _m3uMessage.value = if (file != null) "已导出：${file.absolutePath}" else "导出失败"
     }
 }
 

@@ -24,7 +24,11 @@ object PlaylistImportResolver {
 
         val result = mutableListOf<SongEntity>()
         entries.forEach { entry ->
-            val normalized = entry.path.replace('\\', '/')
+            // P2-8：导入条目可能带 file:// 前缀或 URL 编码（空格→%20 等）。
+            // 先剥前缀、再按 '/' 归一化、最后 URL 解码，否则与曲库里的真实路径无法匹配。
+            val normalized = urlDecode(entry.path)
+                .removePrefix("file://")
+                .replace('\\', '/')
             // 后缀 tier 同样必须唯一：裸文件名（a.mp3）会同时命中多个目录下的同名曲库文件，
             // 此时必须判歧义跳过，而不是静默匹配第一首（导入错歌）
             // P2-12：必须以「路径段边界」结尾匹配。旧实现裸 endsWith 会让条目
@@ -46,4 +50,12 @@ object PlaylistImportResolver {
 
     private fun fileNameKey(path: String): String =
         path.substringAfterLast('/').substringBeforeLast('.').lowercase()
+
+    /** 手写 URL 解码（仅 %XX 十六进制），避免引入 Android Uri 依赖，保持纯 JVM 可测（P2-8） */
+    private fun urlDecode(s: String): String {
+        if ('%' !in s) return s
+        return s.replace(Regex("%([0-9A-Fa-f]{2})")) { match ->
+            match.groupValues[1].toInt(16).toChar().toString()
+        }
+    }
 }

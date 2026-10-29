@@ -1,10 +1,10 @@
 package com.puretone.player.lyrics
 
-/** M3U 条目：文件路径 + 可选标题/时长 */
+/** M3U 条目：文件路径 + 可选标题/时长（秒，可为小数，如 273.5） */
 data class M3uEntry(
     val path: String,
     val title: String? = null,
-    val durationSec: Int = 0
+    val durationSec: Double = 0.0
 )
 
 /**
@@ -19,7 +19,7 @@ object M3uCodec {
     fun parse(content: String): List<M3uEntry> {
         val entries = mutableListOf<M3uEntry>()
         var pendingTitle: String? = null
-        var pendingDuration = 0
+        var pendingDuration = 0.0
 
         content.lineSequence().forEach { raw ->
             val line = raw.trim()
@@ -29,13 +29,14 @@ object M3uCodec {
                 val body = line.substringAfter(':')
                 val commaIdx = body.indexOf(',')
                 if (commaIdx >= 0) {
-                    pendingDuration = body.substring(0, commaIdx).trim().toIntOrNull() ?: 0
+                    // P2-7：保留小数时长（EXTINF 允许 273.5 这类秒数），负数视为 0；
+                    // 标题无论时长是否为 0 都保留，保证 serialize/parse 往返自洽。
+                    pendingDuration = body.substring(0, commaIdx).trim().toDoubleOrNull()
+                        ?.coerceAtLeast(0.0) ?: 0.0
                     val label = body.substring(commaIdx + 1).trim().ifBlank { null }
-                    // 时长为 0 表示导出方未记录时长，该 EXTINF 标签不作为可信标题
-                    // （与 serialize 的 `#EXTINF:0` 无标签输出保持一致，保证往返稳定）
-                    pendingTitle = label.takeIf { pendingDuration > 0 }
+                    pendingTitle = label
                 } else {
-                    pendingDuration = body.trim().toIntOrNull() ?: 0
+                    pendingDuration = body.trim().toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
                     pendingTitle = null
                 }
                 return@forEach
@@ -49,7 +50,7 @@ object M3uCodec {
                 durationSec = pendingDuration
             )
             pendingTitle = null
-            pendingDuration = 0
+            pendingDuration = 0.0
         }
         return entries
     }
@@ -58,7 +59,9 @@ object M3uCodec {
         append("#EXTM3U\n")
         entries.forEach { entry ->
             append("#EXTINF:")
-            append(entry.durationSec.coerceAtLeast(0))
+            // 整数秒原样输出，小数秒保留精度；保证 parse 后再 serialize 稳定（P2-7）
+            val d = entry.durationSec.coerceAtLeast(0.0)
+            append(if (d % 1.0 == 0.0) d.toLong().toString() else d.toString())
             if (!entry.title.isNullOrBlank()) {
                 append(',')
                 append(entry.title)

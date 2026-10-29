@@ -348,6 +348,13 @@ class MusicRepository @Inject constructor(
     fun observePlaylist(playlistId: Long): Flow<PlaylistWithSongs?> =
         playlistDao.observeWithSongs(playlistId)
 
+    /** 歌单快照（一次性，M3U 导出用） */
+    suspend fun getPlaylistWithSongs(playlistId: Long): PlaylistWithSongs? =
+        observePlaylist(playlistId).firstOrNull()
+
+    /** 全库歌曲快照（M3U 导入匹配用） */
+    suspend fun getAllSongs(): List<SongEntity> = songDao.getAll()
+
     suspend fun createPlaylist(name: String): Long =
         playlistDao.insert(PlaylistEntity(name = name.trim()))
 

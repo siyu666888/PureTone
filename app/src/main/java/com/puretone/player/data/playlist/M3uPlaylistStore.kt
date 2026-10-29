@@ -50,4 +50,15 @@ class M3uPlaylistStore @Inject constructor(
         dir.listFiles()?.filter { it.extension.equals("m3u", ignoreCase = true) }
             ?.sortedBy { it.name } ?: emptyList()
     }
+
+    /** 从 SAF Uri 取出歌单文件名（去掉 .m3u 后缀），用于导入后命名（P2：M3U 导入导出） */
+    suspend fun nameOf(uri: Uri): String? = withContext(Dispatchers.IO) {
+        val name = try {
+            context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c ->
+                    if (c.moveToFirst()) c.getString(0) else null
+                }
+        } catch (_: Exception) { null }
+        name?.substringBeforeLast('.')?.takeIf { it.isNotBlank() }
+    }
 }
