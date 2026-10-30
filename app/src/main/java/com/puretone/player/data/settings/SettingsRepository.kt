@@ -44,6 +44,17 @@ data class PureToneSettings(
     val playbackSpeed: Float = 1.0f,
     /** 启动时续播上次歌曲 */
     val resumeOnStart: Boolean = true,
+    /**
+     * 睡眠定时模式（2026-10-30 细粒度定时）。
+     *
+     * - [SleepTimerMode.OFF]：关；
+     * - [SleepTimerMode.MINUTES]：按分钟倒计时（自定义分钟数，用 [sleepTimerMinutes] 记录档位）；
+     * - [SleepTimerMode.END_OF_TRACK]：当前这首播完就停（无时间上限）。
+     *
+     * 旧版本没有这个键：读取层按「分钟数 + 到期时刻」推断出 [SleepTimerMode.MINUTES]，
+     * 老用户升级后原档位仍然生效。
+     */
+    val sleepTimerMode: SleepTimerMode = SleepTimerMode.OFF,
     /** 睡眠定时分钟数，0 = 关闭（UI 分段选中态）。定时到期/过期后由 [settings] 读取层归一化为 0。 */
     val sleepTimerMinutes: Int = 0,
     /**
@@ -104,6 +115,11 @@ data class PureToneSettings(
         const val EQ_BASS = "BASS"
 
         const val EQ_BAND_COUNT = 10
+
+        /** 自定义睡眠定时的分钟数下限（1 分钟） */
+        const val SLEEP_MIN_MINUTES = 1
+        /** 自定义睡眠定时的分钟数上限（10 小时） */
+        const val SLEEP_MAX_MINUTES = 600
     }
 }
 
@@ -127,6 +143,7 @@ class SettingsRepository @Inject constructor(
         val gapless = booleanPreferencesKey("playback_gapless")
         val playbackSpeed = floatPreferencesKey("playback_speed")
         val resumeOnStart = booleanPreferencesKey("playback_resume_on_start")
+        val sleepTimerMode = stringPreferencesKey("playback_sleep_timer_mode")
         val sleepTimerMinutes = intPreferencesKey("playback_sleep_timer_minutes")
         val sleepTimerDeadline = longPreferencesKey("playback_sleep_timer_deadline")
         val sleepTimerWallDeadline = longPreferencesKey("playback_sleep_timer_wall_deadline")
@@ -153,6 +170,11 @@ class SettingsRepository @Inject constructor(
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
         .map { prefs ->
             val defaults = PureToneSettings()
+            // 定时四要素先拆出来：旧数据迁移（无 mode 键）与过期归一化都要基于它们判定
+            val rawMinutes = prefs[Keys.sleepTimerMinutes] ?: defaults.sleepTimerMinutes
+            val deadlineMs = prefs[Keys.sleepTimerDeadline] ?: defaults.sleepTimerDeadlineMs
+            val wallDeadlineMs = prefs[Keys.sleepTimerWallDeadline]
+                ?: defaults.sleepTimerWallDeadlineMs
             PureToneSettings(
                 themeMode = prefs[Keys.themeMode] ?: defaults.themeMode,
                 amoledBlack = prefs[Keys.amoledBlack] ?: defaults.amoledBlack,
@@ -160,10 +182,10 @@ class SettingsRepository @Inject constructor(
                 gapless = prefs[Keys.gapless] ?: defaults.gapless,
                 playbackSpeed = prefs[Keys.playbackSpeed] ?: defaults.playbackSpeed,
                 resumeOnStart = prefs[Keys.resumeOnStart] ?: defaults.resumeOnStart,
-                sleepTimerMinutes = prefs[Keys.sleepTimerMinutes] ?: defaults.sleepTimerMinutes,
-                sleepTimerDeadlineMs = prefs[Keys.sleepTimerDeadline] ?: defaults.sleepTimerDeadlineMs,
-                sleepTimerWallDeadlineMs = prefs[Keys.sleepTimerWallDeadline]
-                    ?: defaults.sleepTimerWallDeadlineMs,
+                sleepTimerMode = SleepTimerMode.parse(prefs[Keys.sleepTimerMode]),
+                sleepTimerMinutes = rawMinutes,
+                sleepTimerDeadlineMs = deadlineMs,
+                sleepTimerWallDeadlineMs = wallDeadlineMs,
                 repeatMode = prefs[Keys.repeatMode] ?: defaults.repeatMode,
                 shuffle = prefs[Keys.shuffle] ?: defaults.shuffle,
                 eqEnabled = prefs[Keys.eqEnabled] ?: defaults.eqEnabled,
@@ -173,17 +195,25 @@ class SettingsRepository @Inject constructor(
                 virtualizerStrength = prefs[Keys.virtualizer] ?: defaults.virtualizerStrength,
                 eqCustomPresets = decodeCustomPresets(prefs[Keys.eqCustomPresets])
             ).let { s ->
-                // 定时过期归一化：到期时刻已过但「分钟数」仍残留时（例如定时到期瞬间进程被杀，
-                // 异步清理没来得及落库），读取一律归一化为「关」。这样设置页分段控件不会在
-                // 重启后仍高亮上次档位，播放层也不会把它误当成仍待倒计时的定时。
-                // 判定复用下面两个纯函数，保证「UI 显示」与「实际计时」口径完全一致。
-                if (hasSleepTimer(s) && sleepRemainingMs(s) <= 0L) {
-                    s.copy(
+                // 定时状态归一化（此前只处理 MINUTES 的过期，现在多一种 END_OF_TRACK）：
+                // 1) 倒计时型定时已过期 → 四个字段全部归零。老数据中「到期时刻还在、
+                //    分钟数也还在」的残留会让设置页重启后仍高亮上次档位（已修过的同类 bug），
+                //    读取层统一归一化为「关」，UI 与播放层拿到的口径永远一致；
+                // 2) 写了分钟数却没有到期时刻（半截数据）→ 同样视为「关」；
+                // 3) 旧版本数据没有 mode 键 → 按「分钟数 + 到期时刻」补出 MINUTES，
+                //    老用户升级后原有档位继续生效。
+                val mode = resolveSleepTimerMode(s)
+                when {
+                    mode == SleepTimerMode.MINUTES && sleepRemainingMs(s) <= 0L -> s.copy(
+                        sleepTimerMode = SleepTimerMode.OFF,
                         sleepTimerMinutes = 0,
                         sleepTimerDeadlineMs = 0L,
                         sleepTimerWallDeadlineMs = 0L
                     )
-                } else s
+                    mode == SleepTimerMode.OFF && s.sleepTimerMinutes > 0 -> s.copy(sleepTimerMinutes = 0)
+                    mode != s.sleepTimerMode -> s.copy(sleepTimerMode = mode)
+                    else -> s
+                }
             }
         }
 
@@ -202,18 +232,55 @@ class SettingsRepository @Inject constructor(
      */
     suspend fun setSleepTimerMinutes(minutes: Int) = edit {
         if (minutes <= 0) {
+            it[Keys.sleepTimerMode] = SleepTimerMode.OFF.name
             it[Keys.sleepTimerMinutes] = 0
             it[Keys.sleepTimerDeadline] = 0L
             it[Keys.sleepTimerWallDeadline] = 0L
         } else {
-            it[Keys.sleepTimerMinutes] = minutes
-            it[Keys.sleepTimerDeadline] = SystemClock.elapsedRealtime() + minutes * 60_000L
+            val safe = minutes.coerceIn(PureToneSettings.SLEEP_MIN_MINUTES, PureToneSettings.SLEEP_MAX_MINUTES)
+            it[Keys.sleepTimerMode] = SleepTimerMode.MINUTES.name
+            it[Keys.sleepTimerMinutes] = safe
+            it[Keys.sleepTimerDeadline] = SystemClock.elapsedRealtime() + safe * 60_000L
             // P2-14：同时写墙钟到期时刻（重启后仍然准确）
-            it[Keys.sleepTimerWallDeadline] = System.currentTimeMillis() + minutes * 60_000L
+            it[Keys.sleepTimerWallDeadline] = System.currentTimeMillis() + safe * 60_000L
         }
     }
 
-    /** 是否存在未到期的定时（用于决定是否需要清理） */
+    /**
+     * 「播完本曲停止」：不限时长，当前这首自然结束（含单曲循环再次走完、队列末首播完）即暂停。
+     *
+     * 不写任何到期时刻——它没有时间上限，靠播放器回调触发（见 PlaybackManager）。
+     * 清空分钟数与到期时刻：避免与倒计时型定时的残留数据混用。
+     */
+    suspend fun setSleepTimerEndOfTrack() = edit {
+        it[Keys.sleepTimerMode] = SleepTimerMode.END_OF_TRACK.name
+        it[Keys.sleepTimerMinutes] = 0
+        it[Keys.sleepTimerDeadline] = 0L
+        it[Keys.sleepTimerWallDeadline] = 0L
+    }
+
+    /** 关闭定时（等价于 [setSleepTimerMinutes] 传 0，语义更直白） */
+    suspend fun clearSleepTimer() = setSleepTimerMinutes(0)
+
+    /**
+     * 解析快照的定时模式。
+     *
+     * 旧版本只写分钟数与到期时刻、没有 mode 键：这里按「分钟数 > 0 且存在到期时刻」
+     * 补出 [SleepTimerMode.MINUTES]，老用户升级后原档位继续生效；
+     * 半截数据（只有分钟数、没有到期时刻）视为关。
+     */
+    fun resolveSleepTimerMode(s: PureToneSettings): SleepTimerMode {
+        if (s.sleepTimerMode != SleepTimerMode.OFF) return s.sleepTimerMode
+        return if (s.sleepTimerMinutes > 0 && hasSleepTimer(s)) SleepTimerMode.MINUTES
+        else SleepTimerMode.OFF
+    }
+
+    /**
+     * 是否存在「到期时刻」（倒计时型定时的持久化残留标志）。
+     *
+     * 注意：只判断到期时刻是否存在，**不代表定时仍未到期**——是否已过期要看
+     * [sleepRemainingMs]。[SleepTimerMode.END_OF_TRACK] 不写到期时刻，故这里为 false。
+     */
     fun hasSleepTimer(s: PureToneSettings): Boolean =
         s.sleepTimerDeadlineMs > 0L || s.sleepTimerWallDeadlineMs > 0L
 

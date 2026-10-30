@@ -50,6 +50,20 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
+        <!-- 桌面小部件：Exported 是 AppWidgetProvider 的硬性要求（桌面要给到 receiver）；
+             更新推送走 App 内的 GlanceAppWidget.update，不依赖系统周期轮询。 -->
+        <receiver
+            android:name=".widget.PureToneWidgetReceiver"
+            android:exported="true"
+            android:label="@string/app_widget_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/puretone_widget_info" />
+        </receiver>
     </application>
 
 </manifest>

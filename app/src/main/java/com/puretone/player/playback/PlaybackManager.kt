@@ -2,6 +2,7 @@ package com.puretone.player.playback
 
 import android.app.PendingIntent
 import android.content.Context
+import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.SystemClock
@@ -15,13 +16,18 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
+import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.MoreExecutors
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.MusicRepository
 import com.puretone.player.data.settings.PureToneSettings
+import com.puretone.player.data.settings.SleepTimerMode
 import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.effect.AudioEffectController
 import com.puretone.player.MainActivity
+import com.puretone.player.widget.WidgetUpdater
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -69,7 +75,9 @@ data class PlaybackUiState(
     val repeatMode: RepeatMode = RepeatMode.ALL,
     val shuffle: Boolean = false,
     val speed: Float = 1.0f,
-    /** 睡眠定时剩余毫秒（0 = 未设置/已到期） */
+    /** 当前睡眠定时模式（OFF / MINUTES 倒计时 / END_OF_TRACK 播完本曲停止） */
+    val sleepTimerMode: SleepTimerMode = SleepTimerMode.OFF,
+    /** 睡眠定时剩余毫秒（0 = 未设置/已到期；END_OF_TRACK 模式下恒为 0，它没有时间上限） */
     val sleepRemainingMs: Long = 0L,
     val queue: List<QueueEntry> = emptyList(),
     val queueIndex: Int = -1,
@@ -103,7 +111,8 @@ class PlaybackManager @Inject constructor(
     private val musicRepository: MusicRepository,
     private val apeTranscoder: ApeTranscoder,
     private val audioEffectController: AudioEffectController,
-    private val settings: SettingsRepository
+    private val settings: SettingsRepository,
+    private val widgetUpdater: WidgetUpdater
 ) {
 
     private var player: ExoPlayer? = null
@@ -116,6 +125,8 @@ class PlaybackManager @Inject constructor(
 
     private var sleepTimerJob: Job? = null
     private var settingsJob: Job? = null
+    /** 后台启动兜底临时持有的 MediaController（见 [startServiceByBinding]） */
+    private var bootstrapController: MediaController? = null
     private var apeRetryIndex: Int = -1
 
     /** 播放会话保存的去抖任务（P3-20：连续暂停/播放时取消上一个，避免协程堆叠） */
@@ -151,6 +162,8 @@ class PlaybackManager @Inject constructor(
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _uiState.update { it.copy(isPlaying = isPlaying) }
+            // 桌面小部件同步（内部去抖，连续变化只推一次 IPC）
+            widgetUpdater.requestUpdate()
             // 注意：此处绝不可调用 ensureServiceStarted()——播放器由服务创建，
             // 能收到本回调即说明服务已在运行；且历史上的 startForegroundService
             // 调用正是「播放约 30s 后闪退」的直接触发点（见 ensureServiceStarted 注释）。
@@ -204,6 +217,16 @@ class PlaybackManager @Inject constructor(
             if (!gaplessEnabled && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
                 player?.pause()
             }
+            // 「播完本曲停止」到点：自然播完切下一首（AUTO）或单曲循环重头（REPEAT）。
+            // SEEK（用户手动上/下一首）与 PLAYLIST_CHANGED（换队列）不算「播完」——
+            // 用户主动操作说明还没打算睡。
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
+            ) {
+                finishEndOfTrackSleepTimer()
+            }
+            // 曲目变化（含清空队列导致切到空）→ 同步桌面小部件
+            widgetUpdater.requestUpdate()
         }
 
         override fun onPlayerError(error: PlaybackException) = handlePlayerError(error)
@@ -246,6 +269,16 @@ class PlaybackManager @Inject constructor(
         this.session = session
         player.addListener(playerListener)
         audioEffectController.attachToSession(player.audioSessionId)
+        // 由「后台 bind 兜底」临时持有的 controller：服务已起、命令已排入，稍后释放。
+        // 若此时服务里已有播放内容，服务自己会保持存活（MediaSessionService 语义）。
+        bootstrapController?.let { controller ->
+            bootstrapController = null
+            scope.launch {
+                delay(3_000L)
+                runCatching { controller.release() }
+                    .onFailure { Log.w(TAG, "release bootstrap controller failed", it) }
+            }
+        }
         // 订阅设置：倍速 / 睡眠定时 / 无缝播放 / 播放顺序 / 音效 实时生效
         settingsJob = scope.launch {
             settings.settings.collect { applySettings(it) }
@@ -331,37 +364,82 @@ class PlaybackManager @Inject constructor(
     }
 
     /**
-     * 睡眠定时：以「到期时刻」为准恢复/取消。
-     * 到期后由 job 暂停并把设置里的定时三字段（分钟数 + 两个到期时刻）全部清零——
-     * 否则进程重启后既会按完整时长重新倒计时（旧「定时复活」bug），设置页分段控件
-     * 也会残留上次档位而不回到「关」。另见 [SettingsRepository] 读取层的过期归一化。
+     * 睡眠定时：按模式分派。
+     *
+     * 三种模式（2026-10-30 细粒度定时）共用同一份持久化状态，由 [SettingsRepository.resolveSleepTimerMode]
+     * 统一判定，避免「UI 选的模式」与「播放器实际执行的模式」出现两套解释：
+     * - [SleepTimerMode.MINUTES]：按「到期时刻」恢复倒计时；已过期则收尾并清零；
+     * - [SleepTimerMode.END_OF_TRACK]：不排倒计时 job，结束时机由播放器回调决定（见 [finishEndOfTrackSleepTimer]）；
+     * - [SleepTimerMode.OFF]：取消 job 并清理残留。
+     *
+     * MINUTES 到期后要把定时四字段（模式 + 分钟数 + 两个到期时刻）全部清零——
+     * 否则进程重启后既会按完整时长重新倒计时（旧「定时复活」bug），设置页时段也
+     * 不会回到「关」。另见 [SettingsRepository] 读取层的过期归一化。
      */
     private fun applySleepTimer(s: PureToneSettings) {
-        val remaining = settings.sleepRemainingMs(s)
+        when (settings.resolveSleepTimerMode(s)) {
+            SleepTimerMode.MINUTES -> applyMinutesSleepTimer(s, settings.sleepRemainingMs(s))
+            SleepTimerMode.END_OF_TRACK -> applyEndOfTrackSleepTimer()
+            SleepTimerMode.OFF -> cancelSleepTimer(s)
+        }
+    }
+
+    /** 倒计时型定时：以「到期时刻」为准恢复/取消（进程重建后仍准确） */
+    private fun applyMinutesSleepTimer(s: PureToneSettings, remaining: Long) {
         if (remaining <= 0L) {
-            // 无定时，或已过期（例如到期瞬间进程被杀）→ 收尾并清零
-            sleepTimerJob?.cancel()
-            sleepTimerJob = null
-            // 到期后三字段一次性全清（分钟数 + 两个到期时刻）。
-            // 原实现只清到期时刻、保留分钟数「供 UI 显示上次选择」，导致定时结束后重启
-            // 设置页分段仍高亮上次档位——用户反馈要求定时结束后回到「关」。
-            // 读取层 settings 已对过期定时归一化（UI 立即正确）；此处为持久化兜底，
-            // 若仍收到带到期时刻的过期态则一并全清，用 setSleepTimerMinutes(0) 不残留分钟数。
+            // 到期时刻已过（例如到期瞬间进程被杀）→ 收尾并把残留写回全关
+            clearSleepTimerJob()
             if (settings.hasSleepTimer(s)) {
-                scope.launch { settings.setSleepTimerMinutes(0) }
+                scope.launch { settings.clearSleepTimer() }
             }
-            _uiState.update { it.copy(sleepRemainingMs = 0L) }
+            _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.OFF, sleepRemainingMs = 0L) }
             return
         }
-        sleepTimerJob?.cancel()
+        clearSleepTimerJob()
         sleepTimerJob = scope.launch {
             delay(remaining)
             pause()
             // 关键：触发后清零，防止重启后再次倒计时
-            scope.launch { settings.setSleepTimerMinutes(0) }
-            _uiState.update { it.copy(sleepRemainingMs = 0L) }
+            scope.launch { settings.clearSleepTimer() }
+            _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.OFF, sleepRemainingMs = 0L) }
         }
-        _uiState.update { it.copy(sleepRemainingMs = remaining) }
+        _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.MINUTES, sleepRemainingMs = remaining) }
+    }
+
+    /**
+     * 「播完本曲停止」：没有时间上限，只登记模式，真正的暂停时机由
+     * [finishEndOfTrackSleepTimer] 在自然切歌 / 末首播完时执行。
+     */
+    private fun applyEndOfTrackSleepTimer() {
+        clearSleepTimerJob()
+        _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.END_OF_TRACK, sleepRemainingMs = 0L) }
+    }
+
+    /** 关：取消倒计时并清理持久化残留 */
+    private fun cancelSleepTimer(s: PureToneSettings) {
+        clearSleepTimerJob()
+        if (settings.hasSleepTimer(s) || s.sleepTimerMinutes > 0) {
+            scope.launch { settings.clearSleepTimer() }
+        }
+        _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.OFF, sleepRemainingMs = 0L) }
+    }
+
+    private fun clearSleepTimerJob() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+    }
+
+    /**
+     * 「播完本曲停止」到点：暂停播放并把定时归零。
+     *
+     * 幂等：重复调用（自动切歌回调与 STATE_ENDED 回调可能同时到达）时，
+     * 第二次 [PlaybackUiState.sleepTimerMode] 已是 OFF，直接返回。
+     */
+    private fun finishEndOfTrackSleepTimer() {
+        if (_uiState.value.sleepTimerMode != SleepTimerMode.END_OF_TRACK) return
+        pause()
+        _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.OFF, sleepRemainingMs = 0L) }
+        scope.launch { settings.clearSleepTimer() }
     }
 
     // ---------- 队列命令 ----------
@@ -699,7 +777,14 @@ class PlaybackManager @Inject constructor(
      * 保证「UI 设的定时」与「播放器实际定时」同源，不会出现两套计时器。
      */
     fun setSleepTimer(minutes: Int) {
-        scope.launch { settings.setSleepTimerMinutes(minutes) }
+        scope.launch {
+            if (minutes > 0) settings.setSleepTimerMinutes(minutes) else settings.clearSleepTimer()
+        }
+    }
+
+    /** 「播完本曲停止」：当前这首自然播完就暂停（不限时长） */
+    fun setSleepTimerEndOfTrack() {
+        scope.launch { settings.setSleepTimerEndOfTrack() }
     }
 
     fun dismissError() = _uiState.update { it.copy(error = null) }
@@ -750,6 +835,17 @@ class PlaybackManager @Inject constructor(
             autoPlay = false
         )
         return true
+    }
+
+    /**
+     * 桌面小部件专用：队列为空时把上次会话恢复到暂停态。
+     *
+     * 返回 true 表示本次已执行恢复（调用方应跳过自己的切歌命令）——桌面上点「下一首」
+     * 时进程可能刚被回收、队列是空的，直接 next() 什么都不会发生。
+     */
+    suspend fun ensureQueueRestored(): Boolean {
+        if ((player?.mediaItemCount ?: 0) > 0) return false
+        return restoreLastSession()
     }
 
     private fun saveSessionDebounced() {
@@ -819,6 +915,8 @@ class PlaybackManager @Inject constructor(
         // 队列最后一首自然播完（无后继可自动切换）时无 AUTO/REPEAT 过渡，
         // 在此补记「完整播放完成」，避免末首歌漏计。
         _uiState.value.currentSongId?.let { id -> recordCompletionOnce(id) }
+        // 同理补触发「播完本曲停止」：末首播完不会再有移行回调。
+        finishEndOfTrackSleepTimer()
         saveSessionNow()
         if ((player?.mediaItemCount ?: 0) == 0) stopServiceIfIdle()
     }
@@ -849,7 +947,51 @@ class PlaybackManager @Inject constructor(
     private fun ensureServiceStarted() {
         runCatching {
             context.startService(Intent(context, PlaybackService::class.java))
-        }.onFailure { Log.w(TAG, "startService failed", it) }
+        }.onFailure { e ->
+            Log.w(TAG, "startService failed, fallback to session bind", e)
+            startServiceByBinding()
+        }
+    }
+
+    /**
+     * 后台启动兜底：通过 MediaSession 的绑定通道拉起服务。
+     *
+     * Android 8+ 禁止后台应用 [Context.startService]，而「桌面小部件点击」正是后台场景
+     * （App 在后台、进程可能连播放器都没创建）。[MediaController] 走的是 bindService，
+     * 不受该限制——MediaSessionService 被绑定后会自动创建并自行前台化。
+     * 拉起来的临时 controller 在 [bind] 之后延迟释放（服务此时若有播放内容会自己存活）。
+     */
+    private fun startServiceByBinding() {
+        runCatching {
+            val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
+            val future = MediaController.Builder(context, token).buildAsync()
+            future.addListener(
+                {
+                    runCatching { future.get() }
+                        .onSuccess { bootstrapController = it }
+                        .onFailure { Log.w(TAG, "bind MediaSessionService failed", it) }
+                },
+                MoreExecutors.directExecutor()
+            )
+        }.onFailure { Log.w(TAG, "build MediaController failed", it) }
+    }
+
+    /**
+     * 确保服务与播放器就绪（后台命令入口，如桌面小部件）。
+     *
+     * 调用方（[com.puretone.player.widget.PlayPauseAction] 等）在挂起上下文里等播放器注入后
+     * 再发命令，否则命令会落在 player == null 上被静默丢弃。
+     *
+     * @return 播放器是否已就绪；false 表示超时（服务被系统拒绝拉起等极端情况）
+     */
+    suspend fun ensureServiceReady(timeoutMs: Long = 3_000L): Boolean {
+        if (player != null) return true
+        ensureServiceStarted()
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (player == null && SystemClock.elapsedRealtime() < deadline) {
+            delay(50L)
+        }
+        return player != null
     }
 
     /** 空闲时停止服务；同样兜底，避免 stopService 抛异常导致崩溃 */

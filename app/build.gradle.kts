@@ -11,8 +11,8 @@ plugins {
  * 同时用于 versionName 与产物文件名（archivesName），避免二者漂移。
  * 发版时只改这里（版本号按语义化版本递增）。
  */
-val appVersionName = "1.5.0"
-val appVersionCode = 22
+val appVersionName = "1.6.0"
+val appVersionCode = 23
 
 /**
  * 产物文件名包含完整版本号。
@@ -173,6 +173,9 @@ dependencies {
 
     // 封面图加载
     implementation(libs.coil.compose)
+
+    // 桌面小部件（Glance：Compose 语法写 AppWidget）
+    implementation(libs.glance.appwidget)
 
     // 协程
     implementation(libs.kotlinx.coroutines.android)

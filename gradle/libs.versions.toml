@@ -12,6 +12,7 @@ splashscreen = "1.0.1"
 media3 = "1.4.1"
 room = "2.6.1"
 datastore = "1.1.1"
+glance = "1.1.0"
 coil = "2.7.0"
 coroutines = "1.9.0"
 hiltNavigationCompose = "1.2.0"
@@ -53,6 +54,8 @@ room-testing = { group = "androidx.room", name = "room-testing", version.ref = "
 
 datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+# 桌面小部件：Glance 用 Compose 语法写 AppWidget（内部仍生成 RemoteViews）
+glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 # ffmpeg-kit 的 Java 传递依赖（Maven Central 仍在）；注意包名 com.arthenica.smartexception（无点）
 smart-exception-java = { group = "com.arthenica", name = "smart-exception-java", version.ref = "smartException" }

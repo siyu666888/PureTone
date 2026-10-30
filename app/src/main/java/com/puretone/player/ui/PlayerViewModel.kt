@@ -171,6 +171,8 @@ class PlayerViewModel @Inject constructor(
     }
     fun setSpeed(speed: Float) = playback.setSpeed(speed)
     fun setSleepTimer(minutes: Int) = playback.setSleepTimer(minutes)
+    /** 「播完本曲停止」模式（播放页与设置页共用同一份持久化状态） */
+    fun setSleepTimerEndOfTrack() = playback.setSleepTimerEndOfTrack()
     fun dismissError() = playback.dismissError()
     fun playAtIndex(index: Int) = playback.playAtIndex(index)
     fun removeFromQueue(index: Int) = playback.removeFromQueue(index)

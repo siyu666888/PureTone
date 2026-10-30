@@ -1,0 +1,86 @@
+PureTone v1.6.0 交付说明（2026-10-30）
+========================================
+
+两个 P0 特性：① 桌面播放控制小部件（Glance）；② 睡眠定时细粒度。
+版本：v1.5.0 (versionCode 22) → v1.6.0 (versionCode 23)
+
+--------------------------------------------------
+一、桌面小部件（新增 app/src/main/java/com/puretone/player/widget/）
+--------------------------------------------------
+1. PureToneWidget（GlanceAppWidget）
+   - 内容：封面（96px 位图）+ 曲名/歌手 + 上一首 / 播放暂停 / 下一首；整块点击进入 App。
+   - 数据来源：进程内的 PlaybackManager.uiState 优先；进程被回收时回退 DataStore 的
+     上次播放会话（WidgetStateResolver.pickSongId，纯函数、有单测），桌面不显示空白。
+   - 配色：按 App 的主题设置解析（SYSTEM 跟随系统夜间模式 / LIGHT / DARK / BLACK 纯黑），
+     不用 GlanceTheme 跟系统走——避免「App 全黑、桌面一块白板」。
+   - 图标：vector 在自家进程画成 bitmap 并按当前配色着色后再交给 RemoteViews，
+     规避部分 launcher 对矢量图兼容不佳导致按钮空白的问题。
+
+2. 更新策略：不轮询
+   - appwidget-provider 的 updatePeriodMillis=0；App 在播放状态变化（isPlaying/曲目切换/
+     清空队列）时经 WidgetUpdater 主动推送，300ms 去抖后一次性跨进程刷新——
+     一次切歌会连发多个状态变化，按事件放大 IPC 是没必要的。
+
+3. 一键添加到桌面（设置页「桌面」分组）
+   - 调 AppWidgetManager.requestPinAppWidget：系统小组件列表路径太深，部分第三方桌面
+     压根不列出新装 App。不支持 pin 的环境入口自动置灰（不点了没反应）。
+
+4. 后台点击修复（本轮实际踩到的坑）
+   - 现象：从桌面点击按钮时 App 在后台，PlaybackManager.ensureServiceStarted() 走
+     startService，被 Android 8+ 后台启动限制拒绝
+     （logcat: BackgroundServiceStartNotAllowedException），命令被静默丢弃。
+   - 修复：startService 失败时改走 MediaController 绑定通道（bindService 不受该限制）
+     拉起 MediaSessionService；并新增 ensureServiceReady() 让命令在挂起上下文里等播放器
+     注入后再下发（新增 PlaybackManager 公开 API，供小部件 ActionCallback 使用）。
+
+--------------------------------------------------
+二、睡眠定时细粒度（app/.../data/settings + playback + ui/screens）
+--------------------------------------------------
+1. 新增 SleepTimerMode 枚举：OFF / MINUTES / END_OF_TRACK，DataStore 以 name 字符串存储，
+   未知值回退 OFF（不让脏数据把 App 卡在无法理解的定时模式里）。
+2. 三种模式：
+   - 关：模式 + 分钟数 + 两个到期时刻四字段全清；
+   - 播完本曲停止：不限时长，当前这首自然播完（自动切歌 / 单曲循环重头 / 末首播完）即暂停；
+   - 分钟：5/10/15/20/30/45/60/90 常用档位 + 自定义 1~600 分钟。
+3. 读取层统一归一化（SettingsRepository.settings）：
+   - 旧数据迁移：没有 mode 键的老数据按「分钟数 > 0 且存在到期时刻」补出 MINUTES；
+   - 过期归零：倒计时到期（含到期瞬间被杀的残留）连同模式一起回到「关」；
+   - 半截数据（只有分钟数、没有到期时刻）视为关。
+   三处口径集中在一处，UI 与播放层拿到的永远一致。
+4. 播放层：applySleepTimer 按模式分派；END_OF_TRACK 由播放器回调触发
+   （onMediaItemTransition 的 AUTO/REPEAT + STATE_ENDED），并做幂等保护
+   （两条回调可能同时到达，第二次已是 OFF 直接返回）。
+
+--------------------------------------------------
+三、验证
+--------------------------------------------------
+1. 单元测试：141 passed / 0 failed（此前 123）
+   - SettingsRepositorySleepTimerModeTest（9 例）：模式存取、跨读取保留、自定义分钟钳制
+     （1~600）、旧数据迁移、脏模式串回退、半截数据、过期归零、取消、纯函数口径。
+   - WidgetStateTest（9 例）：曲目选择优先级与越界兜底、配色与主题设置的对应关系、
+     占位文案非空。
+2. 构建：assembleDebug / assembleRelease（R8）均通过；
+   apksigner verify 通过（v2）；产物内含 assets/dexopt/baseline.prof。
+3. 真机（模拟器 Pixel API34）端到端：
+   - 系统小组件列表正确列出 PureTone，尺寸解析为 4 × 2，描述文案为本项目的
+     app_widget_description ✓
+   - 渲染管线成功：AppWidgetServiceImpl 绑定 widget（Bound widget 4 →
+     PureToneWidgetReceiver），Glance SessionWorker 返回 SUCCESS，日志无异常 ✓
+   - RemoteViews 结构：封面 ImageView + 标题 TextView「夏日午后」+ 歌手 TextView「苏晴」
+     + 三个按钮 ImageView（上一首 / 播放 / 下一首）✓
+   - 设置页定时区渲染为「关 / 播完本曲 / 自定义」+ 5m~90m 档位胶囊 ✓
+   - 设置页「桌面 → 添加到桌面」触发系统 pin 确认框，确认后小部件落在桌面 ✓
+4. 未完成的验证（如实记录）
+   - 小部件按钮的点击控制未能在模拟器上端到端跑通：本机 16GB 内存在模拟器运行 +
+     adb 注入期间频繁掉线（adb shell tap 期间 device offline），无法可靠注入点击。
+     已确认的是「点击链路的代码缺陷（后台 startService 被拒）」并完成修复；
+     点击生效这一环建议在真机上确认一次。
+
+--------------------------------------------------
+四、其它
+--------------------------------------------------
+- 依赖：新增 androidx.glance:glance-appwidget:1.1.0（仅此一个，未引入 glance-material3）。
+- R8：保留 ActionCallback 子类与 widget 包（Glance 用反射实例化，release 下删了会
+  「点了没反应且无日志」）。
+- Baseline Profile：按脚本从 dex 导出真实类名重生成，应用类 197 条 / 框架类 112 条。
+- README：功能特性、扩展点表、版本历史同步更新。

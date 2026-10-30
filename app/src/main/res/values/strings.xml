@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">PureTone</string>
+    <string name="app_widget_description">桌面播放控制：显示当前歌曲，可直接播放 / 暂停 / 切歌</string>
 </resources>

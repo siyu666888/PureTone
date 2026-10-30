@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.playback.ApeTranscoder
+import com.puretone.player.widget.WidgetPinner
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -19,7 +20,8 @@ import javax.inject.Inject
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val settings: SettingsRepository,
-    private val apeTranscoder: ApeTranscoder
+    private val apeTranscoder: ApeTranscoder,
+    private val widgetPinner: WidgetPinner
 ) : ViewModel() {
 
     val state: StateFlow<PureToneSettings> = settings.settings
@@ -31,8 +33,22 @@ class SettingsViewModel @Inject constructor(
     fun setGapless(enabled: Boolean) = viewModelScope.launch { settings.setGapless(enabled) }
     fun setPlaybackSpeed(speed: Float) = viewModelScope.launch { settings.setPlaybackSpeed(speed) }
     fun setResumeOnStart(enabled: Boolean) = viewModelScope.launch { settings.setResumeOnStart(enabled) }
-    fun setSleepTimerMinutes(minutes: Int) = viewModelScope.launch { settings.setSleepTimerMinutes(minutes) }
+    /** 睡眠定时：minutes > 0 设倒计时，0 关闭（清除模式与到期时刻） */
+    fun setSleepTimer(minutes: Int) = viewModelScope.launch {
+        if (minutes > 0) settings.setSleepTimerMinutes(minutes) else settings.clearSleepTimer()
+    }
+
+    /** 睡眠定时：当前这首播完就停（不限时长） */
+    fun setSleepTimerEndOfTrack() = viewModelScope.launch { settings.setSleepTimerEndOfTrack() }
     fun setEqEnabled(enabled: Boolean) = viewModelScope.launch { settings.setEqEnabled(enabled) }
+
+    // ---------- 桌面小部件 ----------
+
+    /** 桌面是否支持「固定到桌面」（不支持时设置页该入口置灰） */
+    fun canPinWidget(): Boolean = widgetPinner.isSupported()
+
+    /** 请求把播放控制小部件固定到桌面；返回 false = 当前环境不支持 */
+    fun pinWidget(): Boolean = widgetPinner.requestPin()
 
     // ---------- APE 转码缓存（P0-5：缓存按字节上限 + 设置页可查可清） ----------
 
