@@ -16,15 +16,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,10 +39,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import android.os.SystemClock
 import com.puretone.player.data.settings.PureToneSettings
-import com.puretone.player.data.settings.SleepTimerMode
 import com.puretone.player.ui.Routes
 import com.puretone.player.ui.SettingsViewModel
-import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 /**
@@ -100,14 +95,42 @@ fun SettingsScreen(
                 selectedIndex = speedOptions.indexOf(s.playbackSpeed),
                 onSelect = { vm.setPlaybackSpeed(speedOptions[it]) }
             )
-            SleepTimerSection(
-                // 读取层已完成「旧数据迁移 + 过期归一化」，这里拿到的模式即真实模式
-                mode = s.sleepTimerMode,
-                minutes = s.sleepTimerMinutes,
-                deadlineMs = s.sleepTimerDeadlineMs,
-                onPickMinutes = vm::setSleepTimer,
-                onEndOfTrack = vm::setSleepTimerEndOfTrack
+            // 睡眠定时：单行分段控件（关 / 15m / 30m / 45m / 60m），切换与显示方式同主题分段
+            val sleepOptions = listOf(0, 15, 30, 45, 60)
+            SettingsSegmentRow(
+                label = "定时",
+                options = sleepOptions.map { if (it == 0) "关" else "${it}m" },
+                selectedIndex = sleepOptions.indexOf(s.sleepTimerMinutes),
+                onSelect = { vm.setSleepTimer(sleepOptions[it]) }
             )
+            // 定时进行中时显示真实剩余时间（按「到期时刻」倒推，每秒刷新），并提供「取消定时」。
+            // 到期后 deadline 清零，本行自动消失。
+            if (s.sleepTimerDeadlineMs > 0L) {
+                var remainingMs by remember(s.sleepTimerDeadlineMs) {
+                    mutableStateOf(
+                        (s.sleepTimerDeadlineMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+                    )
+                }
+                LaunchedEffect(s.sleepTimerDeadlineMs) {
+                    while (remainingMs > 0L) {
+                        delay(1_000)
+                        remainingMs =
+                            (s.sleepTimerDeadlineMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "睡眠定时剩余 ${formatRemaining(remainingMs)}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { vm.setSleepTimer(0) }) { Text("取消定时") }
+                }
+            }
         }
 
         // 桌面小部件：系统入口（长按桌面 → 小组件 → 翻列表找 App）路径很深，
@@ -188,156 +211,6 @@ fun SettingsScreen(
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth()
         )
-    }
-}
-
-/**
- * 睡眠定时区（细粒度定时，滑块形式）。
- *
- * 用一条水平滑块表达「分钟倒计时」：
- * - 最左端 = 0，标签「关闭」（初始默认即停在最左）；
- * - 滑块按 15 分钟一档吸附，在 15/30/45/60/75/90 处显示刻度与数字标签（当前档高亮）；
- * - 拖动时滑块正上方实时气泡显示所选分钟数（或「关闭」）。
- *
- * 与「播完本曲」互斥：后者是另一种停止语义（当前曲播完即停，不限时长），
- * 用同一行右侧的小胶囊切换；二者写同一份持久化状态（见 [SettingsRepository]）。
- * 活动状态行按模式分化：倒计时型走真实剩余时间，播完本曲只提示行为。
- */
-@Composable
-private fun SleepTimerSection(
-    mode: SleepTimerMode,
-    minutes: Int,
-    deadlineMs: Long,
-    onPickMinutes: (Int) -> Unit,
-    onEndOfTrack: () -> Unit
-) {
-    val sliderMax = 90f
-    val step = 15f
-    val stops = remember { (0..90 step 15).toList() } // [0, 15, 30, 45, 60, 75, 90]
-    // 当前滑块位置：分钟模式取吸附后的档位，其它模式停在 0（关闭）
-    val committed = if (mode == SleepTimerMode.MINUTES) {
-        ((minutes / step).roundToInt() * step).coerceIn(0f, sliderMax)
-    } else 0f
-    // 拖动中临时值；非拖动时回退到已提交值
-    var draggingValue by remember { mutableStateOf<Float?>(null) }
-    val display = (draggingValue ?: committed).coerceIn(0f, sliderMax)
-
-    // 标题行：标签 + 「播完本曲」胶囊（另一种停止语义）
-    Row(
-        modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Text("定时", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-        SleepChip("播完本曲", mode == SleepTimerMode.END_OF_TRACK, onEndOfTrack)
-    }
-
-    // 实时数值气泡（滑块正上方，居中）：关闭 / N 分钟
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
-        horizontalArrangement = Arrangement.Center
-    ) {
-        Surface(
-            tonalElevation = 2.dp,
-            color = if (display <= 0f) MaterialTheme.colorScheme.surfaceVariant
-                    else MaterialTheme.colorScheme.primaryContainer,
-            shape = MaterialTheme.shapes.small
-        ) {
-            Text(
-                if (display <= 0f) "关闭" else "${display.toInt()} 分钟",
-                style = MaterialTheme.typography.labelLarge,
-                color = if (display <= 0f) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-        }
-    }
-
-    // 滑块：15 分钟一档吸附，刻度标记由 Material3 在 15/30/45/60/75/90 处绘制
-    Slider(
-        value = display,
-        onValueChange = { draggingValue = it },
-        onValueChangeFinished = {
-            val v = draggingValue ?: committed
-            draggingValue = null
-            onPickMinutes(if (v <= 0f) 0 else v.roundToInt())
-        },
-        valueRange = 0f..sliderMax,
-        steps = 5,
-        modifier = Modifier.fillMaxWidth()
-    )
-
-    // 刻度数字标签：关闭 / 15 / 30 / 45 / 60 / 75 / 90（当前档高亮）
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        stops.forEach { m ->
-            val selected = if (m == 0) display <= 0f else display.toInt() == m
-            Text(
-                if (m == 0) "关闭" else "$m",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (selected) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-
-    when (mode) {
-        SleepTimerMode.OFF -> Unit
-        SleepTimerMode.END_OF_TRACK -> SleepStatusRow(
-            text = "本曲播完后停止播放",
-            onCancel = { onPickMinutes(0) }
-        )
-        SleepTimerMode.MINUTES -> SleepCountdownRow(
-            deadlineMs = deadlineMs,
-            onCancel = { onPickMinutes(0) }
-        )
-    }
-}
-
-/** 定时胶囊：选中态 primary/onPrimary，与分段控件视觉一致 */
-@Composable
-private fun SleepChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1) }
-    )
-}
-
-/** 倒计时型定时：按「到期时刻」倒推剩余时间并每秒刷新；到期后 deadline 归零，本行自动消失 */
-@Composable
-private fun SleepCountdownRow(deadlineMs: Long, onCancel: () -> Unit) {
-    if (deadlineMs <= 0L) return
-    var remainingMs by remember(deadlineMs) {
-        mutableStateOf((deadlineMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L))
-    }
-    LaunchedEffect(deadlineMs) {
-        while (remainingMs > 0L) {
-            delay(1_000)
-            remainingMs = (deadlineMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
-        }
-    }
-    SleepStatusRow(text = "睡眠定时剩余 ${formatRemaining(remainingMs)}", onCancel = onCancel)
-}
-
-/** 定时状态行（提示文案 + 取消入口），行高与其它子项一致 */
-@Composable
-private fun SleepStatusRow(text: String, onCancel: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.weight(1f)
-        )
-        TextButton(onClick = onCancel) { Text("取消定时") }
     }
 }
 
