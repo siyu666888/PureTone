@@ -6,8 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,17 +15,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,7 +35,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -49,6 +45,7 @@ import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.data.settings.SleepTimerMode
 import com.puretone.player.ui.Routes
 import com.puretone.player.ui.SettingsViewModel
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 /**
@@ -195,17 +192,17 @@ fun SettingsScreen(
 }
 
 /**
- * 睡眠定时区（细粒度定时）。
+ * 睡眠定时区（细粒度定时，滑块形式）。
  *
- * 三种模式互斥地写在同一份持久化状态里（见 [SettingsRepository]）：
- * - 关：全字段归零；
- * - 播完本曲：当前这首自然播完就暂停，不限时长（夜间听单张专辑最常用）；
- * - 分钟：预设档位大 chip 一目了然，另有「自定义」支持 1~600 分钟。
+ * 用一条水平滑块表达「分钟倒计时」：
+ * - 最左端 = 0，标签「关闭」（初始默认即停在最左）；
+ * - 滑块按 15 分钟一档吸附，在 15/30/45/60/75/90 处显示刻度与数字标签（当前档高亮）；
+ * - 拖动时滑块正上方实时气泡显示所选分钟数（或「关闭」）。
  *
- * 状态显示行按模式分化：倒计时型走真实剩余时间（按到期时刻倒推），
- * 播完本曲没有剩余时间概念，只提示本届..行为与取消入口。
+ * 与「播完本曲」互斥：后者是另一种停止语义（当前曲播完即停，不限时长），
+ * 用同一行右侧的小胶囊切换；二者写同一份持久化状态（见 [SettingsRepository]）。
+ * 活动状态行按模式分化：倒计时型走真实剩余时间，播完本曲只提示行为。
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SleepTimerSection(
     mode: SleepTimerMode,
@@ -214,31 +211,77 @@ private fun SleepTimerSection(
     onPickMinutes: (Int) -> Unit,
     onEndOfTrack: () -> Unit
 ) {
-    val presets = remember { listOf(5, 10, 15, 20, 30, 45, 60, 90) }
-    var showCustomDialog by remember { mutableStateOf(false) }
+    val sliderMax = 90f
+    val step = 15f
+    val stops = remember { (0..90 step 15).toList() } // [0, 15, 30, 45, 60, 75, 90]
+    // 当前滑块位置：分钟模式取吸附后的档位，其它模式停在 0（关闭）
+    val committed = if (mode == SleepTimerMode.MINUTES) {
+        ((minutes / step).roundToInt() * step).coerceIn(0f, sliderMax)
+    } else 0f
+    // 拖动中临时值；非拖动时回退到已提交值
+    var draggingValue by remember { mutableStateOf<Float?>(null) }
+    val display = (draggingValue ?: committed).coerceIn(0f, sliderMax)
 
+    // 标题行：标签 + 「播完本曲」胶囊（另一种停止语义）
     Row(
         modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text("定时", style = MaterialTheme.typography.bodyLarge)
-        SleepChip("关", mode == SleepTimerMode.OFF) { onPickMinutes(0) }
+        Text("定时", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
         SleepChip("播完本曲", mode == SleepTimerMode.END_OF_TRACK, onEndOfTrack)
-        SleepChip(
-            "自定义",
-            mode == SleepTimerMode.MINUTES && minutes !in presets
-        ) { showCustomDialog = true }
     }
-    FlowRow(
+
+    // 实时数值气泡（滑块正上方，居中）：关闭 / N 分钟
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Surface(
+            tonalElevation = 2.dp,
+            color = if (display <= 0f) MaterialTheme.colorScheme.surfaceVariant
+                    else MaterialTheme.colorScheme.primaryContainer,
+            shape = MaterialTheme.shapes.small
+        ) {
+            Text(
+                if (display <= 0f) "关闭" else "${display.toInt()} 分钟",
+                style = MaterialTheme.typography.labelLarge,
+                color = if (display <= 0f) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            )
+        }
+    }
+
+    // 滑块：15 分钟一档吸附，刻度标记由 Material3 在 15/30/45/60/75/90 处绘制
+    Slider(
+        value = display,
+        onValueChange = { draggingValue = it },
+        onValueChangeFinished = {
+            val v = draggingValue ?: committed
+            draggingValue = null
+            onPickMinutes(if (v <= 0f) 0 else v.roundToInt())
+        },
+        valueRange = 0f..sliderMax,
+        steps = 5,
+        modifier = Modifier.fillMaxWidth()
+    )
+
+    // 刻度数字标签：关闭 / 15 / 30 / 45 / 60 / 75 / 90（当前档高亮）
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        presets.forEach { m ->
-            SleepChip("${m}m", mode == SleepTimerMode.MINUTES && minutes == m) { onPickMinutes(m) }
+        stops.forEach { m ->
+            val selected = if (m == 0) display <= 0f else display.toInt() == m
+            Text(
+                if (m == 0) "关闭" else "$m",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 
@@ -251,17 +294,6 @@ private fun SleepTimerSection(
         SleepTimerMode.MINUTES -> SleepCountdownRow(
             deadlineMs = deadlineMs,
             onCancel = { onPickMinutes(0) }
-        )
-    }
-
-    if (showCustomDialog) {
-        CustomMinutesDialog(
-            initialMinutes = minutes.takeIf { it > 0 },
-            onDismiss = { showCustomDialog = false },
-            onConfirm = { value ->
-                showCustomDialog = false
-                if (value > 0) onPickMinutes(value)
-            }
         )
     }
 }
@@ -307,43 +339,6 @@ private fun SleepStatusRow(text: String, onCancel: () -> Unit) {
         )
         TextButton(onClick = onCancel) { Text("取消定时") }
     }
-}
-
-/** 自定义分钟数输入：限定 1 ~ [PureToneSettings.SLEEP_MAX_MINUTES] 分钟，非法值不落库 */
-@Composable
-private fun CustomMinutesDialog(
-    initialMinutes: Int?,
-    onDismiss: () -> Unit,
-    onConfirm: (Int) -> Unit
-) {
-    var text by remember { mutableStateOf(initialMinutes?.toString().orEmpty()) }
-    val parsed = text.trim().toIntOrNull()
-    val valid = parsed != null && parsed in PureToneSettings.SLEEP_MIN_MINUTES..PureToneSettings.SLEEP_MAX_MINUTES
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("自定义定时") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    "范围 ${PureToneSettings.SLEEP_MIN_MINUTES} ~ ${PureToneSettings.SLEEP_MAX_MINUTES} 分钟",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { if (it.all(Char::isDigit) && it.length <= 3) text = it },
-                    singleLine = true,
-                    suffix = { Text("分钟") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = text.isNotBlank() && !valid
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(enabled = valid, onClick = { parsed?.let(onConfirm) }) { Text("确定") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
 }
 
 /**
