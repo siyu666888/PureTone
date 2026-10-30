@@ -41,7 +41,8 @@ val keystoreProps: Map<String, String> = rootProject.file("local.properties").le
 
 android {
     namespace = "com.puretone.player"
-    compileSdk = 34
+    compileSdk = 35
+    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "com.puretone.player"

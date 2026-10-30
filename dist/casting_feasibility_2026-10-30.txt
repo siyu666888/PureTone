@@ -1,0 +1,105 @@
+# PureTone 投屏功能可行性评估（2026-10-30）
+
+> 结论速览：先分清"投屏"指什么。屏幕镜像零成本；媒体投射里，**DLNA/UPnP（UPnPCast）最贴合 PureTone 的国内 + 无损受众**，Google Cast/Chromecast 集成最干净但国内小众；两者共同的最大技术障碍是 **APE 文件必须手机端转码后流式投送**，且投射时 ReplayGain / 双实例 Crossfade / 均衡器全部失效（由远端设备解码）。
+
+---
+
+## 0. 先澄清："投屏"有三种完全不同的含义
+
+| 含义 | 典型场景 | App 需要做的 | 可行性 |
+|---|---|---|---|
+| **A. 屏幕镜像**（Miracast / 系统"无线投屏"） | 把手机整屏+声音投到电视 | **什么都不用做**，纯系统能力 | ✅ 零成本，已"免费可用" |
+| **B. 媒体投射·Google Cast**（Chromecast / Android TV / 智能音箱） | 把当前曲目推到 Chromecast 设备独立播放 | 接入 Media3 `media3-cast` 的 `CastPlayer`，但本地文件必须手机起 HTTP 服务 | ⚠️ 可行，本地文件+APE 转码是难点；国内设备少 |
+| **C. 媒体投射·DLNA/UPnP**（电视/路由器/Hi-Fi 网络播放器） | 把曲目推到局域网 DLNA 渲染器 | 接入 UPnPCast 库（发现+控制+本地文件服务），写 Player 适配层 | ✅ 最贴合国内+无损受众；工作量中高 |
+
+> 对音乐播放器而言，A（屏幕镜像）投的是"界面+系统混音"，音乐场景价值低；**真正有用的是 B/C 的"媒体投射"**——把解码/播放交给电视或音箱，手机只做控制器。下面重点评估 B 和 C。
+
+---
+
+## 1. 方案 B：Google Cast / Chromecast（Media3 cast 模块）
+
+### 技术现状（已查官方文档，2026-10）
+- `androidx.media3:media3-cast` 提供 `CastPlayer`，**它直接实现 Media3 的 `Player` 接口**。
+- 标准接法（官方示例）：
+  ```kotlin
+  val exoPlayer = ExoPlayer.Builder(ctx).build()
+  val castPlayer = CastPlayer.Builder(ctx).setLocalPlayer(exoPlayer).build()
+  mediaSession = MediaSession.Builder(ctx, castPlayer).build()  // 用 castPlayer 当 session 的 player
+  ```
+- 1.9.0 起 `CastPlayer` 重写了**输出切换器（Output Switcher）**：本地/远端在媒体通知、锁屏通知里一键互切，框架自动处理状态转移。这点和 PureTone 现有的 `MediaSession` + 通知架构天然契合。
+- 当前 Media3 最新稳定版 **1.11.1**；PureTone 现用 **1.4.1**。1.4.1 已有 cast 模块但无"自动输出切换"红利，要享受完整能力需**升 Media3 大版本**（1.4→1.11 有 API 变动风险，需单独评估）。
+
+### PureTone 接入难度
+- **代码层很干净**：`CastPlayer` 是 `Player`，可无缝替换当前 `MediaSession` 绑定的 player。但 PureTone 现在是**双 ExoPlayer（主+备援做 Crossfade）**，`CastPlayer.setLocalPlayer(exoPlayer)` 只接一个本地 player——Crossfade 的"双实例真重叠"在投射态下**无法工作**（远端只有一个解码器），需检测"正在投射"时禁用 Crossfade。
+- **本地文件是硬伤（关键）**：Chromecast **无法直接读手机存储**。官方与社区一致结论——必须**在手机内起一个微型 HTTP 服务器**（如 NanoHTTPD），把文件以 `http://手机局域网IP:端口/xxx` 暴露给投射设备拉流。
+  - 普通 MP3/FLAC：NanoHTTPD 直接吐文件字节即可（带 Range 支持做 seek）。
+  - **APE（PureTone 核心特性，靠 ffmpeg 转码）**：Chromecast 接收端**不解码 APE**。必须手机端**实时转码成 MP3/AAC/FLAC 并流式吐出**（ffmpeg stdout 直接喂 HTTP 响应体，或先转临时文件）。这是本方案最大工程量。
+- **功能失效清单（投射态）**：ReplayGain（本地 PCM 增益）、双实例 Crossfade、均衡器/重低音/环绕（AudioEffect 作用于本地 AudioTrack）——全部由远端解码，**一律失效**。UI 需明确提示"投射中：响度归一/交叉淡化/音效已关闭"。
+
+### 结论
+集成路径最标准、和 MediaSession 最搭；但本地文件服务 + APE 实时转码是实打实的工作量，且 **Chromecast 在国内普及率低、对无损音乐玩家价值有限**。
+
+---
+
+## 2. 方案 C：DLNA / UPnP（UPnPCast 库）——推荐主路线
+
+### 为什么这条更适合 PureTone
+- **国内设备覆盖极广**：小米/三星/LG/索尼电视、各品牌路由器"媒体共享"、Hi-Fi 网络播放器（如解码器带网播）都是 DLNA 渲染器。对"本地无损音乐播放器"的受众，这比 Chromecast 实用得多。
+- **Cling 已停更**，但出现了现代替代 **UPnPCast**（作者 yinnho，2026 仍在维护，v1.3.0）：
+  - coroutine-first Kotlin API，无 OkHttp/Gson/Jetty 重依赖；
+  - **内置 HTTP 文件服务**（Range/seek + 按扩展名 MIME），`castLocalFile(filePath, device, ...)` 一行投本地文件；
+  - 已测小米/三星/LG/索尼电视；
+  - 发布在 Maven Central：`com.yinnho.upnpcast:upnpcast:1.3.0`（也支持 JitPack）；
+  - 要求 **Android 7.0+ (API 24)**，PureTone minSdk 26 ✅ 兼容。
+  - 局限：它是**高层 DLNA 外观（DLNACast），不是 `Player` 实现**，也没有 ContentDirectory 控制点——只解决"把媒体投到渲染器"。
+
+### 接入难点
+- **不是 Player 接口**：UPnPCast 有自己的 `DLNACast` 控制 API（play/pause/seek/setVolume/getState），**无法直接塞进现有的 `PlaybackManager`（它围绕 Media3 `Player` 建模）**。需要写一层**适配/并行控制**：
+  - 选项 1：把 DLNA 也包成一个"伪 Player"（实现 Media3 `Player` 接口，内部转发到 `DLNACast`），这样 `MediaSession`/`PlaybackManager` 复用现有 UI 与控制流——工作量较大但最优雅；
+  - 选项 2：在 `PlaybackManager` 里加一条"投射态"分支，UI 切到独立投射控制器——改动集中但代码分叉。
+- **APE 同样要转码**：UPnPCast 的内置服务器只负责"把文件字节按 HTTP 吐出"，**不转码**。APE 仍需 PureTone 在手机端转成渲染器支持的格式（MP3/AAC/FLAC/WAV）后，用自定义 URL（自建服务器或转临时文件）投送。好消息：对 **FLAC/WAV/MP3 这些渲染器普遍支持的格式，UPnPCast 开箱即用**，只有 APE 需要额外转码管线。
+- **进度/状态**：`getProgress()` 有插值缓存、`getPlaybackState()` 实时查询，映射回 MediaSession 的 position/duration 即可，但精度不如本地 ExoPlayer。
+
+### 结论
+**最贴合 PureTone 定位**（国内 + 无损 + 局域网），库成熟且轻量；主要成本是写一个"DLNA 伪 Player"适配层 + APE 转码投送管线。
+
+---
+
+## 3. 方案 A：屏幕镜像（Miracast / 系统无线投屏）——零成本
+Android 系统"无线显示"会镜像整屏并带走音频，App 完全不用写代码。音乐场景下价值有限（投的是界面，不是把播放卸载到音箱），但如果你指的是这个，那就是"已免费可用"，无需开发。
+
+---
+
+## 4. PureTone 专属障碍清单（B/C 共有）
+
+1. **APE 实时转码投送（头号难点）**：投射设备/渲染器几乎都不解 APE。需手机端 ffmpeg 转码并以 HTTP 流式输出（复用现有 ffmpeg-kit 能力，但要把 stdout 接到 HTTP 响应，而非写文件）。MP3/FLAC/WAV 不受影响。
+2. **本地音频管线全部失效**：ReplayGain、双实例 Crossfade、均衡器/重低音/环绕都依赖本地解码，投射时一律无效。须在 UI 明确告知，并在"正在投射"时关闭 Crossfade、跳过 RG/EQ 注入。
+3. **MediaSession 接线差异**：CastPlayer 是标准 `Player`，替换顺滑；DLNA 需自建"伪 Player"或并行控制分支。
+4. **Media3 版本**：若走 Chromecast 且要完整输出切换体验，需 1.4.1 → 1.11.1 大版本升级（单独评估风险）；走 DLNA 则不依赖 Media3 升级。
+5. **权限**：DLNA 需 `CHANGE_WIFI_MULTICAST_STATE` / `ACCESS_WIFI_STATE`（UPnPCast manifest 已声明，自动 merge）；本地 HTTP 服务需 `INTERNET`。
+6. **网络依赖**：投射是局域网行为，手机与设备须同 Wi-Fi；断网/切换网络需优雅降级回本地播放。
+
+---
+
+## 5. 工作量与风险评级
+
+| 方案 | 新增依赖 | 主要工作量 | 风险 | 国内适用性 |
+|---|---|---|---|---|
+| A 屏幕镜像 | 无 | 0 | 无 | 中（系统功能） |
+| B Chromecast | media3-cast + 本地 HTTP 服务 | 中（本地服务 + APE 转码） | 中（Media3 升级 + 转码） | 低 |
+| C DLNA（UPnPCast） | upnpcast:1.3.0 + 适配层 | 中高（伪 Player 适配 + APE 转码） | 中 | **高** |
+
+---
+
+## 6. 建议路线
+1. **若"投屏"= 屏幕镜像**：无需开发，告知用户用系统无线投屏即可。
+2. **若要做媒体投射（推荐）**：以 **C（DLNA/UPnP，UPnPCast）为主路线**，覆盖国内电视/音箱/Hi-Fi；B（Chromecast）作为可选的增量补充（集成更干净但国内价值低）。
+3. **统一前置工作**：先把"投射态"抽象出来——`PlaybackManager` 增加 `casting: Boolean` 与 `castPlayer/route` 概念，投射时禁用 Crossfade、跳过 RG/EQ、UI 标注。这是无论选 B 还是 C 都避不开的重构。
+4. **APE 转码投送**单独立项：先做"MP3/FLAC/WAV 直接投"（快速见效），APE 走 ffmpeg 实时转码流式输出（第二阶段）。
+
+---
+
+## 7. 待你确认（下一步）
+- 你想要的"投屏"是哪一种：A 屏幕镜像 / B Chromecast / C DLNA / 还是 B+C 都要？
+- 是否接受先把"投射态抽象 + MP3/FLAC/WAV 直投"作为第一里程碑，APE 转码投送放第二阶段？
+- 是否愿意为 Chromecast 路线升级 Media3 到 1.11.x（需评估 1.4→1.11 的 API 变动）？

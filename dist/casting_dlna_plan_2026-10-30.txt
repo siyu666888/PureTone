@@ -1,0 +1,217 @@
+# PureTone DLNA 投屏（媒体投射）落地方案（2026-10-30）
+
+> 基于《投屏可行性评估》：选定 **C 路线 DLNA/UPnP**，用 UPnPCast 库。本文给出可执行的架构与分阶段计划。
+> 目标：把当前曲目（及队列）投到局域网 DLNA 渲染器（电视/路由器媒体共享/Hi-Fi 网播），手机作为控制器，复用现有 MediaSession 通知/锁屏。
+
+---
+
+## 0. 关键设计决策（先定调）
+
+1. **DLNA 必须包装成 Media3 `Player`**，否则 `MediaSession` 失去有效 player、通知/锁屏控制会崩。
+   - 推荐用 `androidx.media3.common.SimpleBasePlayer`（Media3 ≥ 1.5.0 提供，CastPlayer 自身也继承它）——只需重写 `getState()` 翻译 DLNA 状态、状态变化时调 `invalidateState()`，远比手写整套 `Player` 接口省事。
+   - **前置条件（已落地 ✅）**：PureTone 现用 Media3 **1.4.1**，无 `SimpleBasePlayer` → 已升到 **1.6.0**。用户最初接受 1.11.x，但 **1.11.1 强制依赖 compileSdk 36**，连带 AGP 8.5→8.10、Gradle 8.7→8.11.1、装 Android 16 SDK 全套工具链大改；故改用 **1.6.0**（compileSdk 35 + AGP 8.6，Gradle 8.7 已满足，装 android-35 platform 即可），同样拿到 `SimpleBasePlayer`，波动最小。详见记忆日志 2026-10-30。
+   - 若未来要追 1.11.x/更新版：必须接受 compileSdk 36 + AGP 8.10+ + Gradle 8.11.1+ 的全套工具链升级（装 Android 16 SDK platform + build-tools 35.0.0）。
+2. **投射态抽象**：`PlaybackManager` 增加 `casting: Boolean` 与 `activePlayer` 路由；投射时禁用 Crossfade、跳过 RG/EQ 注入、UI 标注"投射中不可用"。
+3. **APE 转码分两阶段**：MP3/FLAC/WAV 直投（M1 即可）；APE 用手机 ffmpeg 实时转码流式投送（M2）。
+
+---
+
+## 1. 依赖与权限
+
+### 依赖（app/build.gradle.kts）
+```kotlin
+// Media3 升级到 1.11.x（原 1.4.1）
+val media3 = "1.11.1"
+implementation("androidx.media3:media3-exoplayer:$media3")
+implementation("androidx.media3:media3-session:$media3")
+implementation("androidx.media3:media3-common:$media3")   // SimpleBasePlayer 所在
+// DLNA
+implementation("com.yinnho.upnpcast:upnpcast:1.3.0")        // Maven Central
+```
+- UPnPCast 要求 API 24，PureTone minSdk 26 ✅。
+- 升 Media3 大版本（1.4→1.11）会触碰 ExoPlayer/会话 API，需全量回归（单测 + 构建 + CI）。
+
+### 权限 / Manifest
+- UPnPCast 已在自身 manifest 声明 `INTERNET` / `ACCESS_NETWORK_STATE` / `ACCESS_WIFI_STATE` / `CHANGE_WIFI_MULTICAST_STATE`，自动 merge。
+- 渲染器以 **http（明文）** 拉流 → 需在 `AndroidManifest` 允许明文流量：
+  - 方式 A：`<application android:usesCleartextTraffic="true">`（简单，但放开全局明文）。
+  - 方式 B：network security config 仅对局域网网段放行（更严谨）。推荐 B。
+- 确保 `ACCESS_WIFI_STATE` 在合并后存在（用于取手机局域网 IP，自建转码服务器时需要）。
+
+---
+
+## 2. 核心架构
+
+```
+                    ┌─────────────────────────────────────────┐
+                    │            PlaybackManager               │
+                    │  activePlayer: Player  ← 路由层          │
+                    │  casting: Boolean                        │
+                    │  - 本地: ExoPlayer(主) + ExoPlayer(备)   │
+                    │  - 投射: DlnaPlayer(SimpleBasePlayer)    │
+                    └───────────────┬───────────────┬────────┘
+                                    │               │
+                    ┌───────────────▼─────┐   ┌──────▼──────────────┐
+                    │   MediaSession      │   │   AudioEffectCtrl   │
+                    │ (绑 activePlayer)   │   │ (仅本地 ExoPlayer   │
+                    └─────────────────────┘   │  sessionId 生效)    │
+                                             └─────────────────────┘
+        DlnaPlayer(SimpleBasePlayer) ──委托──▶ DLNACast (UPnPCast)
+            getState() 翻译 ◀── 状态回调 ──────  SSDP 发现 / AVTransport /
+                                            RenderingControl / 本地文件HTTP服务
+```
+
+### 2.1 DlnaPlayer（SimpleBasePlayer 门面）
+```kotlin
+class DlnaPlayer(
+    context: Context,
+    private val dlna: DLNACast = DLNACast,
+) : SimpleBasePlayer(Handler(Looper.getMainLooper())) {
+
+    private val listeners = ...
+    private var currentMediaItem: MediaItem? = null
+
+    // DLNACast 状态变化 → 翻译为 SimpleBasePlayer.State 并 invalidateState()
+    fun onDlnaStateChanged() {
+        invalidateState()   // SimpleBasePlayer 会回调 getState()
+    }
+
+    override fun getState(): State {
+        val s = dlna.getState()
+        return State.Builder()
+            .setPlaybackState(when {
+                s.isPlaying -> STATE_BUFFERING /*或 ENDED 视进度*/ ...
+                s.isPaused  -> STATE_PAUSED
+                else        -> STATE_IDLE
+            })
+            .setCurrentPositionMs(s.positionMs)
+            .setDurationMs(s.durationMs ?: C.TIME_UNSET)
+            .setMediaItem(currentMediaItem, 0)
+            .setPlayWhenReady(playWhenReady)
+            .build()
+    }
+
+    // 控制：转发到 DLNACast（均为 suspend，用 CoroutineScope 包一层）
+    override fun play() { scope.launch { dlna.play() ; onDlnaStateChanged() } }
+    override fun pause() { scope.launch { dlna.pause() ; onDlnaStateChanged() } }
+    override fun seekTo(ms: Long) { scope.launch { dlna.seek(ms) ; ... } }
+    override fun setMediaItem(item: MediaItem, reset: Boolean) { currentMediaItem = item }
+    override fun prepare() { /* 由 cast 触发，可空实现 */ }
+    // ... 其余 Player 方法按需实现/空实现
+}
+```
+- 进度/时长来自 `DLNACast.getProgress()` / `getState()`（有插值缓存），`invalidateState()` 周期性刷新（可用一个 1s ticker 调 `onDlnaStateChanged()` 保持通知进度走动）。
+- 需实现 `Player.Listener` 转发：`addListener`/`removeListener` 收集，状态变时逐個 `listener.onPlaybackStateChanged` 等。
+
+### 2.2 PlaybackManager 投射态路由
+```kotlin
+private val localPlayers = listOf(player, playerB)
+var casting = false
+var dlnaPlayer: DlnaPlayer? = null
+
+private val activePlayer: Player
+    get() = if (casting) dlnaPlayer ?: player else player
+
+fun startCasting(device: Device) {
+    val dp = DlnaPlayer(ctx)
+    dlnaPlayer = dp
+    casting = true
+    cancelCrossfade()                       // 投射态禁用双实例 Crossfade
+    // 把当前曲目投出去（M1 直投 MP3/FLAC/WAV）
+    val cur = currentQueueEntry
+    scope.launch {
+        val url = localFileHttpUrl(cur)     // M1: 直链；M2: APE 转码链
+        dlna.cast(url, cur.title)
+        session.setPlayer(dp)               // MediaSession 切到 DLNA 门面
+        _uiState.update { it.copy(casting = true, castDeviceName = device.name) }
+    }
+}
+
+fun stopCasting() {
+    casting = false
+    session.setPlayer(player)               // 切回本地 ExoPlayer
+    dlnaPlayer?.release(); dlnaPlayer = null
+    _uiState.update { it.copy(casting = false, castDeviceName = null) }
+    // 可选：本地从同位置续播 or 暂停
+}
+```
+- 所有命令方法（play/pause/next/previous/seekTo/enqueue/...）改为走 `activePlayer`，而非写死 `player`。
+- **RG/EQ 失效处理**：`buildPlayer()` 只在本地 ExoPlayer 注入 `ReplayGainAudioProcessor` 与 AudioEffect；`DlnaPlayer` 不做任何音频处理。EQ 开关在投射态 UI 置灰并提示"投射中不可用"。
+- **Crossfade 失效处理**：`startCasting()` 首行 `cancelCrossfade()`；`maybeStartCrossfade` 加 `if (casting) return` 守卫。
+
+### 2.3 APE 转码流式投送（M2）
+- UPnPCast `castLocalFile` 只吐原文件字节，渲染器不解 APE → 必须手机端转码。
+- 方案：自建一个极小 HTTP 服务（NanoHTTPD 或 Ktor CIO），`GET /cast/{id}` 时：
+  - `ProcessBuilder("ffmpeg", "-i", apePath, "-c:a", "libmp3lame", "-b:a", "320k", "-f", "mp3", "-")` 拉起 ffmpeg（**ffmpeg 已在 PATH**，ffprobe 不在——与现有约定一致）；
+  - 把 ffmpeg 的 **stdout 直接管道写入 HTTP 响应体**（流式，边转边发，无需落盘）；
+  - 返回 `Content-Type: audio/mpeg`，支持 `Range`（渲染器 seek 用）——NanoHTTPD 处理 Range 较麻烦，可用 Ktor 或手写 `ServerSocket` 简单实现，首版可只支持从头播放（不 seek），后续补 Range。
+- 该 URL 传给 `DLNACast.cast(url, title)` 而非 `castLocalFile`。
+- **注意**：ffmpeg 转码吃 CPU，低端机可能跟不上实时；可做"先转临时文件再投"的降级，或在设置里提供"APE 投屏转码格式/码率"选项。
+
+---
+
+## 3. UI 变更
+
+1. **设备选择入口**：PlayerScreen 顶部栏或溢出菜单加"投屏"图标 → 打开底部抽屉/弹窗：`DLNACast.search(timeout=5000)` 列出设备（名称 + 类型/电视图标），点击即 `startCasting(device)`；显示"搜索中"与"未发现设备"空态。
+2. **投射态指示**：PlayerScreen + MiniPlayer 顶部显示横幅/芯片"正在投射到 <设备名>"，点按可"停止投射"。
+3. **功能降级标注**：
+   - 设置页 Crossfade 滑杆：投射态置灰 + 副标题"投射中不可用"。
+   - 均衡器/RG 开关：投射态置灰 + 提示。
+4. **（可选）投射音量**：把 DLNACast `setVolume(0-100)` 映射到 Player 音量/系统媒体音量，或在投射横幅加音量条。
+
+---
+
+## 4. 分阶段计划
+
+### M0 前置：Media3 升级 + 基建（已完成 ✅）
+- Media3 1.4.1 → **1.6.0**（common/session/exoplayer 三件）+ AGP 8.5.2→8.6.0 + compileSdk 34→35 + buildToolsVersion 35.0.0（装 `android-35` platform）。全量编译 / `testDebugUnitTest` / `assembleRelease`(R8+lintVital) 本地全绿。
+- API 变动实测：BaseAudioProcessor 在 1.6.0 **仍是抽象方法 `queueInput`**（未改名 `onQueueInput`——那是 1.7+ 的事）；`MediaSession.Callback.onConnect` 与 `DefaultRenderersFactory.buildAudioRenderers` 等现有用法在 1.6.0 下编译通过、无破坏性改动。源码零改动（仅版本号 + 工具链）。
+- 加 UPnPCast 依赖、Manifest 明文流量策略、权限确认。
+- 在 Application/Service `onCreate` 调 `DLNACast.init(ctx)`，`onDestroy` 调 `DLNACast.cleanup()`。
+
+### M1：发现 + 直投（MP3/FLAC/WAV）
+- `DlnaPlayer(SimpleBasePlayer)` 门面（state 翻译 + listener 转发 + 1s ticker 刷新进度）。
+- 设备搜索抽屉 + 点击投射当前曲目 + `session.setPlayer(dlnaPlayer)`。
+- `PlaybackManager` 投射态路由 + `cancelCrossfade` 守卫 + UI 横幅。
+- 基础传输：play/pause/next/previous/seek（转发 DLNACast）。
+- RG/EQ/Crossfade 在投射态禁用与 UI 置灰。
+- **验收**：手机与电视/路由器同 Wi-Fi，MP3/FLAC 曲目可投、可播控、通知/锁屏可控。
+
+### M2：APE 转码投送
+- 自建本地 HTTP 服务 + ffmpeg 实时转码流式输出（MP3/可配码率）。
+- `localFileHttpUrl()` 按格式分流：非 APE 用 UPnPCast 直链，APE 用转码链。
+- 首版支持从头播放，后续补 Range/seek。
+- 低端机降级策略（临时文件预转码）。
+
+### M3：打磨
+- 队列同步：投下一首（DLNACast 不支持自动续播时，监听进度到尾部自动 cast 下一首）。
+- 网络断开/设备离线：优雅回退本地播放（监听 DLNACast 错误/状态）。
+- 投射音量条（RenderingControl）。
+- 设置项："投屏时自动禁用音效""APE 转码格式/码率""退出时自动停止投射"。
+- 真机多品牌验证（小米/三星/LG/索尼电视 + 一款 Hi-Fi 网播）。
+
+---
+
+## 5. 风险与测试
+
+| 风险 | 影响 | 缓解 |
+|---|---|---|
+| Media3 大版本升级破坏现有播放/会话逻辑 | 高 | M0 单独成步，全量回归 + CI 绿灯；必要时二分定位 |
+| 部分路由器/网络禁用 SSDP 组播 | 中 | 设备搜索超时兜底；提示用户检查同网段 |
+| APE 实时转码占 CPU、低端机卡顿 | 中 | 临时文件预转码降级；可配置码率 |
+| 渲染器不支持 seek / Range | 低 | 首版从头播放，M3 补 Range |
+| DLNA 状态精度不如本地 ExoPlayer | 低 | 1s ticker + 插值，UI 进度可接受 |
+| 手机 IP 变化/热点切换导致自建服务器 URL 失效 | 低 | 每次投射动态取当前 IP；断网监听回退 |
+
+- **CI 限制**：DLNA 需要真实渲染器，无法在 CI 自动化；仅 `DlnaPlayer` 状态翻译、路由守卫、UI 状态可用本地 fake 做单测，端到端必须真机。
+- **回归重点**：升 Media3 后 ExoPlayer/Crossfade/RG/EQ 全部重测，确保"关投屏时零回归"。
+
+---
+
+## 6. 待确认（下一步拍板）
+1. 是否接受 **M0 把 Media3 升到 1.11.x**？（不升则 DlnaPlayer 只能手写 Player 接口，成本更高）
+2. M1 是否只做"投当前单曲"，还是连队列一起投？
+3. APE 转码默认格式/码率（建议 MP3 320k，兼顾兼容与体积）？
+4. 是否要"退出 App/断网自动停止投射"？
+
+> 确认后我可进入 Plan 模式产出逐文件改动清单，或直接开干 M0+M1。
