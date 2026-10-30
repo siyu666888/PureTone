@@ -16,8 +16,11 @@ import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.media.ScannedSong
 import com.puretone.player.data.media.MediaStoreScanner
 import com.puretone.player.data.settings.SettingsRepository
+import com.puretone.player.playback.ReplayGainExtractor
 import com.puretone.player.util.UnknownText
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
@@ -60,7 +63,8 @@ class MusicRepository @Inject constructor(
     private val playHistoryDao: PlayHistoryDao,
     private val statsDao: StatsDao,
     private val scanner: MediaStoreScanner,
-    private val settings: SettingsRepository
+    private val settings: SettingsRepository,
+    private val replayGainExtractor: ReplayGainExtractor
 ) {
 
     /** 上次清理过期播放历史的时间戳（P3-19，见 [recordPlay]） */
@@ -223,7 +227,10 @@ class MusicRepository @Inject constructor(
                     lastPlayedAt = old?.lastPlayedAt ?: 0L,
                     preservedCoverUri = old?.coverUri?.takeIf { prev ->
                         prev.isNotBlank() && !isAlbumArtPlaceholder(prev)
-                    }
+                    },
+                    rgTrackGain = old?.rgTrackGain,
+                    rgAlbumGain = old?.rgAlbumGain,
+                    rgAnalyzed = old?.rgAnalyzed ?: false
                 )
             }
         }
@@ -271,6 +278,33 @@ class MusicRepository @Inject constructor(
             old.size != s.size ||
             (s.coverUri != null && (old.coverUri == null || isAlbumArtPlaceholder(old.coverUri))) ||
             (s.coverUri == null && isAlbumArtPlaceholder(old.coverUri))
+
+    /**
+     * 回填未分析过 ReplayGain 的歌曲（ffprobe 提取标签）。
+     *
+     * 在 [syncLibrary] 之后由 UI 层调用：每次挑一批（[limit]）`rg_analyzed = 0` 的歌曲，
+     * 限并发（默认 2，ffprobe 是原生进程，并发过高会拖垮低端机）跑 ffprobe，
+     * 命中标签则写入、无标签也标记已分析（避免反复重扫），失败则留待下次重试。
+     *
+     * 返回本批处理的歌曲数（0 表示已全部分析完）。
+     */
+    suspend fun analyzeReplayGainBatch(limit: Int = 60): Int = withContext(Dispatchers.IO) {
+        val batch = songDao.getSongsNotAnalyzed(limit)
+        if (batch.isEmpty()) return@withContext 0
+        batch.map { song ->
+            async(rgDispatcher) {
+                val tags = runCatching { replayGainExtractor.extract(song.path) }.getOrNull()
+                // tags 非 null（含两字段都为空）即视为分析成功，写库并标记；
+                // null 表示 ffprobe 执行失败，保留 rg_analyzed=0 下次重试。
+                if (tags != null) {
+                    runCatching {
+                        songDao.updateReplayGain(song.id, tags.trackGainDb, tags.albumGainDb)
+                    }
+                }
+            }
+        }.awaitAll()
+        batch.size
+    }
 
     // ---------- 播放历史 ----------
 
@@ -409,7 +443,11 @@ class MusicRepository @Inject constructor(
         playCount: Int = 0,
         lastPlayedAt: Long = 0L,
         userEdited: Boolean = false,
-        preservedCoverUri: String? = null
+        preservedCoverUri: String? = null,
+        // ReplayGain：保留旧行的分析结果，避免重扫把已提取的增益清掉
+        rgTrackGain: Float? = null,
+        rgAlbumGain: Float? = null,
+        rgAnalyzed: Boolean = false
     ) = SongEntity(
         id = existingId,
         mediaStoreId = mediaStoreId,
@@ -433,12 +471,22 @@ class MusicRepository @Inject constructor(
         favorite = favorite,
         playCount = playCount,
         lastPlayedAt = lastPlayedAt,
-        userEdited = userEdited
+        userEdited = userEdited,
+        rgTrackGain = rgTrackGain,
+        rgAlbumGain = rgAlbumGain,
+        rgAnalyzed = rgAnalyzed
     )
 
     companion object {
         const val UNKNOWN_ARTIST = "未知艺术家"
         const val UNKNOWN_ALBUM = "未知专辑"
+
+        /**
+         * ReplayGain 回填用的专用调度器（限并发 2）。
+         * ffprobe 每次是原生进程启动，并发过高会让低端机卡死；限到 2 既利用多核
+         * 又不至于拖垮 UI，首扫大库时最多多花一点时间、分批收敛。
+         */
+        private val rgDispatcher = Dispatchers.IO.limitedParallelism(2)
 
         /**
          * 由文件绝对路径取所在文件夹（父目录）。

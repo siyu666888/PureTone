@@ -19,6 +19,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -83,6 +84,16 @@ fun SettingsScreen(
         SettingsGroup(title = "播放") {
             SwitchRow(label = "无缝播放（gapless）", checked = s.gapless) { vm.setGapless(it) }
             SwitchRow(label = "启动时续播上次歌曲", checked = s.resumeOnStart) { vm.setResumeOnStart(it) }
+            // 交叉淡化（Crossfade）：0 = 关；1~12 秒，步长 500ms。
+            // 仅常规格式生效；APE 等需转码格式在边界退化为无缝/曲间停顿。
+            SliderRow(
+                label = "交叉淡化",
+                value = s.crossfadeMs.toFloat(),
+                valueRange = 0f..PureToneSettings.CROSSFADE_MAX_MS.toFloat(),
+                steps = (PureToneSettings.CROSSFADE_MAX_MS / 500) - 1,
+                valueText = if (s.crossfadeMs <= 0) "关" else "%.1fs".format(s.crossfadeMs / 1000f),
+                onValueChange = { vm.setCrossfadeMs(it.toInt()) }
+            )
 
             // 倍速 / 睡眠定时：单行分段控件，切换与显示方式同主题分段
             val speedOptions = listOf(0.5f, 1f, 1.25f, 1.5f, 2f)
@@ -189,6 +200,41 @@ fun SettingsScreen(
             }
         }
 
+        // ReplayGain（P1）：响度归一化，让不同音量的歌曲听起来响度一致
+        SettingsGroup(title = "响度（ReplayGain）") {
+            SwitchRow(
+                label = "启用 ReplayGain",
+                checked = s.replayGainEnabled,
+                onChanged = { vm.setReplayGainEnabled(it) }
+            )
+            // 模式：按曲目（每首独立归一）/ 按专辑（同专辑内响度一致，曲目间过渡更平）
+            val rgModes = listOf(PureToneSettings.RG_TRACK, PureToneSettings.RG_ALBUM)
+            val rgModeLabels = listOf("曲目", "专辑")
+            SettingsSegmentRow(
+                label = "模式",
+                options = rgModeLabels,
+                selectedIndex = rgModes.indexOf(s.replayGainMode).coerceAtLeast(0),
+                enabled = s.replayGainEnabled,
+                onSelect = { vm.setReplayGainMode(rgModes[it]) }
+            )
+            // preamp：在 RG 增益之上叠加的手调补偿（dB，范围 -12 ~ +12）
+            SliderRow(
+                label = "补偿 (dB)",
+                value = s.replayGainPreampDb,
+                valueRange = PureToneSettings.RG_PREAMP_MIN_DB..PureToneSettings.RG_PREAMP_MAX_DB,
+                steps = 48, // -12..12 共 24 个整数 dB，每 0.5 一档 → 48 步
+                enabled = s.replayGainEnabled,
+                valueText = "%.1f dB".format(s.replayGainPreampDb),
+                onValueChange = { vm.setReplayGainPreamp(it) }
+            )
+            Text(
+                "依据音频文件内 ReplayGain 标签自动调整响度，文件无标签时本项不生效。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+        }
+
         // 品牌 + 版本号（居中，置于内容最底部）
         val context = LocalContext.current
         val versionText = remember {
@@ -291,6 +337,7 @@ private fun SettingsSegmentRow(
     label: String,
     options: List<String>,
     selectedIndex: Int,
+    enabled: Boolean = true,
     onSelect: (Int) -> Unit
 ) {
     Row(
@@ -298,7 +345,11 @@ private fun SettingsSegmentRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        )
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -325,7 +376,7 @@ private fun SettingsSegmentRow(
                             .weight(1f)
                             .fillMaxHeight()
                             .background(containerColor, CircleShape)
-                            .clickable { onSelect(index) },
+                            .clickable(enabled = enabled) { onSelect(index) },
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -375,6 +426,49 @@ private fun SwitchRow(label: String, checked: Boolean, enabled: Boolean = true, 
     ) {
         Text(label, style = MaterialTheme.typography.bodyLarge)
         Switch(checked = checked, enabled = enabled, onCheckedChange = onChanged)
+    }
+}
+
+/**
+ * 滑杆子项行：左侧标签 + 右侧滑杆 + 末端数值。
+ * 用于 ReplayGain 补偿（dB）这类连续值设置。行高统一 55dp。
+ *
+ * [valueRange] 用 Kotlin 区间表达；[steps] 为离散档位数（不含两端）。
+ */
+@Composable
+private fun SliderRow(
+    label: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    steps: Int = 0,
+    enabled: Boolean = true,
+    valueText: String,
+    onValueChange: (Float) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        )
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            steps = steps,
+            enabled = enabled,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            valueText,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp)
+        )
     }
 }
 

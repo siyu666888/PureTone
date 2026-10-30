@@ -4,15 +4,23 @@ import android.Manifest
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Handler
 import android.os.IBinder
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.audio.AudioRendererEventListener
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.puretone.player.MainActivity
+import com.puretone.player.playback.ReplayGainAudioProcessor
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -22,6 +30,12 @@ import javax.inject.Inject
  * 持有 ExoPlayer 与 MediaSession（通知/锁屏控制由 Media3 据此自动生成）。
  * 在 onCreate 创建二者并 [PlaybackManager.bind] 注入单例；onDestroy 解绑并释放，
  * 释放顺序为 unbind → session → player → super（P3-21，对齐官方 demo）。
+ *
+ * 交叉淡化（A 路线：双实例真重叠）需要两个 ExoPlayer 实例：
+ * - [player] 为「主」播放器，承载 MediaSession 与当前曲目；
+ * - [playerB] 为「备援」播放器，仅在交叉淡化窗口内短暂起播下一首，与主播放器
+ *   两路同时发声（音量此消彼长）形成真重叠淡化，平时空闲。
+ * 两个播放器各自携带独立的 ReplayGain 处理器（增益按各自曲目实时刷新）。
  */
 // ConnectionResult.DEFAULT_* 常量是 Media3 的 UnstableApi（与 PlaybackManager 同）
 @OptIn(UnstableApi::class)
@@ -32,28 +46,25 @@ class PlaybackService : MediaSessionService() {
     lateinit var playbackManager: PlaybackManager
 
     private lateinit var player: ExoPlayer
+    /** 交叉淡化备援播放器（A 路线：双实例真重叠）。仅在交叉淡化窗口内短暂起播，平时空闲。 */
+    private lateinit var playerB: ExoPlayer
     private lateinit var session: MediaSession
 
     override fun onCreate() {
         super.onCreate()
-        player = ExoPlayer.Builder(this)
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                    .setUsage(C.USAGE_MEDIA)
-                    .build(),
-                /* handleAudioFocus = */ true
-            )
-            .setHandleAudioBecomingNoisy(true)
-            .setWakeMode(C.WAKE_MODE_LOCAL)
-            .build()
+        // ReplayGain 音频处理器：两个播放器各持一个独立实例（增益按各自当前曲目实时刷新，
+        // 交叉淡化期间两路同时发声，必须各自施加）。
+        val rgProcessorA = ReplayGainAudioProcessor()
+        val rgProcessorB = ReplayGainAudioProcessor()
+        player = buildPlayer(rgProcessorA)
+        playerB = buildPlayer(rgProcessorB)
 
         session = MediaSession.Builder(this, player)
             .setSessionActivity(sessionActivityIntent())
             .setCallback(SessionCallback())   // P1-4：控制器白名单
             .build()
 
-        playbackManager.bind(player, session)
+        playbackManager.bind(player, playerB, session, rgProcessorA, rgProcessorB)
 
         // 将会话注册到 Media3 通知管理器。
         //
@@ -68,6 +79,56 @@ class PlaybackService : MediaSessionService() {
         // addSession() 幂等（已注册则跳过），可安全调用。
         runCatching { addSession(session) }
             .onFailure { Log.w(TAG, "addSession failed", it) }
+    }
+
+    /**
+     * 构建单个 ExoPlayer 实例，各自携带独立的 ReplayGain 处理器链。
+     *
+     * Media3 1.4.1 的 ExoPlayer.Builder 没有 setAudioProcessors；
+     * 必须走 DefaultAudioSink（承载 AudioProcessor 链）+ 自定义 DefaultRenderersFactory
+     * （把带处理器的 sink 注入 MediaCodecAudioRenderer）。每个播放器用各自的 sink 与
+     * 渲染器工厂，避免共享 RG 处理器实例（交叉淡化时两路增益不同）。
+     */
+    @OptIn(UnstableApi::class)
+    private fun buildPlayer(rgProcessor: ReplayGainAudioProcessor): ExoPlayer {
+        val rgAudioSink = DefaultAudioSink.Builder(this)
+            .setAudioProcessors(arrayOf(rgProcessor))
+            .build()
+        val renderersFactory = object : DefaultRenderersFactory(this) {
+            override fun buildAudioRenderers(
+                context: android.content.Context,
+                extensionRendererMode: Int,
+                mediaCodecSelector: MediaCodecSelector,
+                enableDecoderFallback: Boolean,
+                audioSink: AudioSink,
+                eventHandler: Handler,
+                eventListener: AudioRendererEventListener,
+                out: ArrayList<Renderer>
+            ) {
+                // 用承载 RG 处理器的 sink 替换默认 sink，其余渲染器逻辑全部沿用父类
+                super.buildAudioRenderers(
+                    context,
+                    extensionRendererMode,
+                    mediaCodecSelector,
+                    enableDecoderFallback,
+                    rgAudioSink,
+                    eventHandler,
+                    eventListener,
+                    out
+                )
+            }
+        }
+        return ExoPlayer.Builder(this, renderersFactory)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                    .setUsage(C.USAGE_MEDIA)
+                    .build(),
+                /* handleAudioFocus = */ true
+            )
+            .setHandleAudioBecomingNoisy(true)
+            .setWakeMode(C.WAKE_MODE_LOCAL)
+            .build()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession = session
@@ -132,6 +193,7 @@ class PlaybackService : MediaSessionService() {
         runCatching { playbackManager.unbind() }
         runCatching { session.release() }
         runCatching { player.release() }
+        runCatching { playerB.release() }
         super.onDestroy()
     }
 

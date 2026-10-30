@@ -35,7 +35,9 @@ data class EffectStatus(
  *
  * 设计要点：
  * - 全部效果挂在 ExoPlayer 的 audioSessionId 上（非全局 0），避免影响其他应用；
- * - 播放器 session 变化（重建）时通过 [attachToSession] 重绑定并恢复设置；
+ * - 多会话支持：交叉淡化（双实例真重叠）时主/备两个播放器各自有独立音频会话，
+ *   本控制器以 `audioSessionId` 为键维护一组效果实例，两个会话都受同一套音效影响；
+ * - 播放器 session 变化（重建/切换）时通过 [attachToSession] 重绑定并恢复设置；
  * - 单例同进程唯一，由播放服务挂接、UI 层经此调参；
  * - **持久化接线**：[applySettings] 是 DataStore 设置 → 音效的唯一入口，
  *   PlaybackManager 订阅设置流后调用它，冷启动/设置变更都能真正生效；
@@ -68,12 +70,6 @@ class AudioEffectController @Inject constructor() {
         /**
          * 强度类效果（重低音/环绕声）的启停判定（P1-5，纯函数便于单测锁死）：
          * 从属于主开关——主开关关闭或强度为 0 一律不启用。
-         *
-         * 历史 bug：`applyBass` 旧实现只看 `bassStrength > 0`，用户关掉主开关
-         * （eqEnabled=false）但滑块停在 500 时，经 DataStore 流回
-         * [applySettings] 会把 BassBoost 重新置 enabled=true，主开关关了
-         * 重低音仍在响；而直接调 `setEnabled(false)` 走 [disableAllEffects]
-         * 又全关——同一语义两个入口行为相反。现统一为：两者取与。
          */
         internal fun shouldEnableEffect(masterEnabled: Boolean, strength: Int): Boolean =
             masterEnabled && strength > 0
@@ -90,11 +86,18 @@ class AudioEffectController @Inject constructor() {
         )
     }
 
-    private var equalizer: Equalizer? = null
-    private var bassBoost: BassBoost? = null
-    private var virtualizer: Virtualizer? = null
+    /** 单个音频会话的效果实例集合 */
+    private data class EffectsHolder(
+        var equalizer: Equalizer? = null,
+        var bassBoost: BassBoost? = null,
+        var virtualizer: Virtualizer? = null
+    )
 
-    private var sessionId: Int = 0
+    /** 按 audioSessionId 维护的效果实例（多会话：交叉淡化主/备播放器各一个） */
+    private val effects: MutableMap<Int, EffectsHolder> = mutableMapOf()
+    /** 已挂接的会话集合（即使当前未创效果，也记录以便开关变化时重建） */
+    private val attachedSessions: MutableSet<Int> = mutableSetOf()
+
     private var enabled: Boolean = false
     private var bandLevels: List<Int> = List(10) { 0 }
     private var bassStrength: Int = 0
@@ -103,84 +106,72 @@ class AudioEffectController @Inject constructor() {
     private val _status = MutableStateFlow(EffectStatus())
     val status: StateFlow<EffectStatus> = _status.asStateFlow()
 
-    /** 当前是否可用（设备不支持音效时为 false） */
+    /** 当前是否可用（任意一个已挂接会话创建出 Equalizer 即视为设备支持） */
     val isAvailable: Boolean
-        get() = sessionId != 0 && equalizer != null
+        get() = effects.values.any { it.equalizer != null }
 
     /**
-     * 挂接到播放器音频会话。
-     * session 变化时先释放旧效果再按当前设置重建。
+     * 挂接到某个播放器音频会话。
+     * 同一会话重复调用幂等；新会话仅追加一组效果，不影响其它会话。
+     * session 变化（重建/切换）时先释放旧效果再按当前设置重建。
      */
     @Synchronized
     fun attachToSession(newSessionId: Int) {
-        if (newSessionId == sessionId && (equalizer != null || !needsEffects())) return
-        releaseEffects()
-        sessionId = newSessionId
-        if (newSessionId == 0) {
-            _status.value = EffectStatus()
-            return
-        }
-        // 仅在确有音效需求时才创建原生 AudioEffect：
-        // 部分机型对 Equalizer/BassBoost/Virtualizer 的实现有缺陷，
-        // 无谓地持有实例会抬高 native 崩溃（SIGSEGV）风险。
-        // session 重建后这里会把当前设置重新灌一遍，保证「换会话不丢音效」。
-        if (needsEffects()) ensureEffects() else {
-            _status.value = EffectStatus()
-            disableAllEffects()
-        }
+        if (newSessionId == 0) return
+        attachedSessions.add(newSessionId)
+        if (needsEffects()) ensureEffects(newSessionId) else releaseEffects(newSessionId)
     }
 
-    /**
-     * 是否确实需要原生音效实例。
-     *
-     * P1-5：与主开关语义统一——重低音/环绕声从属于主开关，主开关关闭时
-     * 没有任何效果需要生效，也就不必创建原生 AudioEffect 实例（部分机型
-     * 对效果器的实现有缺陷，无谓持有会抬高 native 崩溃风险）。
-     */
+    /** 是否确实需要原生音效实例（主开关语义统一：关闭时无需创建，降低 native 崩溃风险） */
     private fun needsEffects(): Boolean = enabled
 
     /**
-     * 按需创建音效实例（幂等）。创建后立即回放当前设置。
+     * 按需创建指定会话的效果实例（幂等）。创建后立即回放当前设置。
      * 构造函数本身也 runCatching，设备不支持时静默降级。
      */
     @Synchronized
-    private fun ensureEffects() {
+    private fun ensureEffects(sessionId: Int) {
         if (sessionId == 0) return
-        if (equalizer == null) {
-            equalizer = runCatching { Equalizer(0, sessionId) }.getOrNull().also {
-                if (it == null) Log.w(TAG, "Equalizer unsupported on this device")
+        val holder = effects.getOrPut(sessionId) { EffectsHolder() }
+        if (holder.equalizer == null) {
+            holder.equalizer = runCatching { Equalizer(0, sessionId) }.getOrNull().also {
+                if (it == null) Log.w(TAG, "Equalizer($sessionId) unsupported on this device")
             }
         }
-        if (bassBoost == null) {
-            bassBoost = runCatching { BassBoost(0, sessionId) }.getOrNull()
+        if (holder.bassBoost == null) {
+            holder.bassBoost = runCatching { BassBoost(0, sessionId) }.getOrNull()
         }
-        if (virtualizer == null) {
-            virtualizer = runCatching { Virtualizer(0, sessionId) }.getOrNull()
+        if (holder.virtualizer == null) {
+            holder.virtualizer = runCatching { Virtualizer(0, sessionId) }.getOrNull()
         }
-        // 恢复设置
-        applyEnabled()
-        applyBands()
-        applyBass()
-        applyVirtualizer()
-        // P2-1：效果器创建成败即设备支持结论，推送给 UI 提示
-        _status.value = EffectStatus(
-            availability = if (equalizer != null) EffectAvailability.SUPPORTED
-            else EffectAvailability.UNSUPPORTED,
-            deviceBandCount = bandCount()
-        )
+        applyEnabled(holder)
+        applyBands(holder)
+        applyBass(holder)
+        applyVirtualizer(holder)
+        refreshStatus()
+    }
+
+    @Synchronized
+    private fun releaseEffects(sessionId: Int) {
+        val holder = effects.remove(sessionId) ?: return
+        runCatching { holder.equalizer?.release() }
+        runCatching { holder.bassBoost?.release() }
+        runCatching { holder.virtualizer?.release() }
+        refreshStatus()
     }
 
     @Synchronized
     fun detach() {
-        releaseEffects()
-        sessionId = 0
+        effects.keys.toList().forEach { releaseEffects(it) }
+        attachedSessions.clear()
         _status.value = EffectStatus()
     }
 
     @Synchronized
     fun setEnabled(value: Boolean) {
         enabled = value
-        if (value) ensureEffects() else disableAllEffects()
+        if (value) attachedSessions.forEach { ensureEffects(it) }
+        else attachedSessions.forEach { releaseEffects(it) }
     }
 
     @Synchronized
@@ -216,17 +207,17 @@ class AudioEffectController @Inject constructor() {
     }
 
     /** 设备支持的频段数（0 表示不可用） */
-    fun bandCount(): Int = runCatching { equalizer?.numberOfBands?.toInt() ?: 0 }.getOrDefault(0)
+    fun bandCount(): Int = effects.values.firstNotNullOfOrNull { eq ->
+        runCatching { eq.equalizer?.numberOfBands?.toInt() ?: 0 }.getOrDefault(0).takeIf { it > 0 }
+    } ?: 0
 
     /** 当前 10 段增益（dB 的 100 倍，mB） */
     fun currentBandLevels(): List<Int> = bandLevels.toList()
 
     /**
      * 把持久化设置一次性灌入控制器（DataStore → 音效的唯一入口）。
-     *
      * 由 PlaybackManager 订阅设置流后调用，覆盖冷启动恢复与用户改动两条路径；
-     * [com.puretone.player.ui.EqViewModel] 的单项操作同样落库，最终也流回这里，
-     * 保证「设置页显示的开关」与「实际听到的效果」永不脱节。
+     * 对所有已挂接会话统一生效。
      */
     @Synchronized
     fun applySettings(s: PureToneSettings) {
@@ -234,13 +225,14 @@ class AudioEffectController @Inject constructor() {
         bandLevels = normalizeBands(s.eqBandLevels)
         bassStrength = s.bassBoostStrength.coerceIn(MIN_STRENGTH, MAX_STRENGTH)
         virtualizerStrength = s.virtualizerStrength.coerceIn(MIN_STRENGTH, MAX_STRENGTH)
-        if (needsEffects()) ensureEffects() else disableAllEffects()
+        attachedSessions.forEach { id ->
+            if (needsEffects()) ensureEffects(id) else releaseEffects(id)
+        }
+        if (attachedSessions.isEmpty()) _status.value = EffectStatus()
     }
 
     /** 把任意长度的频段列表归一为 10 段（长度不符时按比例取值/补零） */
     private fun normalizeBands(levels: List<Int>): List<Int> {
-        // P3-19：等长输入也要按量程钳制——DataStore 若存了越界 mB 值，
-        // 旧实现原样进入 bandLevels，绕过 setBandLevel 的 coerceIn 兜底。
         if (levels.size == CENTER_FREQS.size) return levels.map { it.coerceIn(MIN_LEVEL_MB, MAX_LEVEL_MB) }
         return List(CENTER_FREQS.size) { i ->
             levels.getOrNull(i) ?: 0
@@ -251,12 +243,10 @@ class AudioEffectController @Inject constructor() {
      * 计算「设备段 → 增益」映射：每个设备段取中心频率最接近的 UI 段增益。
      * 返回 null 表示设备不可用（无 equalizer 或读不到段数/中心频率）。
      */
-    private fun deviceBandLevels(): List<Int>? {
-        val eq = equalizer ?: return null
+    private fun deviceBandLevels(eq: Equalizer): List<Int>? {
         val count = runCatching { eq.numberOfBands.toInt() }.getOrDefault(0)
         if (count <= 0) return null
         val deviceFreqHz = (0 until count).mapNotNull { b ->
-            // getCenterFreq 返回 milliHertz
             runCatching { eq.getCenterFreq(b.toShort()) / 1000 }.getOrNull()
         }
         if (deviceFreqHz.size != count) return null
@@ -267,18 +257,20 @@ class AudioEffectController @Inject constructor() {
     }
 
     @Synchronized
-    private fun applyEnabled() {
-        runCatching { equalizer?.enabled = enabled }.onFailure { Log.w(TAG, "set eq enabled failed", it) }
+    private fun applyEnabled(holder: EffectsHolder) {
+        runCatching { holder.equalizer?.enabled = enabled }.onFailure { Log.w(TAG, "set eq enabled failed", it) }
     }
 
     @Synchronized
-    private fun applyBands() {
-        val eq = equalizer ?: return
-        val levels = deviceBandLevels() ?: return
+    private fun applyEnabled() {
+        effects.values.forEach { applyEnabled(it) }
+    }
+
+    @Synchronized
+    private fun applyBands(holder: EffectsHolder) {
+        val eq = holder.equalizer ?: return
+        val levels = deviceBandLevels(eq) ?: return
         val range = runCatching { eq.bandLevelRange }.getOrNull()
-        // P3-20：逐段 runCatching——旧实现单个 runCatching 包住整个循环，
-        // 任一 band 的 setBandLevel 抛异常（越界/设备缺陷）会让后续频段全部静默跳过，
-        // 用户听到「半套 EQ」。逐段隔离后，单点失败只丢该段。
         levels.forEachIndexed { band, level ->
             runCatching {
                 val clamped = if (range != null) {
@@ -292,11 +284,14 @@ class AudioEffectController @Inject constructor() {
     }
 
     @Synchronized
-    private fun applyBass() {
-        val bb = bassBoost ?: return
+    private fun applyBands() {
+        effects.values.forEach { applyBands(it) }
+    }
+
+    @Synchronized
+    private fun applyBass(holder: EffectsHolder) {
+        val bb = holder.bassBoost ?: return
         runCatching {
-            // P1-5：主开关关闭时一律不启用（旧实现只看强度，关了主开关
-            // 重低音仍按厂商默认生效）
             val on = shouldEnableEffect(enabled, bassStrength)
             bb.enabled = on
             if (on) bb.setStrength(bassStrength.toShort())
@@ -304,31 +299,30 @@ class AudioEffectController @Inject constructor() {
     }
 
     @Synchronized
-    private fun applyVirtualizer() {
-        val v = virtualizer ?: return
+    private fun applyBass() {
+        effects.values.forEach { applyBass(it) }
+    }
+
+    @Synchronized
+    private fun applyVirtualizer(holder: EffectsHolder) {
+        val v = holder.virtualizer ?: return
         runCatching {
-            // P1-5：同 applyBass——从属于主开关
             val on = shouldEnableEffect(enabled, virtualizerStrength)
             v.enabled = on
             if (on) v.setStrength(virtualizerStrength.toShort())
         }.onFailure { Log.w(TAG, "virtualizer failed", it) }
     }
 
-    /** 主开关关闭时统一关闭三个效果（历史 bug：只关 Equalizer，重低音/环绕仍按厂商默认生效） */
     @Synchronized
-    private fun disableAllEffects() {
-        runCatching { equalizer?.enabled = false }.onFailure { Log.w(TAG, "disable eq failed", it) }
-        runCatching { bassBoost?.enabled = false }.onFailure { Log.w(TAG, "disable bass failed", it) }
-        runCatching { virtualizer?.enabled = false }.onFailure { Log.w(TAG, "disable virtualizer failed", it) }
+    private fun applyVirtualizer() {
+        effects.values.forEach { applyVirtualizer(it) }
     }
 
-    @Synchronized
-    private fun releaseEffects() {
-        runCatching { equalizer?.release() }
-        runCatching { bassBoost?.release() }
-        runCatching { virtualizer?.release() }
-        equalizer = null
-        bassBoost = null
-        virtualizer = null
+    /** 重新计算并向 UI 推送设备支持结论（取任意已建 equalizer 的段数） */
+    private fun refreshStatus() {
+        _status.value = EffectStatus(
+            availability = if (isAvailable) EffectAvailability.SUPPORTED else EffectAvailability.UNSUPPORTED,
+            deviceBandCount = bandCount()
+        )
     }
 }

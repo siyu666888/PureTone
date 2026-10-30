@@ -11,11 +11,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -44,6 +47,8 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -94,6 +99,80 @@ import com.puretone.player.ui.components.SongRow
 import com.puretone.player.ui.Routes
 import kotlinx.coroutines.delay
 
+/**
+ * P1 智能歌单卡片数据（仅 UI 聚合，不落库）。
+ */
+private data class SmartPlaylist(
+    val title: String,
+    val icon: ImageVector,
+    val songs: List<SongEntity>
+)
+
+/**
+ * P1 智能歌单快捷入口：横向卡片行，点击整卡即把对应自动歌单送入播放队列。
+ * 三类自动歌单均由既有数据聚合而来：
+ * - 最近添加：按 date_added 倒序；
+ * - 我的最爱：按 play_count 倒序（Top N）；
+ * - 最近播放：play_history 倒序去重。
+ * 列表为空时卡片禁用（暂无数据）。
+ */
+@Composable
+private fun SmartPlaylistsRow(
+    recentlyAdded: List<SongEntity>,
+    topSongs: List<SongEntity>,
+    recentlyPlayed: List<SongEntity>,
+    onPlay: (List<SongEntity>) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val items = listOf(
+        SmartPlaylist("最近添加", Icons.Rounded.Add, recentlyAdded),
+        SmartPlaylist("我的最爱", Icons.Rounded.Favorite, topSongs),
+        SmartPlaylist("最近播放", Icons.Filled.PlayArrow, recentlyPlayed)
+    )
+    LazyRow(
+        modifier = modifier.padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp)
+    ) {
+        items(items) { sp ->
+            SmartPlaylistCard(sp, onPlay)
+        }
+    }
+}
+
+@Composable
+private fun SmartPlaylistCard(sp: SmartPlaylist, onPlay: (List<SongEntity>) -> Unit) {
+    val enabled = sp.songs.isNotEmpty()
+    Card(
+        modifier = Modifier
+            .width(140.dp)
+            .clickable(enabled = enabled) { onPlay(sp.songs) },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Icon(
+                sp.icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                sp.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                maxLines = 1
+            )
+            Text(
+                if (enabled) "${sp.songs.size} 首" else "暂无",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+            )
+        }
+    }
+}
+
 /** 音乐页页签 */
 enum class MusicTab { SONGS, ALBUMS, ARTISTS, FOLDERS }
 
@@ -124,6 +203,10 @@ fun BrowseScreen(
     val backfill by metadataVm.backfill.collectAsStateWithLifecycle()
     val metaMessage by metadataVm.message.collectAsStateWithLifecycle()
     val playlists by libVm.playlists.collectAsStateWithLifecycle()
+    // P1 智能歌单入口数据：三类自动歌单（不落 PlaylistEntity，纯聚合）
+    val recentlyAdded by libVm.recentlyAdded.collectAsStateWithLifecycle()
+    val topSongs by libVm.topSongs.collectAsStateWithLifecycle()
+    val recentlyPlayed by libVm.recentlyPlayed.collectAsStateWithLifecycle()
 
     var searching by remember { mutableStateOf(false) }
     var sortMenuOpen by remember { mutableStateOf(false) }
@@ -252,6 +335,16 @@ fun BrowseScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+
+        // P1：智能歌单快捷入口（仅歌曲页签、非搜索态）
+        if (tab == MusicTab.SONGS && !searching) {
+            SmartPlaylistsRow(
+                recentlyAdded = recentlyAdded,
+                topSongs = topSongs,
+                recentlyPlayed = recentlyPlayed,
+                onPlay = { playerVm.playSongs(it, 0) }
             )
         }
 

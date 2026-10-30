@@ -176,6 +176,8 @@ class PlayerViewModel @Inject constructor(
     fun dismissError() = playback.dismissError()
     fun playAtIndex(index: Int) = playback.playAtIndex(index)
     fun removeFromQueue(index: Int) = playback.removeFromQueue(index)
+    /** 队列拖拽重排（from → to） */
+    fun moveQueueItem(from: Int, to: Int) = playback.moveQueueItem(from, to)
 
     /** 清空播放队列（P2-4：队列浮层「清空」入口；保留播放模式/倍速等用户设置） */
     fun clearQueue() = playback.clearQueue()

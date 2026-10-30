@@ -61,7 +61,10 @@ interface PlaylistDao {
                songs.play_count AS song_play_count,
                songs.last_played_at AS song_last_played_at,
                songs.user_edited AS song_user_edited,
-               songs.volume_name AS song_volume_name
+               songs.volume_name AS song_volume_name,
+               songs.rg_track_gain AS song_rg_track_gain,
+               songs.rg_album_gain AS song_rg_album_gain,
+               songs.rg_analyzed AS song_rg_analyzed
         FROM playlist_songs AS ps
         INNER JOIN songs ON songs.id = ps.song_id
         ORDER BY ps.playlist_id, ps.position
@@ -91,7 +94,10 @@ interface PlaylistDao {
                songs.play_count AS song_play_count,
                songs.last_played_at AS song_last_played_at,
                songs.user_edited AS song_user_edited,
-               songs.volume_name AS song_volume_name
+               songs.volume_name AS song_volume_name,
+               songs.rg_track_gain AS song_rg_track_gain,
+               songs.rg_album_gain AS song_rg_album_gain,
+               songs.rg_analyzed AS song_rg_analyzed
         FROM playlist_songs AS ps
         INNER JOIN songs ON songs.id = ps.song_id
         WHERE ps.playlist_id = :playlistId

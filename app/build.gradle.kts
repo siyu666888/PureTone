@@ -11,8 +11,8 @@ plugins {
  * 同时用于 versionName 与产物文件名（archivesName），避免二者漂移。
  * 发版时只改这里（版本号按语义化版本递增）。
  */
-val appVersionName = "1.6.0"
-val appVersionCode = 23
+val appVersionName = "1.7.0"
+val appVersionCode = 24
 
 /**
  * 产物文件名包含完整版本号。
@@ -151,6 +151,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons.extended)
+    implementation(libs.reorderable)
     debugImplementation(libs.compose.ui.tooling)
 
     // Hilt 依赖注入

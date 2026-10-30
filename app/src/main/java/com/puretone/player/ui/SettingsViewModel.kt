@@ -33,6 +33,8 @@ class SettingsViewModel @Inject constructor(
     fun setGapless(enabled: Boolean) = viewModelScope.launch { settings.setGapless(enabled) }
     fun setPlaybackSpeed(speed: Float) = viewModelScope.launch { settings.setPlaybackSpeed(speed) }
     fun setResumeOnStart(enabled: Boolean) = viewModelScope.launch { settings.setResumeOnStart(enabled) }
+    /** 交叉淡化时长（毫秒），0 = 关闭 */
+    fun setCrossfadeMs(ms: Int) = viewModelScope.launch { settings.setCrossfadeMs(ms) }
     /** 睡眠定时：minutes > 0 设倒计时，0 关闭（清除模式与到期时刻） */
     fun setSleepTimer(minutes: Int) = viewModelScope.launch {
         if (minutes > 0) settings.setSleepTimerMinutes(minutes) else settings.clearSleepTimer()
@@ -41,6 +43,14 @@ class SettingsViewModel @Inject constructor(
     /** 睡眠定时：当前这首播完就停（不限时长） */
     fun setSleepTimerEndOfTrack() = viewModelScope.launch { settings.setSleepTimerEndOfTrack() }
     fun setEqEnabled(enabled: Boolean) = viewModelScope.launch { settings.setEqEnabled(enabled) }
+
+    // ---------- ReplayGain（P1） ----------
+    fun setReplayGainEnabled(enabled: Boolean) =
+        viewModelScope.launch { settings.setReplayGainEnabled(enabled) }
+
+    fun setReplayGainMode(mode: String) = viewModelScope.launch { settings.setReplayGainMode(mode) }
+
+    fun setReplayGainPreamp(db: Float) = viewModelScope.launch { settings.setReplayGainPreampDb(db) }
 
     // ---------- 桌面小部件 ----------
 

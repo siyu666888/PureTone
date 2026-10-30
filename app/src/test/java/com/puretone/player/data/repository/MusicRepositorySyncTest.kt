@@ -9,6 +9,7 @@ import com.puretone.player.data.local.PureToneDatabase
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.media.MediaStoreScanner
 import com.puretone.player.data.settings.SettingsRepository
+import com.puretone.player.playback.ReplayGainExtractor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -61,6 +62,7 @@ class MusicRepositorySyncTest {
             playHistoryDao = db.playHistoryDao(),
             statsDao = db.statsDao(),
             scanner = MediaStoreScanner(context),
+            replayGainExtractor = ReplayGainExtractor(),
             settings = settings
         )
     }

@@ -215,6 +215,26 @@ interface SongDao {
     @Query("SELECT COUNT(*) FROM songs")
     suspend fun countSongs(): Int
 
+    /**
+     * 尚未分析 ReplayGain 的歌曲（同步时按需挑一批让 ffprobe 回填）。
+     * LIMIT 由调用方控制，避免一次扫描卡太久。
+     */
+    @Query("SELECT * FROM songs WHERE rg_analyzed = 0 LIMIT :limit")
+    suspend fun getSongsNotAnalyzed(limit: Int): List<SongEntity>
+
+    /**
+     * 回填单首歌的 ReplayGain 标签并标记已分析。
+     * [trackGain] / [albumGain] 可空（文件无对应标签时按 NULL 写入）。
+     */
+    @Query(
+        """
+        UPDATE songs
+        SET rg_track_gain = :trackGain, rg_album_gain = :albumGain, rg_analyzed = 1
+        WHERE id = :id
+        """
+    )
+    suspend fun updateReplayGain(id: Long, trackGain: Float?, albumGain: Float?)
+
     /** 最近播放的歌曲（同一首歌取最近一次，倒序去重） */
     @Query(
         """

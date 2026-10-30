@@ -58,7 +58,13 @@ data class QueueEntry(
     val durationMs: Long,
     val isApe: Boolean,
     /** 文件绝对路径（APE 转码源；非 APE 项为空，播放走 MediaStore content URI） */
-    val filePath: String
+    val filePath: String,
+    /** 队列内唯一实例标识（同一首歌可多次入队，拖拽重排需稳定 key） */
+    val key: Long = 0L,
+    /** ReplayGain 轨道增益（dB，可空） */
+    val rgTrackGain: Float? = null,
+    /** ReplayGain 专辑增益（dB，可空） */
+    val rgAlbumGain: Float? = null
 )
 
 /** 播放 UI 状态快照 */
@@ -118,6 +124,29 @@ class PlaybackManager @Inject constructor(
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
 
+    /** ReplayGain 音频处理器（由 [PlaybackService] 创建并随播放器注入；交叉淡化时 standby 播放器另持一份） */
+    private var replayGainProcessor: ReplayGainAudioProcessor? = null
+
+    /**
+     * 交叉淡化备援播放器（A 路线：双实例真重叠）。
+     * 仅在淡化窗口内短暂起播下一首，与主播放器两路同时发声（音量此消彼长），平时空闲。
+     */
+    private var secondaryPlayer: ExoPlayer? = null
+    /** 备援播放器的独立 ReplayGain 处理器（增益按各自当前曲目实时刷新） */
+    private var replayGainProcessorB: ReplayGainAudioProcessor? = null
+    /** 交叉淡化时长（毫秒），0 = 关闭 */
+    private var crossfadeMs: Int = 0
+    /** 是否正在交叉淡化（主→备 音量此消彼长） */
+    private var crossfading: Boolean = false
+    /** 交叉淡化音量渐变协程 */
+    private var crossfadeJob: Job? = null
+    /** 淡入结束后要补全到新主播放器的「后续曲目」MediaItem（保持完整队列不变量） */
+    private var pendingCrossfadeRemaining: List<MediaItem> = emptyList()
+    /** 当前交叉淡化正在进入的队列索引（淡入结束后更新 uiState.queueIndex 用） */
+    private var crossfadeNextIndex: Int = -1
+    /** 当前交叉淡化正在淡出的主播放器（STATE_ENDED 兜底收尾用） */
+    private var crossfadeOutgoing: ExoPlayer? = null
+
     private val _uiState = MutableStateFlow(PlaybackUiState())
     val uiState: StateFlow<PlaybackUiState> = _uiState.asStateFlow()
 
@@ -137,6 +166,9 @@ class PlaybackManager @Inject constructor(
      * 异步任务在挂起恢复后比对代次，过期则放弃写入，防止旧队列覆盖新队列。
      */
     private var queueGeneration: Int = 0
+    /** 队列项唯一实例序号（拖拽重排需稳定 key，同一首歌可多次入队） */
+    private var queueEntrySeq: Long = 0L
+    private fun nextQueueKey(): Long = ++queueEntrySeq
 
     /** 「完整播放完成」去重窗口：自动切歌（AUTO/REPEAT）与末首播完（STATE_ENDED）
      *  两条路径可能指向同一首歌，5s 内只计一次，避免统计页播放次数虚高。 */
@@ -172,6 +204,11 @@ class PlaybackManager @Inject constructor(
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             _uiState.update { it.copy(isBuffering = playbackState == Player.STATE_BUFFERING) }
+            // 交叉淡化期间主播放器（淡出方）自然播到结尾：由渐变协程或此处兜底收尾，
+            // [finalizeCrossfade] 的幂等守卫保证只执行一次。
+            if (playbackState == Player.STATE_ENDED && crossfading && player === crossfadeOutgoing) {
+                finalizeCrossfade()
+            }
             if (playbackState == Player.STATE_ENDED) handlePlaybackEnded()
             if (playbackState == Player.STATE_IDLE && (player?.mediaItemCount ?: 0) == 0) {
                 stopServiceIfIdle()
@@ -212,6 +249,8 @@ class PlaybackManager @Inject constructor(
                 }
                 warmUpFollowingApe()
             }
+            // 曲目切换后立即刷新 ReplayGain 增益（取当前曲目标签 + 设置）
+            applyReplayGainForCurrent()
             // 无缝播放关闭：在自动切歌（非用户手动 next）的边界处暂停，
             // 形成「曲间停顿」；Media3 默认即无缝，故 ON 时不做处理。
             if (!gaplessEnabled && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
@@ -232,6 +271,25 @@ class PlaybackManager @Inject constructor(
         override fun onPlayerError(error: PlaybackException) = handlePlayerError(error)
     }
 
+    /**
+     * 备援（standby）播放器的轻量监听器。
+     *
+     * 差异化设计：备援播放器不参与 UI/切歌编排（淡入淡出由本类统一驱动），
+     * 仅需——① 音频会话变化时把音效（均衡器/重低音/环绕）挂到它的会话上，
+     * 使交叉淡化期间两路声音都受音效影响；② 错误兜底记录日志。
+     * 它不会触发 [onMediaItemTransition]（交叉淡化窗口内只承载单首，不会自动续播）。
+     */
+    private val secondaryListener = object : Player.Listener {
+        override fun onAudioSessionIdChanged(audioSessionId: Int) {
+            audioEffectController.attachToSession(audioSessionId)
+            audioEffectController.applySettings(lastSettings)
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+            Log.w(TAG, "secondary player error: ${error.errorCodeName} ${error.message}")
+        }
+    }
+
     private val ticker = scope.launch {
         while (isActive) {
             val p = player
@@ -245,6 +303,9 @@ class PlaybackManager @Inject constructor(
             }
             // 睡眠定时剩余时间随 ticker 刷新，UI 才能显示「剩余 12:34」
             refreshSleepRemaining()
+            // 交叉淡化：主播放器临近本曲结尾（且存在下一首、未处于淡化中、已开启）时，
+            // 提前起播备援播放器承载下一首，两路音量此消彼长形成真重叠淡化。
+            if (p != null && p.isPlaying) maybeStartCrossfade(p)
             // P3-18：暂停时不需要 500ms 粒度（睡眠定时剩余也只需秒级），
             // 拉长到 2s，减少空转唤醒
             delay(if (p?.isPlaying == true) 500 else 2_000)
@@ -259,15 +320,178 @@ class PlaybackManager @Inject constructor(
         }
     }
 
-    /** 由 [PlaybackService] 在 onCreate 注入播放器与媒体会话 */
-    fun bind(player: ExoPlayer, session: MediaSession) {
+    /**
+     * 按当前曲目 + 设置的 ReplayGain 参数，刷新 [replayGainProcessor] 的线性增益。
+     * 取轨道或专辑增益取决于设置模式；关闭 ReplayGain 时增益恒为 1.0（透传）。
+     * 处理器逐缓冲读取增益，曲目切换时实时更新无爆音。
+     */
+    private fun applyReplayGainForCurrent() {
+        val p = replayGainProcessor ?: return
+        val s = lastSettings
+        val entry = _uiState.value.currentEntry ?: return
+        val rgDb = if (s.replayGainMode == PureToneSettings.RG_ALBUM) entry.rgAlbumGain else entry.rgTrackGain
+        val gain = ReplayGainAudioProcessor.computeLinearGain(s.replayGainEnabled, rgDb, s.replayGainPreampDb)
+        p.setGainLinear(gain)
+    }
+
+    // ---------- 交叉淡化（A 路线：双实例真重叠） ----------
+    //
+    // 思路：主播放器（active）正常持有完整队列并播放；临近本曲结尾时，把「下一首」交给
+    // 备援播放器（secondary）提前起播，两路音量此消彼长（主 1→0、备 0→1）形成真重叠淡化；
+    // 淡入结束后把剩余曲目补全到备援播放器、交换二者角色（MediaSession 指向新主），旧主复位为空备援。
+    // 这样就以「最小侵入」实现了双实例真重叠：交叉淡化关闭（crossfadeMs=0，默认）时，
+    // 全程走原有单播放器路径，回归无缝/曲间停顿语义，不会引入回归。
+
+    /**
+     * ticker 每 500ms 调用一次：在主播放器临近本曲结尾且存在下一首时触发淡化。
+     *
+     * 提前量 = crossfadeMs + 400ms：ticker 粒度 500ms，预留 400ms 防止错过边界
+     * （错过后主播放器会按原路径正常切歌，仅本次无淡化，不崩溃）。
+     * APE 等需异步转码的格式在边界无法精确对齐，不参与淡化（退化无缝/曲间停顿）。
+     */
+    private fun maybeStartCrossfade(p: ExoPlayer) {
+        if (crossfading || crossfadeMs <= 0 || !p.hasNextMediaItem()) return
+        val duration = p.duration.takeIf { it > 0 } ?: return
+        val remain = duration - p.currentPosition
+        if (remain > crossfadeMs + 400 || remain <= 0) return
+        val nextIndex = p.currentMediaItemIndex + 1
+        val nextEntry = _uiState.value.queue.getOrNull(nextIndex) ?: return
+        if (nextEntry.isApe) return
+        startCrossfade(p, nextIndex, nextEntry, remain)
+    }
+
+    private fun startCrossfade(p: ExoPlayer, nextIndex: Int, nextEntry: QueueEntry, remainMs: Long) {
+        val sec = secondaryPlayer ?: return
+        val rgB = replayGainProcessorB ?: return
+        // 先取出主播放器「当前项之后」的全部 MediaItem（含即将起播的下一首），供淡入结束后补全队列。
+        // 必须在 removeMediaItem 之前取，避免索引偏移。
+        val remainingItems = (nextIndex until p.mediaItemCount).mapNotNull { idx ->
+            runCatching { p.getMediaItemAt(idx) }.getOrNull()
+        }
+        if (remainingItems.isEmpty()) return
+        // 主播放器移除下一首：避免其在淡出过程中自行续播（否则重复计完成 / 重复切歌）。
+        runCatching { p.removeMediaItem(nextIndex) }
+        // 备援播放器承载下一首，音量从 0 起步
+        sec.setMediaItem(remainingItems.first())
+        sec.setVolume(0f)
+        sec.seekTo(0)
+        sec.prepare()
+        sec.play()
+        // 备援播放器施加下一首的 ReplayGain（与主播放器各自独立）
+        val s = lastSettings
+        val rgDb = if (s.replayGainMode == PureToneSettings.RG_ALBUM) nextEntry.rgAlbumGain else nextEntry.rgTrackGain
+        rgB.setGainLinear(
+            ReplayGainAudioProcessor.computeLinearGain(s.replayGainEnabled, rgDb, s.replayGainPreampDb)
+        )
+        crossfading = true
+        crossfadeOutgoing = p
+        crossfadeNextIndex = nextIndex
+        pendingCrossfadeRemaining = remainingItems.drop(1)
+        val rampMs = if (crossfadeMs.toLong() < remainMs.coerceAtLeast(1)) crossfadeMs.toLong() else remainMs.coerceAtLeast(1)
+        crossfadeJob = scope.launch {
+            val steps = if (rampMs / 50 > 1) (rampMs / 50).toInt() else 1
+            val stepMs = rampMs / steps
+            repeat(steps) { i ->
+                val t = (i + 1).toFloat() / steps
+                p.setVolume(1f - t)
+                sec.setVolume(t)
+                delay(stepMs)
+            }
+            p.setVolume(0f)
+            sec.setVolume(1f)
+            finalizeCrossfade()
+        }
+    }
+
+    /**
+     * 淡入结束（或主播放器 STATE_ENDED 兜底）：把备援提升为新主、旧主复位为空备援。
+     * [crossfading] 守卫保证幂等（渐变协程与 STATE_ENDED 回调谁先到谁收尾，另一个直接返回）。
+     */
+    private fun finalizeCrossfade() {
+        if (!crossfading) return
+        val outgoing = crossfadeOutgoing ?: run { crossfading = false; return }
+        val sec = secondaryPlayer ?: run { crossfading = false; return }
+        val nextIndex = crossfadeNextIndex
+        // 把剩余曲目补全到新主播放器，维持「主播放器持有完整剩余队列」不变量
+        if (pendingCrossfadeRemaining.isNotEmpty()) {
+            runCatching { sec.addMediaItems(pendingCrossfadeRemaining) }
+        }
+        pendingCrossfadeRemaining = emptyList()
+        crossfadeNextIndex = -1
+        crossfadeOutgoing = null
+        // MediaSession 指向新主
+        runCatching { session?.setPlayer(sec) }
+        // 交换监听器：新主挂完整 playerListener，旧主（现为备援）挂轻量 secondaryListener
+        outgoing.removeListener(playerListener)
+        outgoing.addListener(secondaryListener)
+        sec.removeListener(secondaryListener)
+        sec.addListener(playerListener)
+        // 更新字段：新主的 RG 处理器即原备援处理器实例
+        player = sec
+        replayGainProcessor = replayGainProcessorB
+        // 复位旧主（备援）音量并清空，供下次淡化复用
+        outgoing.setVolume(1f)
+        replayGainProcessorB?.setGainLinear(1f)
+        runCatching {
+            outgoing.pause()
+            outgoing.clearMediaItems()
+        }
+        crossfading = false
+        crossfadeJob = null
+        // 更新 UI：当前曲目切到下一首
+        _uiState.update { state ->
+            state.copy(
+                currentSongId = sec.currentMediaItem?.mediaId?.toLongOrNull(),
+                queueIndex = nextIndex,
+                durationMs = sec.duration.coerceAtLeast(0L)
+            )
+        }
+        widgetUpdater.requestUpdate()
+        applyReplayGainForCurrent()
+    }
+
+    /**
+     * 取消进行中的交叉淡化（用户手动切歌/拖动/换队列/停止等）。
+     * 丢弃备援播放器、复位双方音量，使后续命令在「主播放器持有完整队列」的常规状态下执行。
+     */
+    private fun cancelCrossfade() {
+        if (!crossfading) return
+        crossfadeJob?.cancel()
+        crossfadeJob = null
+        crossfading = false
+        crossfadeOutgoing = null
+        crossfadeNextIndex = -1
+        pendingCrossfadeRemaining = emptyList()
+        secondaryPlayer?.let { sec ->
+            runCatching { sec.pause() }
+            runCatching { sec.clearMediaItems() }
+            sec.setVolume(1f)
+        }
+        player?.setVolume(1f)
+        replayGainProcessorB?.setGainLinear(1f)
+    }
+
+    /** 由 [PlaybackService] 在 onCreate 注入主/备播放器、媒体会话与各自的 ReplayGain 处理器 */
+    fun bind(
+        player: ExoPlayer,
+        secondary: ExoPlayer,
+        session: MediaSession,
+        replayGainProcessor: ReplayGainAudioProcessor,
+        replayGainProcessorB: ReplayGainAudioProcessor
+    ) {
         // P3-17：防御 bind 重复调用（正常生命周期 unbind→bind 各一次，不可达）。
         // 先清上一次的 settingsJob 与监听器注册，避免重复订阅设置流 / 重复回调。
         settingsJob?.cancel()
         this.player?.removeListener(playerListener)
+        this.secondaryPlayer?.removeListener(secondaryListener)
         this.player = player
+        this.secondaryPlayer = secondary
         this.session = session
+        this.replayGainProcessor = replayGainProcessor
+        this.replayGainProcessorB = replayGainProcessorB
         player.addListener(playerListener)
+        // 备援播放器只负责「挂接音效会话」与错误兜底，不驱动 UI/切歌（淡入淡出由本类统一编排）
+        secondary.addListener(secondaryListener)
         audioEffectController.attachToSession(player.audioSessionId)
         // 由「后台 bind 兜底」临时持有的 controller：服务已起、命令已排入，稍后释放。
         // 若此时服务里已有播放内容，服务自己会保持存活（MediaSessionService 语义）。
@@ -308,8 +532,13 @@ class PlaybackManager @Inject constructor(
     fun unbind() {
         settingsJob?.cancel()
         settingsJob = null
+        crossfadeJob?.cancel()
+        crossfadeJob = null
         player?.removeListener(playerListener)
+        secondaryPlayer?.removeListener(secondaryListener)
+        cancelCrossfade()
         player = null
+        secondaryPlayer = null
         session = null
         audioEffectController.detach()
         pendingEnqueue = null
@@ -327,10 +556,13 @@ class PlaybackManager @Inject constructor(
     private fun applySettings(s: PureToneSettings) {
         lastSettings = s
         gaplessEnabled = s.gapless
+        crossfadeMs = s.crossfadeMs
         setSpeed(s.playbackSpeed)
         applyPlayOrder(s)
         applySleepTimer(s)
         audioEffectController.applySettings(s)
+        // ReplayGain：开关 / 模式 / preamp 变化时刷新当前曲目的增益
+        applyReplayGainForCurrent()
     }
 
     /**
@@ -446,6 +678,7 @@ class PlaybackManager @Inject constructor(
 
     /** 设置队列并播放 */
     fun setQueueAndPlay(songs: List<SongEntity>, startIndex: Int = 0, startPositionMs: Long = 0L) {
+        cancelCrossfade()
         val p = player
         if (p == null) {
             // P1-3：显式点歌优先于挂起的续播（理由同 bind）——不清理的话，
@@ -476,7 +709,7 @@ class PlaybackManager @Inject constructor(
         // 就说明自己是过期任务，必须放弃——否则会用旧队列覆盖掉新队列
         // （表现为「点了新歌，播的却是上一首/旧队列」）。
         val generation = ++queueGeneration
-        val entries = songs.map { it.toQueueEntry() }
+        val entries = songs.map { it.toQueueEntry(nextQueueKey()) }
 
         // 只转码「即将播放的这一首」：整队预转码会让 20 首 APE 的专辑等几十秒才出声。
         // 其余 APE 在切歌/出错时按需转码（见 playAtIndex / handlePlayerError / warmUpFollowingApe）。
@@ -527,11 +760,13 @@ class PlaybackManager @Inject constructor(
             )
         }
         saveSessionNow()
+        applyReplayGainForCurrent()
         if (!autoPlay) warmUpFollowingApe()
     }
 
     /** 追加到队列末尾（不打断当前播放）；player 未就绪时挂起，bind 后执行 */
     fun enqueue(songs: List<SongEntity>) {
+        cancelCrossfade()
         val p = player
         if (p == null) {
             pendingEnqueue = (pendingEnqueue ?: emptyList()) + songs
@@ -542,7 +777,7 @@ class PlaybackManager @Inject constructor(
         // P2-13：先递增代次，使任何在途的 setQueueAndPlay（如 APE 首播挂起在 ensureWav）
         // 恢复后检测到代次不符而放弃，避免用户的追加被旧队列覆盖。
         queueGeneration++
-        val entries = songs.map { it.toQueueEntry() }
+        val entries = songs.map { it.toQueueEntry(nextQueueKey()) }
         scope.launch {
             p.addMediaItems(songs.map { it.toMediaItemLazy() })
             _uiState.update { it.copy(queue = it.queue + entries) }
@@ -555,6 +790,7 @@ class PlaybackManager @Inject constructor(
      * 队列为空或尚未起播时退化为 [setQueueAndPlay]，保证首次操作也能出声。
      */
     fun playNext(songs: List<SongEntity>) {
+        cancelCrossfade()
         val p = player
         if (p == null || _uiState.value.queue.isEmpty()) {
             setQueueAndPlay(songs)
@@ -563,7 +799,7 @@ class PlaybackManager @Inject constructor(
         if (songs.isEmpty()) return
         // P2-13：先递增代次，使在途 setQueueAndPlay 恢复后失效，避免插播被旧队列覆盖。
         queueGeneration++
-        val entries = songs.map { it.toQueueEntry() }
+        val entries = songs.map { it.toQueueEntry(nextQueueKey()) }
         scope.launch {
             val insertAt = (_uiState.value.queueIndex + 1).coerceIn(0, _uiState.value.queue.size)
             p.addMediaItems(insertAt, songs.map { it.toMediaItemLazy() })
@@ -576,6 +812,7 @@ class PlaybackManager @Inject constructor(
 
     /** 播放队列中指定索引（APE 按需转码后替换 URI） */
     fun playAtIndex(index: Int) {
+        cancelCrossfade()
         // P2-13：服务未就绪时旧实现写 PendingPlay(emptyList(), index, 0L)，
         // bind 后 doSetQueueAndPlay 在 songs.isEmpty() 处直接 return → 点了队列项却无声。
         // 改为标记「待恢复会话」，服务起来后由 bind() 真正恢复上次队列。
@@ -601,6 +838,7 @@ class PlaybackManager @Inject constructor(
      * player.currentMediaItemIndex 已左移，UI 若按旧索引取 currentEntry 会显示错歌。
      */
     fun removeFromQueue(index: Int) {
+        cancelCrossfade()
         val p = player ?: return
         if (index !in _uiState.value.queue.indices) return
         // P2-13：先递增代次，使在途 setQueueAndPlay 恢复后失效，避免删除被旧队列还原。
@@ -619,10 +857,34 @@ class PlaybackManager @Inject constructor(
     }
 
     /**
+     * 队列内拖拽重排：把 [from] 移到 [to] 位置，并同步当前播放索引。
+     *
+     * [androidx.media3.common.Player.moveMediaItem] 会自动维护正在播放项的
+     * currentMediaItemIndex（当前曲被移动时索引跟随），故直接用真实索引对齐
+     * [PlaybackUiState.queueIndex]，比 [removeFromQueue] 的手动计算更稳。
+     * 同步清除 APE 重试标记（按索引记，重排后失效，理由同 [clearQueue]）。
+     */
+    fun moveQueueItem(from: Int, to: Int) {
+        cancelCrossfade()
+        val p = player ?: return
+        val queue = _uiState.value.queue
+        if (from !in queue.indices || to !in queue.indices || from == to) return
+        // P2-13：先递增代次，使在途 setQueueAndPlay 恢复后失效，避免重排被旧队列覆盖。
+        queueGeneration++
+        p.moveMediaItem(from, to)
+        _uiState.update { state ->
+            val newQueue = state.queue.toMutableList().also { it.add(to, it.removeAt(from)) }
+            state.copy(queue = newQueue, queueIndex = p.currentMediaItemIndex)
+        }
+        apeRetryIndex = -1
+    }
+
+    /**
      * 清空队列。只重置「瞬时」字段，保留用户偏好（播放顺序/随机/倍速），
      * 否则 UI 显示的播放顺序会和播放器真实状态不一致（历史 bug）。
      */
     fun clearQueue() {
+        cancelCrossfade()
         player?.clearMediaItems()
         _uiState.update { state ->
             state.copy(
@@ -645,6 +907,7 @@ class PlaybackManager @Inject constructor(
     // ---------- 播放控制 ----------
 
     fun togglePlayPause() {
+        cancelCrossfade()
         val p = player
         if (p == null) {
             pendingRestore = true
@@ -655,6 +918,7 @@ class PlaybackManager @Inject constructor(
     }
 
     fun play() {
+        cancelCrossfade()
         val p = player
         if (p == null) {
             pendingRestore = true
@@ -669,11 +933,13 @@ class PlaybackManager @Inject constructor(
     }
 
     fun pause() {
+        cancelCrossfade()
         player?.pause()
         saveSessionNow()
     }
 
     fun stop() {
+        cancelCrossfade()
         player?.stop()
         player?.clearMediaItems()
         // P3-21：旧实现整包重置 uiState，把 repeatMode / shuffle / speed 一并打回默认，
@@ -707,6 +973,7 @@ class PlaybackManager @Inject constructor(
     }
 
     fun next() {
+        cancelCrossfade()
         val p = player ?: return
         if (p.hasNextMediaItem()) p.seekToNextMediaItem()
         else if (_uiState.value.repeatMode == RepeatMode.ALL && p.mediaItemCount > 0) {
@@ -725,11 +992,13 @@ class PlaybackManager @Inject constructor(
     }
 
     fun previous() {
+        cancelCrossfade()
         val p = player ?: return
         if (p.hasPreviousMediaItem()) p.seekToPreviousMediaItem() else p.seekTo(0L)
     }
 
     fun seekTo(positionMs: Long) {
+        cancelCrossfade()
         val p = player ?: return
         p.seekTo(positionMs.coerceAtLeast(0L))
         _uiState.update { it.copy(positionMs = positionMs.coerceAtLeast(0L)) }
@@ -1077,14 +1346,17 @@ class PlaybackManager @Inject constructor(
         }
     }
 
-    private fun SongEntity.toQueueEntry() = QueueEntry(
+    private fun SongEntity.toQueueEntry(key: Long) = QueueEntry(
         songId = id,
         title = title,
         artist = artist,
         coverUri = coverUri?.let { Uri.parse(it) },
         durationMs = duration,
         isApe = isApe,
-        filePath = path
+        filePath = path,
+        key = key,
+        rgTrackGain = rgTrackGain,
+        rgAlbumGain = rgAlbumGain
     )
 }
 

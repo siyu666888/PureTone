@@ -60,7 +60,8 @@ class PureToneDatabaseMigrationTest {
                 PureToneDatabase.MIGRATION_2_3,
                 PureToneDatabase.MIGRATION_3_4,
                 PureToneDatabase.MIGRATION_4_5,
-                PureToneDatabase.MIGRATION_5_6
+                PureToneDatabase.MIGRATION_5_6,
+                PureToneDatabase.MIGRATION_6_7
             )
             .build()
 
@@ -106,7 +107,7 @@ class PureToneDatabaseMigrationTest {
         // 只注册 4 → 5：验证纯索引迁移 + v5 schema 校验（索引名/列序与实体
         // @Index 注解不一致会在这里抛错）
         val db = Room.databaseBuilder(context, PureToneDatabase::class.java, dbFile.absolutePath)
-            .addMigrations(PureToneDatabase.MIGRATION_4_5, PureToneDatabase.MIGRATION_5_6)
+            .addMigrations(PureToneDatabase.MIGRATION_4_5, PureToneDatabase.MIGRATION_5_6, PureToneDatabase.MIGRATION_6_7)
             .build()
 
         // 1) 触发真实打开：跑迁移 + schema 校验，数据完整保留
@@ -136,7 +137,7 @@ class PureToneDatabaseMigrationTest {
 
         // 只注册 5 → 6：验证纯加列迁移 + v6 schema 校验（缺列 / 列类型不一致会抛错）
         val db = Room.databaseBuilder(context, PureToneDatabase::class.java, dbFile.absolutePath)
-            .addMigrations(PureToneDatabase.MIGRATION_5_6)
+            .addMigrations(PureToneDatabase.MIGRATION_5_6, PureToneDatabase.MIGRATION_6_7)
             .build()
 
         // 1) 触发真实打开：跑迁移 + schema 校验，数据完整保留
@@ -161,6 +162,42 @@ class PureToneDatabaseMigrationTest {
         assertEquals(0, db.songDao().getSongsByAlbumName("Album", "other_volume").first().size)
         // 未匹配到的专辑名返回空
         assertEquals(0, db.songDao().getSongsByAlbumName("不存在的专辑", "").first().size)
+
+        db.close()
+    }
+
+    @Test
+    fun `migrate 6 to 7 adds replaygain columns and keeps data`() = runTest {
+        createV6DatabaseWithData()
+
+        // 只注册 6 → 7：验证纯加列迁移 + v7 schema 校验
+        // （rg_track_gain / rg_album_gain 可空 REAL、rg_analyzed NOT NULL DEFAULT 0，
+        // 缺列 / 类型 / 默认值不一致都会在 Room 打开路径的 schema 校验里抛错）
+        val db = Room.databaseBuilder(context, PureToneDatabase::class.java, dbFile.absolutePath)
+            .addMigrations(PureToneDatabase.MIGRATION_6_7)
+            .build()
+
+        // 1) 触发真实打开：跑迁移 + schema 校验，数据完整保留
+        assertEquals(1, db.songDao().count())
+        val song = db.songDao().getById(SONG_ID)!!
+        assertEquals("Song A", song.title)
+
+        // 2) 三列真实存在，既有行默认值正确
+        val cols = columnNamesOf(db, "songs")
+        assertTrue("songs 缺 rg_track_gain 列：$cols", cols.contains("rg_track_gain"))
+        assertTrue("songs 缺 rg_album_gain 列：$cols", cols.contains("rg_album_gain"))
+        assertTrue("songs 缺 rg_analyzed 列：$cols", cols.contains("rg_analyzed"))
+        // 既有行未分析过 → 默认 false / null
+        assertEquals(false, song.rgAnalyzed)
+        assertEquals(null, song.rgTrackGain)
+        assertEquals(null, song.rgAlbumGain)
+
+        // 3) 回填一条真实 RG 标签能被写入并读回（验证列可写、类型正确）
+        db.songDao().updateReplayGain(SONG_ID, -6.42f, -7.1f)
+        val reread = db.songDao().getById(SONG_ID)!!
+        assertEquals(true, reread.rgAnalyzed)
+        assertEquals(-6.42f, reread.rgTrackGain!!, 0.001f)
+        assertEquals(-7.1f, reread.rgAlbumGain!!, 0.001f)
 
         db.close()
     }
@@ -332,6 +369,42 @@ class PureToneDatabaseMigrationTest {
                     favorite, play_count, last_played_at, user_edited)
                 VALUES ($SONG_ID, 100, 'Song A', 'Artist', 'Album', 1, 200000, '/music/a.mp3', 1000,
                     NULL, 'audio/mpeg', 2024, 1, 1000, 2000, 1, 3, 99, 0)
+                """.trimIndent()
+            )
+        }
+        helper.close()
+    }
+
+    /** 按导出的 6.json 建库并灌入数据（v6 真实库，尚无 ReplayGain 三列） */
+    private fun createV6DatabaseWithData() {
+        val schema = readSchema(6)
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbFile.absolutePath)
+                .callback(object : SupportSQLiteOpenHelper.Callback(6) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        schema.first.forEach { (table, ddl) -> db.execSQL(ddl) }
+                        schema.second.forEach { db.execSQL(it) }
+                    }
+
+                    override fun onUpgrade(
+                        db: SupportSQLiteDatabase,
+                        oldVersion: Int,
+                        newVersion: Int
+                    ) = Unit
+                })
+                .build()
+        )
+        helper.writableDatabase.use { db ->
+            // 不写 rg_* 三列：依赖 6→7 迁移加列 + 默认值的兜底
+            db.execSQL(
+                """
+                INSERT INTO songs (id, media_store_id, title, artist, album, album_id, volume_name,
+                    duration, path, size, cover_uri, mimeType, year, track_number, date_added,
+                    date_modified, favorite, play_count, last_played_at, user_edited)
+                VALUES ($SONG_ID, 100, 'Song A', 'Artist', 'Album', 1, '',
+                    200000, '/music/a.mp3', 1000, NULL, 'audio/mpeg', 2024, 1, 1000, 2000,
+                    1, 3, 99, 0)
                 """.trimIndent()
             )
         }

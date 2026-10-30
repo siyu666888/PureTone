@@ -78,6 +78,20 @@ data class PureToneSettings(
     // 故 OFF 规整为 ALL：SEQUENTIAL 始终表示「列表循环」，与图标一致。
     val repeatMode: String = REPEAT_ALL,
     val shuffle: Boolean = false,
+    /**
+     * 交叉淡化（Crossfade）时长（毫秒）。0 = 关闭（默认）。
+     * 仅对无损/有损常规格式生效；APE 等需转码的格式在边界处退化为无缝/曲间停顿，
+     * 不参与淡入淡出（转码是异步挂起操作，无法在边界精确对齐）。
+     */
+    val crossfadeMs: Int = 0,
+
+    // ---------- replaygain_ ----------
+    /** ReplayGain 总开关 */
+    val replayGainEnabled: Boolean = false,
+    /** ReplayGain 模式：TRACK（按曲目） / ALBUM（按专辑） */
+    val replayGainMode: String = RG_TRACK,
+    /** ReplayGain preamp（dB），范围 -12 ~ +12，叠加在 RG 增益之上 */
+    val replayGainPreampDb: Float = 0.0f,
 
     // ---------- eq_ ----------
     val eqEnabled: Boolean = false,
@@ -116,10 +130,20 @@ data class PureToneSettings(
 
         const val EQ_BAND_COUNT = 10
 
+        const val RG_TRACK = "TRACK"
+        const val RG_ALBUM = "ALBUM"
+        const val RG_PREAMP_MIN_DB = -12f
+        const val RG_PREAMP_MAX_DB = 12f
+
         /** 自定义睡眠定时的分钟数下限（1 分钟） */
         const val SLEEP_MIN_MINUTES = 1
         /** 自定义睡眠定时的分钟数上限（10 小时） */
         const val SLEEP_MAX_MINUTES = 600
+
+        /** 交叉淡化时长下限（0 = 关） */
+        const val CROSSFADE_MIN_MS = 0
+        /** 交叉淡化时长上限（12 秒，过长会吞掉整首短歌） */
+        const val CROSSFADE_MAX_MS = 12_000
     }
 }
 
@@ -149,6 +173,11 @@ class SettingsRepository @Inject constructor(
         val sleepTimerWallDeadline = longPreferencesKey("playback_sleep_timer_wall_deadline")
         val repeatMode = stringPreferencesKey("playback_repeat_mode")
         val shuffle = booleanPreferencesKey("playback_shuffle")
+        val crossfadeMs = intPreferencesKey("playback_crossfade_ms")
+        // replaygain_
+        val replayGainEnabled = booleanPreferencesKey("replaygain_enabled")
+        val replayGainMode = stringPreferencesKey("replaygain_mode")
+        val replayGainPreamp = floatPreferencesKey("replaygain_preamp_db")
         // eq_
         val eqEnabled = booleanPreferencesKey("eq_enabled")
         val eqPreset = stringPreferencesKey("eq_preset")
@@ -188,6 +217,10 @@ class SettingsRepository @Inject constructor(
                 sleepTimerWallDeadlineMs = wallDeadlineMs,
                 repeatMode = prefs[Keys.repeatMode] ?: defaults.repeatMode,
                 shuffle = prefs[Keys.shuffle] ?: defaults.shuffle,
+                crossfadeMs = prefs[Keys.crossfadeMs] ?: defaults.crossfadeMs,
+                replayGainEnabled = prefs[Keys.replayGainEnabled] ?: defaults.replayGainEnabled,
+                replayGainMode = prefs[Keys.replayGainMode] ?: defaults.replayGainMode,
+                replayGainPreampDb = prefs[Keys.replayGainPreamp] ?: defaults.replayGainPreampDb,
                 eqEnabled = prefs[Keys.eqEnabled] ?: defaults.eqEnabled,
                 eqPreset = prefs[Keys.eqPreset] ?: defaults.eqPreset,
                 eqBandLevels = decodeBands(prefs[Keys.eqBandLevels]) ?: defaults.eqBandLevels,
@@ -301,6 +334,22 @@ class SettingsRepository @Inject constructor(
     }
     suspend fun setRepeatMode(mode: String) = edit { it[Keys.repeatMode] = mode }
     suspend fun setShuffle(enabled: Boolean) = edit { it[Keys.shuffle] = enabled }
+    /**
+     * 交叉淡化时长（毫秒）。0 = 关闭；其余钳制到 [CROSSFADE_MIN_MS, CROSSFADE_MAX_MS]。
+     * 经 DataStore 流回 [applySettings]，冷启动/设置变更都实时生效。
+     */
+    suspend fun setCrossfadeMs(ms: Int) = edit {
+        it[Keys.crossfadeMs] = ms.coerceIn(PureToneSettings.CROSSFADE_MIN_MS, PureToneSettings.CROSSFADE_MAX_MS)
+    }
+
+    // ---------- replaygain_ ----------
+    suspend fun setReplayGainEnabled(enabled: Boolean) = edit { it[Keys.replayGainEnabled] = enabled }
+    suspend fun setReplayGainMode(mode: String) = edit {
+        if (mode in setOf(PureToneSettings.RG_TRACK, PureToneSettings.RG_ALBUM)) it[Keys.replayGainMode] = mode
+    }
+    suspend fun setReplayGainPreampDb(db: Float) = edit {
+        it[Keys.replayGainPreamp] = db.coerceIn(PureToneSettings.RG_PREAMP_MIN_DB, PureToneSettings.RG_PREAMP_MAX_DB)
+    }
 
     suspend fun setEqEnabled(enabled: Boolean) = edit { it[Keys.eqEnabled] = enabled }
     suspend fun setEqPreset(preset: String) = edit { it[Keys.eqPreset] = preset }

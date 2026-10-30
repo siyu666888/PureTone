@@ -1,0 +1,91 @@
+PureTone v1.7.0 交付说明（2026-10-30）
+========================================
+
+两个 P1 音频特性：① ReplayGain 响度归一；② 交叉淡化（Crossfade）。
+版本：v1.6.0 (versionCode 23) → v1.7.0 (versionCode 24)
+数据库：Room schema v6 → v7（新增 rg_track_gain / rg_album_gain / rg_analyzed 三列）。
+
+--------------------------------------------------
+一、ReplayGain 响度归一（ffprobe 自动提取 + 实时增益）
+--------------------------------------------------
+1. 数据层（schema v7）
+   - SongEntity 新增三列：rg_track_gain(REAL, 可空) / rg_album_gain(REAL, 可空) /
+     rg_analyzed(INTEGER NOT NULL DEFAULT 0)。
+   - PureToneDatabase.version = 7，新增 MIGRATION_6_7（ALTER TABLE songs ADD COLUMN …）。
+   - SongDao 新增 getSongsNotAnalyzed(limit) 与 updateReplayGain(id, track, album)。
+   - Room 导出 schema 7.json；迁移测试覆盖 v6→v7 并复用既有 v4→v5→v6 链路（均补登 MIGRATION_6_7）。
+
+2. 标签提取（ReplayGainExtractor）
+   - 复用 ffmpeg-kit-min AAR 内的 FFprobeKit.getMediaInformation(path)（同步阻塞，须 IO）。
+   - 先查格式级 tags（MP3/AAC 的 ID3/APEv2：REPLAYGAIN_TRACK_GAIN / REPLAYGAIN_ALBUM_GAIN），
+     再查各 stream.tags（FLAC/Ogg/Opus 的 Vorbis 注释）。
+   - parseGainDb(raw)：解析 "-6.42 dB" 等，逗号当小数点，返回 null 表示无法解析（纯函数）。
+
+3. 实时增益（ReplayGainAudioProcessor : BaseAudioProcessor）
+   - Media3 1.4.1 的 ExoPlayer.Builder 无 setAudioProcessors；走 DefaultAudioSink
+     + 自定义 DefaultRenderersFactory 把带处理器的 sink 注入 MediaCodecAudioRenderer。
+   - onConfigure 仅对 PCM_16BIT / PCM_FLOAT 激活，否则透传。
+   - queueInput 按编码读 short/float，乘线性增益后写 replaceOutputBuffer；
+     |sample×gain|>1 时用 tanh 软限幅防削波（衰减场景零染色）。
+   - computeLinearGain(enabled, rgDb, preampDb) = 10^((rg+preamp)/20)；关闭恒为 1.0。
+   - 增益由 PlaybackManager 在切歌/设参时逐缓冲实时 setGainLinear（无爆音）。
+
+4. 回填与接线
+   - MusicRepository.analyzeReplayGainBatch(limit=60)：取未分析歌曲，IO 限并发 2，
+     async+awaitAll 跑提取，非 null 即写回（null 留待下次重试，不阻塞 UI）。
+   - LibraryViewModel.scan()：syncLibrary() 之后追加 analyzeReplayGainBatch()。
+   - PlaybackManager：QueueEntry 透传 rgTrackGain/rgAlbumGain；onMediaItemTransition /
+     doSetQueueAndPlay / applySettings 各刷新一次当前曲目增益。
+
+5. 设置页 UI（SettingsScreen 音效组）
+   - ReplayGain 开关 + TRACK/ALBUM 模式分控 + preamp 滑杆（−12~+12 dB）。
+   - SettingsRepository 新增 replayGainEnabled / replayGainMode / replayGainPreampDb 三项，
+     DataStore 键 replaygain_enabled / replaygain_mode / replaygain_preamp_db。
+
+--------------------------------------------------
+二、交叉淡化 Crossfade（双实例真重叠，A 路线）
+--------------------------------------------------
+1. 架构
+   - PlaybackService 创建两个 ExoPlayer 实例（player 主 + playerB 备援），各自携带独立的
+     ReplayGain 处理器链（交叉淡化时两路增益不同，必须各自施加）。
+   - MediaSession 默认绑主播放器；淡化窗口内把下一首交给备援播放器提前起播，
+     两路音量此消彼长（主 1→0、备 0→1）形成真重叠淡化；淡入结束后交换二者角色
+     （session.setPlayer(新主)），旧主复位为空备援复用。
+   - 交叉淡化关闭（crossfadeMs=0，默认）时，全程走原单播放器路径，回归无缝/曲间停顿，零回归。
+
+2. 触发与收尾
+   - ticker 每 500ms 检查：主播放器临近本曲结尾（remain <= crossfadeMs+400ms）且存在下一首
+     且下一首非 APE（APE 需异步转码、边界无法对齐，退化无缝/曲间停顿）时启动淡化。
+   - 启动：取出主播放器「当前项之后」的全部 MediaItem；主播放器 removeMediaItem(nextIndex)
+     防其自身在淡出中续播；备援 setMediaItem(next) 音量 0 起播；备援施加下一首 RG 增益。
+   - 渐变协程：按 rampMs(=min(crossfadeMs, remain)) 分 ~50ms 步长调两路音量。
+   - 收尾 finalizeCrossfade（渐变协程或主播放器 STATE_ENDED 的幂等兜底谁先到谁执行）：
+     把剩余曲目 addMediaItems 补全到新主（维持「主播放器持完整队列」不变量）、交换监听器
+     （新主挂 playerListener，旧主挂轻量 secondaryListener）、session.setPlayer、更新 uiState。
+   - cancelCrossfade：用户在淡化中手动切歌/拖动/换队列/停止等时丢弃备援、复位音量，
+     使后续命令在常规单播放器状态下执行（next/previous/seekTo/setQueueAndPlay/enqueue/
+     playNext/playAtIndex/removeFromQueue/moveQueueItem/clearQueue/stop/togglePlayPause/play/pause 均先调用）。
+
+3. 音效双会话
+   - AudioEffectController 重构为多会话：以 audioSessionId 为键维护一组效果实例，
+     主/备两个播放器各自会话都受同一套均衡器/重低音/环绕影响；attachToSession 幂等，
+     detach 释放全部。
+
+4. 设置页 UI（SettingsScreen 播放组）
+   - 交叉淡化滑杆：0（关）~ 12 秒，步长 500ms。
+   - SettingsRepository 新增 crossfadeMs（键 playback_crossfade_ms），DataStore 流回 applySettings。
+
+--------------------------------------------------
+三、测试与构建
+--------------------------------------------------
+- 单测新增/覆盖：ReplayGainMathTest（parseGainDb / computeLinearGain / applySample 纯函数）、
+  PureToneDatabaseMigrationTest（v6→v7 + 既有 v4~v6 链路补登 MIGRATION_6_7）。
+- 全量 testDebugUnitTest 绿灯；assembleDebug / assembleRelease 绿灯（R8 通过）。
+- 注意：交叉淡化与 ReplayGain 的「实际听感」需在真机验证（模拟器/CI 无法验证音频输出）。
+
+--------------------------------------------------
+四、已知风险 / 待办
+--------------------------------------------------
+- 交叉淡化为首次落地，建议真机试听不同时长（3s/6s/12s）与边界（列表末首、单曲循环、
+  随机模式、APE 相邻）确认无爆音/抢拍/双计完成。
+- 真机验证后建议打 GitHub Release 并跑 CI。

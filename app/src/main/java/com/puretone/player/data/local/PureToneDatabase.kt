@@ -39,6 +39,11 @@ import com.puretone.player.data.local.entity.SongEntity
  *              使不同卷同名 album_id 被误判为同一张专辑、专辑详情串页。专辑标识改为
  *              (volumeName, albumId) 复合键，volume_name 用 ALTER 加列、默认空串，
  *              旧数据按「主卷」归类（SD 卡歌曲重新扫描后即按真实卷名隔离）。
+ * version 7 —— ReplayGain（P1）：曲库新增 [SongEntity.rgTrackGain] /
+ *              [SongEntity.rgAlbumGain] / [SongEntity.rgAnalyzed] 三列。
+ *              rg_track_gain / rg_album_gain 为 REAL 可空（存 dB，NULL = 未分析或无标签），
+ *              rg_analyzed 为 INTEGER NOT NULL DEFAULT 0（是否已跑过 ffprobe）。
+ *              纯 ALTER 加列，无表重建、无数据搬运；ffprobe 提取由同步流程异步回填。
  * schema JSON 由 KSP room.schemaLocation 导出至 app/schemas，供后续迁移校验。
  */
 @Database(
@@ -48,7 +53,7 @@ import com.puretone.player.data.local.entity.SongEntity
         PlaylistSongEntity::class,
         PlayHistoryEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 abstract class PureToneDatabase : RoomDatabase() {
@@ -204,6 +209,25 @@ abstract class PureToneDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     "ALTER TABLE `songs` ADD COLUMN `volume_name` TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+
+        /**
+         * v6 → v7：ReplayGain 三列（P1）。
+         *
+         * rg_track_gain / rg_album_gain 为 REAL 可空——NULL 既能表示「尚未分析」，
+         * 也能表示「分析过但文件无标签」；为区分二者，另用 rg_analyzed 标志位
+         * （INTEGER NOT NULL DEFAULT 0）标记是否已跑过 ffprobe。同步流程只挑
+         * `rg_analyzed = 0` 的歌曲分析，避免每次重扫都重复调用 ffprobe。
+         * 纯加列、无数据搬运、无需重建表。
+         */
+        val MIGRATION_6_7: Migration = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `songs` ADD COLUMN `rg_track_gain` REAL")
+                db.execSQL("ALTER TABLE `songs` ADD COLUMN `rg_album_gain` REAL")
+                db.execSQL(
+                    "ALTER TABLE `songs` ADD COLUMN `rg_analyzed` INTEGER NOT NULL DEFAULT 0"
                 )
             }
         }

@@ -37,6 +37,9 @@ import javax.inject.Inject
 /**
  * 曲库视图模型：暴露歌曲/最近播放/歌单流，封装扫描与播放动作。
  */
+/** 智能歌单默认取前 N 首 */
+private const val SMART_PLAYLIST_LIMIT = 50
+
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
     private val repo: MusicRepository,
@@ -58,6 +61,18 @@ class LibraryViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val recentlyPlayed: StateFlow<List<SongEntity>> = repo.observeRecentlyPlayed(50)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** 智能歌单：最近添加（最近入库的 N 首，按下库时间倒序） */
+    val recentlyAdded: StateFlow<List<SongEntity>> = repo
+        .observeLibrarySorted(SongSortOrder.DATE_ADDED)
+        .map { it.take(SMART_PLAYLIST_LIMIT) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** 智能歌单：最常播放 Top N（按 play_count 倒序） */
+    val topSongs: StateFlow<List<SongEntity>> = repo
+        .observeLibrarySorted(SongSortOrder.PLAY_COUNT)
+        .map { it.take(SMART_PLAYLIST_LIMIT) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val playlists = repo.observePlaylists()
@@ -134,6 +149,9 @@ class LibraryViewModel @Inject constructor(
         try {
             isScanning.value = true
             runCatching { repo.syncLibrary() }.onSuccess { lastSync.value = it }
+            // ReplayGain 回填：同步后挑一批未分析歌曲跑 ffprobe（ffprobe 较重，分批进行，
+            // 多次扫描逐步收敛，不会阻塞 UI）；失败/无标签的歌曲留待下次重试。
+            runCatching { repo.analyzeReplayGainBatch() }
         } finally {
             isScanning.value = false
             scanMutex.unlock()

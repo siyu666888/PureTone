@@ -40,7 +40,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.rounded.DragHandle
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -359,15 +363,28 @@ fun PlayerScreen(
                         modifier = Modifier.padding(vertical = 24.dp)
                     )
                 } else {
-                    LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
-                        // 注意：队列允许同一首歌出现多次，key 不能只用 songId，故沿用位置索引
-                        itemsIndexed(state.queue) { index, q ->
-                            QueueRow(
-                                entry = q,
-                                isCurrent = index == state.queueIndex,
-                                onClick = { vm.playAtIndex(index) },
-                                onRemove = { vm.removeFromQueue(index) }
-                            )
+                    val queueListState = rememberLazyListState()
+                    val reorderableState = rememberReorderableLazyListState(queueListState) { from, to ->
+                        vm.moveQueueItem(from.index, to.index)
+                    }
+                    LazyColumn(
+                        state = queueListState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 400.dp)
+                    ) {
+                        // 用 QueueEntry.key 作稳定 key（同一首歌可多次入队，位置索引不稳定）
+                        items(state.queue, key = { it.key }) { q ->
+                            val idx = state.queue.indexOf(q)
+                            ReorderableItem(reorderableState, key = q.key) { _ ->
+                                QueueRow(
+                                    entry = q,
+                                    isCurrent = q.key == state.queue.getOrNull(state.queueIndex)?.key,
+                                    onClick = { if (idx >= 0) vm.playAtIndex(idx) },
+                                    onRemove = { if (idx >= 0) vm.removeFromQueue(idx) },
+                                    dragHandle = Modifier.draggableHandle()
+                                )
+                            }
                         }
                     }
                 }
@@ -914,11 +931,13 @@ private fun QueueRow(
     entry: QueueEntry,
     isCurrent: Boolean,
     onClick: () -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+    dragHandle: Modifier = Modifier
 ) {
     val scheme = MaterialTheme.colorScheme
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(if (isCurrent) scheme.primaryContainer else Color.Transparent)
             .clickable(onClick = onClick)
@@ -987,6 +1006,13 @@ private fun QueueRow(
                 Icons.Rounded.RemoveCircleOutline,
                 contentDescription = "从队列移除",
                 tint = scheme.onSurfaceVariant
+            )
+        }
+        IconButton(onClick = {}, modifier = dragHandle) {
+            Icon(
+                Icons.Rounded.DragHandle,
+                contentDescription = "拖拽排序",
+                tint = scheme.onSurfaceVariant.copy(alpha = 0.55f)
             )
         }
     }

@@ -91,7 +91,29 @@ data class SongEntity(
      * 为 true 时曲库同步不再用 MediaStore 覆盖这些展示字段，保留用户修正。
      */
     @ColumnInfo(name = "user_edited")
-    val userEdited: Boolean = false
+    val userEdited: Boolean = false,
+
+    /**
+     * ReplayGain 轨道增益（dB，可空 = 未分析 / 无标签）。
+     * 由 ffprobe 在同步时异步提取写入；播放时与 preamp 叠加成线性增益，
+     * 经 [com.puretone.player.playback.ReplayGainAudioProcessor] 应用到 PCM。
+     */
+    @ColumnInfo(name = "rg_track_gain")
+    val rgTrackGain: Float? = null,
+
+    /**
+     * ReplayGain 专辑增益（dB，可空 = 未分析 / 无标签）。
+     * 设置页切到「专辑模式」时优先用此值（曲目间响度更一致）。
+     */
+    @ColumnInfo(name = "rg_album_gain")
+    val rgAlbumGain: Float? = null,
+
+    /**
+     * ReplayGain 是否已分析（无论是否提取到标签，分析过即置 true）。
+     * 同步时只分析 `rg_analyzed = 0` 的歌曲，避免每次重扫都跑 ffprobe。
+     */
+    @ColumnInfo(name = "rg_analyzed")
+    val rgAnalyzed: Boolean = false
 ) {
     /** 是否 APE 格式（Monkey's Audio，需 FFmpeg 转码回退播放） */
     val isApe: Boolean
