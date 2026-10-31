@@ -11,8 +11,8 @@ plugins {
  * 同时用于 versionName 与产物文件名（archivesName），避免二者漂移。
  * 发版时只改这里（版本号按语义化版本递增）。
  */
-val appVersionName = "1.7.6"
-val appVersionCode = 30
+val appVersionName = "1.7.7"
+val appVersionCode = 31
 
 /**
  * 产物文件名包含完整版本号。
@@ -178,6 +178,10 @@ dependencies {
 
     // 桌面小部件（Glance：Compose 语法写 AppWidget）
     implementation(libs.glance.appwidget)
+
+    // DLNA/UPnP 投屏（M1）：设备发现 + 本地文件直投 + 播控，coroutine-first Kotlin API。
+    // 仅发布在 JitPack（见 settings.gradle.kts 仓库声明）。
+    implementation("com.github.yinnho:UPnPCast:v1.3.0")
 
     // 协程
     implementation(libs.kotlinx.coroutines.android)

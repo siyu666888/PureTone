@@ -49,10 +49,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.filled.CastConnected
+import androidx.compose.material.icons.outlined.Cast
 import androidx.compose.material.icons.outlined.Equalizer
 import androidx.compose.material.icons.rounded.AddCircleOutline
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.RemoveCircleOutline
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -96,7 +100,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
 import com.puretone.player.lyrics.ParsedLyrics
+import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.playback.QueueEntry
+import com.puretone.player.playback.cast.CastDevice
 import com.puretone.player.playback.toPlayMode
 import com.puretone.player.ui.MetadataViewModel
 import com.puretone.player.ui.PlayerViewModel
@@ -130,9 +136,11 @@ fun PlayerScreen(
     val lyrics by vm.lyrics.collectAsStateWithLifecycle()
     val favorite by vm.favorite.collectAsStateWithLifecycle()
     val currentSong by vm.currentSong.collectAsStateWithLifecycle()
+    val castState by vm.castState.collectAsStateWithLifecycle()
     val entry = state.currentEntry
     var showQueue by remember { mutableStateOf(false) }
     var showInfo by remember { mutableStateOf(false) }
+    var showCastPicker by remember { mutableStateOf(false) }
     var lyricFontSize by remember { mutableIntStateOf(18) }
     // P2-4：封面/歌词翻转态提升到此——「歌词」可见按钮与点按封面翻转共享同一状态
     var coverFlipped by remember { mutableStateOf(false) }
@@ -158,6 +166,15 @@ fun PlayerScreen(
                 navigationIcon = {
                     IconButton(onClick = navController::popBackStack) {
                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    // M1：投屏入口。投屏进行中显示「已连接」图标，点击仍打开设备选择（可换设备/停止）。
+                    IconButton(onClick = { showCastPicker = true }) {
+                        Icon(
+                            if (castState.isCasting) Icons.Filled.CastConnected else Icons.Outlined.Cast,
+                            contentDescription = if (castState.isCasting) "投屏中（点按管理）" else "投屏"
+                        )
                     }
                 }
                 // 右上角三个功能按钮已按建议移除：均衡器→进度条上方左侧，
@@ -222,6 +239,38 @@ fun PlayerScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
+
+            // M1：投屏中提示条——显示当前投屏设备名并支持一键停止；设备名/错误随 castState 实时刷新
+            if (castState.isCasting) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.CastConnected,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "正在投屏到 ${castState.deviceName ?: "设备"}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            if (castState.error != null) {
+                                Text(
+                                    castState.error ?: "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                        TextButton(onClick = vm::stopCast) { Text("停止投屏") }
+                    }
+                }
+            }
 
             if (state.isTranscoding) {
                 Row(
@@ -324,6 +373,19 @@ fun PlayerScreen(
                 )
             }
         }
+    }
+
+    // M1：投屏设备选择对话框（与播放队列浮层同级，覆盖在播放页之上）
+    if (showCastPicker) {
+        CastPickerDialog(
+            vm = vm,
+            currentSong = currentSong,
+            onDismiss = { showCastPicker = false },
+            onSelect = { device ->
+                showCastPicker = false
+                currentSong?.let { vm.startCast(device, it) }
+            }
+        )
     }
 
     // 播放队列浮层（半模态，从底部弹出）
@@ -1016,4 +1078,113 @@ private fun QueueRow(
             )
         }
     }
+}
+
+/**
+ * 投屏设备选择对话框（M1）。
+ *
+ * 打开即发起一次 SSDP 设备发现（[PlayerViewModel.searchCastDevices]），展示局域网内
+ * 渲染器列表；点击设备即选中并发起当前歌曲投屏（[onSelect]）。空列表/失败给出明确引导，
+ * 「重新搜索」按钮可再次发现。设备名/地址来自 [CastDevice]，第三方类型不泄漏到此处以外。
+ */
+@Composable
+private fun CastPickerDialog(
+    vm: PlayerViewModel,
+    currentSong: SongEntity?,
+    onDismiss: () -> Unit,
+    onSelect: (CastDevice) -> Unit
+) {
+    var devices by remember { mutableStateOf<List<CastDevice>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun doSearch() {
+        scope.launch {
+            loading = true
+            error = null
+            try {
+                devices = vm.searchCastDevices()
+            } catch (e: Exception) {
+                error = e.message ?: e.javaClass.simpleName
+            } finally {
+                loading = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) { doSearch() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("选择投屏设备") },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
+                when {
+                    loading -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Text("正在搜索局域网设备…", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                    error != null -> {
+                        Text(
+                            "搜索失败：$error",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    devices.isEmpty() -> {
+                        Text(
+                            "未发现可投屏设备。请确认手机与电视/音箱在同一 Wi-Fi，" +
+                                "且设备已开启 DLNA/投屏接收。",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    else -> {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            items(devices) { d ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onSelect(d) }
+                                        .padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Icon(
+                                        if (d.isTV) Icons.Filled.CastConnected else Icons.Outlined.Cast,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            d.name,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            d.address,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { doSearch() }) { Text("重新搜索") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
 }

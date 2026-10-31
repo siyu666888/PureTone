@@ -44,6 +44,12 @@
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
 
+# ---------- DLNA 投屏（UPnPCast） ----------
+# 库内含 SSDP 组播、NanoHTTPD 本地文件服务与 SOAP 控制；保留其全部类，
+# 防止 R8 误删反射/枚举/回调入口导致投屏功能在 release 包失效。
+-keep class com.yinnho.upnpcast.** { *; }
+-dontwarn com.yinnho.**
+
 # Kotlin 协程
 -dontwarn kotlinx.coroutines.**
 -keepclassmembers class kotlinx.coroutines.** { volatile <fields>; }

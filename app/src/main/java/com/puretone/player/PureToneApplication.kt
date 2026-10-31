@@ -5,6 +5,7 @@ import android.util.Log
 import coil.Coil
 import coil.ImageLoader
 import com.puretone.player.BuildConfig
+import com.puretone.player.playback.cast.DlnaCastManager
 import dagger.hilt.android.HiltAndroidApp
 import java.io.File
 import java.io.PrintWriter
@@ -24,12 +25,22 @@ class PureToneApplication : Application() {
     @Inject
     lateinit var imageLoader: ImageLoader
 
+    /** DLNA 投屏引擎（M1）：Application 级初始化一次，进程退出由 onTerminate 释放 */
+    @Inject
+    lateinit var dlnaCastManager: DlnaCastManager
+
     override fun onCreate() {
         // Hilt 在 super.onCreate() 之前完成 Application 的字段注入，此处可安全使用
         super.onCreate()
         appInstance = this
         Coil.setImageLoader(imageLoader)
+        dlnaCastManager.init(this)
         installCrashLogger()
+    }
+
+    override fun onTerminate() {
+        dlnaCastManager.release()
+        super.onTerminate()
     }
 
     /**

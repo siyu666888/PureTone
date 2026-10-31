@@ -15,6 +15,9 @@ import com.puretone.player.playback.PlaybackManager
 import com.puretone.player.playback.PlaybackUiState
 import com.puretone.player.playback.PlayMode
 import com.puretone.player.playback.RepeatMode
+import com.puretone.player.playback.cast.CastDevice
+import com.puretone.player.playback.cast.CastState
+import com.puretone.player.playback.cast.DlnaCastManager
 import com.puretone.player.playback.next
 import com.puretone.player.playback.toPlayMode
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -47,10 +50,14 @@ class PlayerViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val loadLyricsUseCase: LoadLyricsUseCase,
     private val playSongInLibraryUseCase: PlaySongInLibraryUseCase,
-    private val saveSongInfoUseCase: SaveSongInfoUseCase
+    private val saveSongInfoUseCase: SaveSongInfoUseCase,
+    private val dlnaCast: DlnaCastManager
 ) : ViewModel() {
 
     val state: StateFlow<PlaybackUiState> = playback.uiState
+
+    /** 投屏运行时状态（M1）：UI 据此渲染投屏按钮态、投屏中提示与进度 */
+    val castState: StateFlow<CastState> = dlnaCast.state
 
     /**
      * 是否持有当前曲目（离散字段，供根部决定迷你条显隐）。
@@ -159,12 +166,55 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun togglePlay() = playback.togglePlayPause()
+    fun togglePlay() {
+        // 投射态路由（M1）：投屏进行中，播放/暂停转交 DLNA 渲染器，不动本地播放器
+        if (dlnaCast.state.value.isCasting) {
+            viewModelScope.launch(ceh) {
+                if (dlnaCast.state.value.isPlaying) dlnaCast.pause() else dlnaCast.play()
+            }
+        } else {
+            playback.togglePlayPause()
+        }
+    }
     // P4：删除无调用方的 play()/pause()——UI 一律走 togglePlay()（播放/暂停互斥），
     // 留着两个裸入口反而容易被误用
     fun next() = playback.next()
     fun prev() = playback.previous()
-    fun seek(positionMs: Long) = playback.seekTo(positionMs)
+    fun seek(positionMs: Long) {
+        // 投射态路由（M1）：投屏进行中，进度条拖动转交 DLNA 渲染器
+        if (dlnaCast.state.value.isCasting) {
+            viewModelScope.launch(ceh) { dlnaCast.seek(positionMs) }
+        } else {
+            playback.seekTo(positionMs)
+        }
+    }
+    // ---------- 投屏（M1） ----------
+    /** 扫描局域网内 DLNA 渲染器 */
+    suspend fun searchCastDevices(timeoutMs: Long = 5000): List<CastDevice> =
+        dlnaCast.searchDevices(timeoutMs)
+
+    /**
+     * 开始投屏当前歌曲到指定设备。
+     *
+     * 路由语义：先暂停本地 ExoPlayer（避免本机与电视同时出声），再由 DLNA 渲染器接管。
+     * 投屏失败（设备拒绝/网络异常）时保持本地播放暂停态并回写 error，由 UI 提示。
+     */
+    fun startCast(device: CastDevice, song: SongEntity) {
+        viewModelScope.launch(ceh) {
+            if (state.value.isPlaying) playback.pause()
+            dlnaCast.selectDevice(device)
+            dlnaCast.castSong(song)
+        }
+    }
+
+    /** 停止投屏：停止渲染器并恢复本地播放 */
+    fun stopCast() {
+        viewModelScope.launch(ceh) {
+            dlnaCast.stopCast()
+            if (!state.value.isPlaying) playback.play()
+        }
+    }
+
     fun setRepeatMode(mode: RepeatMode) = playback.setRepeatMode(mode)
     fun setShuffle(enabled: Boolean) = playback.setShuffle(enabled)
 
