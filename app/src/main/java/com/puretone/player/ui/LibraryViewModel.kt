@@ -177,7 +177,11 @@ class LibraryViewModel @Inject constructor(
         if (!scanMutex.tryLock()) return@launch
         try {
             isScanning.value = true
-            runCatching { repo.syncLibrary() }.onSuccess { lastSync.value = it }
+            // 同步异常不静默吞掉：落盘到 crash_last.txt，真机 pull 即可定位
+            // 「列表空白」是否由扫描/对账异常（如 MediaStore 查询、路径口径）引起。
+            val syncRes = runCatching { repo.syncLibrary() }
+            syncRes.onSuccess { lastSync.value = it }
+            syncRes.onFailure { PureToneApplication.writeCrash("syncLibrary", it) }
             // ReplayGain 回填：同步后挑一批未分析歌曲跑 ffprobe（ffprobe 较重，分批进行，
             // 多次扫描逐步收敛，不会阻塞 UI）；失败/无标签的歌曲留待下次重试。
             runCatching { repo.analyzeReplayGainBatch() }

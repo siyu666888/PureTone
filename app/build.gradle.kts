@@ -11,8 +11,8 @@ plugins {
  * 同时用于 versionName 与产物文件名（archivesName），避免二者漂移。
  * 发版时只改这里（版本号按语义化版本递增）。
  */
-val appVersionName = "1.7.2"
-val appVersionCode = 26
+val appVersionName = "1.7.3"
+val appVersionCode = 27
 
 /**
  * 产物文件名包含完整版本号。
