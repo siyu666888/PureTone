@@ -32,7 +32,14 @@ class ReplayGainAudioProcessor : BaseAudioProcessor() {
         linearGain = gain.coerceAtLeast(0f)
     }
 
-    override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
+    public override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
+        // 增益为 1.0（ReplayGain 关闭、或开启但无标签/preamp 抵消）时直接「不激活」，
+        // 让 DefaultAudioSink 走标准音频路径：
+        //  - 零额外 CPU 开销；
+        //  - 彻底规避自定义软件 PCM 处理链在某些设备/ROM 上「有处理器即静音」的兼容问题
+        //    （这正是 1.7.0 周期升级 Media3 1.4.1→1.6.0 后，默认关闭 ReplayGain 却无声的根因）。
+        // 仅当增益确为非 1.0（ReplayGain 真正在生效）时才激活本处理器施加响度归一。
+        if (linearGain == 1.0f) return AudioProcessor.AudioFormat.NOT_SET
         return when (inputAudioFormat.encoding) {
             C.ENCODING_PCM_16BIT, C.ENCODING_PCM_FLOAT -> inputAudioFormat
             else -> AudioProcessor.AudioFormat.NOT_SET

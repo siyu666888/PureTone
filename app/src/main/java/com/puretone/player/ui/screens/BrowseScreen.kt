@@ -11,13 +11,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -129,46 +127,59 @@ private fun SmartPlaylistsRow(
         SmartPlaylist("我的最爱", Icons.Rounded.Favorite, topSongs),
         SmartPlaylist("最近播放", Icons.Filled.PlayArrow, recentlyPlayed)
     )
-    LazyRow(
-        modifier = modifier.padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(horizontal = 16.dp)
+    // 三卡按 weight 均分整屏宽度：固定内边距 + 等分，杜绝横向滚动与卡片溢出（用户诉求）。
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        items(items) { sp ->
-            SmartPlaylistCard(sp, onPlay)
+        items.forEach { sp ->
+            SmartPlaylistCard(sp, onPlay, Modifier.weight(1f))
         }
     }
 }
 
 @Composable
-private fun SmartPlaylistCard(sp: SmartPlaylist, onPlay: (List<SongEntity>) -> Unit) {
+private fun SmartPlaylistCard(
+    sp: SmartPlaylist,
+    onPlay: (List<SongEntity>) -> Unit,
+    modifier: Modifier = Modifier
+) {
     val enabled = sp.songs.isNotEmpty()
     Card(
-        modifier = Modifier
-            .width(140.dp)
+        modifier = modifier
             .clickable(enabled = enabled) { onPlay(sp.songs) },
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.secondaryContainer
         )
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        // 图标在文字「前方」（左对齐横排）；图标尺寸固定 28×28dp，避免拉伸/截断。
+        // 文字最多两行（wrap 而非截断），配合整屏等分确保无横向滚动、无截断。
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Icon(
                 sp.icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.width(28.dp).height(28.dp)
             )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                sp.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                maxLines = 1
-            )
-            Text(
-                if (enabled) "${sp.songs.size} 首" else "暂无",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-            )
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text(
+                    sp.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 2
+                )
+                Text(
+                    if (enabled) "${sp.songs.size} 首" else "暂无",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                )
+            }
         }
     }
 }

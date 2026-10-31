@@ -1,7 +1,10 @@
 package com.puretone.player.playback
 
+import androidx.media3.common.C
+import androidx.media3.common.audio.AudioProcessor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 /**
@@ -114,5 +117,47 @@ class ReplayGainMathTest {
     fun `applySample 负溢出走 tanh 软限幅`() {
         // -0.9 * 2.0 = -1.8 → tanh(-1.8) ≈ -0.9468
         assertEquals(-0.9468f, ReplayGainAudioProcessor.applySample(-0.9f, 2.0f), 0.001f)
+    }
+
+    // ---------- onConfigure（激活/旁路，关乎默认无声回归） ----------
+
+    private val pcm16 = AudioProcessor.AudioFormat(44100, 2, C.ENCODING_PCM_16BIT)
+
+    @Test
+    fun `onConfigure 增益为 1 时返回 NOT_SET 旁路标准音频路径`() {
+        // 默认关闭 ReplayGain 时增益恒为 1.0，必须旁路（不激活），否则会走自定义 PCM
+        // 处理链——这正是 1.7.0 周期升级后默认无声的根因。
+        val p = ReplayGainAudioProcessor()
+        p.setGainLinear(1.0f)
+        assertSame(AudioProcessor.AudioFormat.NOT_SET, p.onConfigure(pcm16))
+    }
+
+    @Test
+    fun `onConfigure 开启但无标签增益为 1 仍旁路`() {
+        // 开启 ReplayGain 但文件无标签且 preamp=0 → 增益 1.0 → 旁路（无标签本就不该生效）。
+        val p = ReplayGainAudioProcessor()
+        p.setGainLinear(ReplayGainAudioProcessor.computeLinearGain(true, null, 0f))
+        assertSame(AudioProcessor.AudioFormat.NOT_SET, p.onConfigure(pcm16))
+    }
+
+    @Test
+    fun `onConfigure 真实增益时 16bit 激活原样返回`() {
+        val p = ReplayGainAudioProcessor()
+        p.setGainLinear(ReplayGainAudioProcessor.computeLinearGain(true, -6.42f, 0f)) // ≈ 0.4776
+        val out = p.onConfigure(pcm16)
+        assertEquals(pcm16.sampleRate, out.sampleRate)
+        assertEquals(pcm16.channelCount, out.channelCount)
+        assertEquals(pcm16.encoding, out.encoding)
+    }
+
+    @Test
+    fun `onConfigure 真实增益但不支持编码仍旁路`() {
+        // 24/32bit 等本处理器不支持，无论增益多少都返回 NOT_SET（透传，不崩）。
+        val p = ReplayGainAudioProcessor()
+        p.setGainLinear(0.5f)
+        assertSame(
+            AudioProcessor.AudioFormat.NOT_SET,
+            p.onConfigure(AudioProcessor.AudioFormat(48000, 2, C.ENCODING_PCM_24BIT))
+        )
     }
 }
