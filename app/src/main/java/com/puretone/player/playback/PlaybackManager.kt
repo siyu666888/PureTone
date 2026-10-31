@@ -1,9 +1,6 @@
 package com.puretone.player.playback
 
 import android.app.PendingIntent
-import android.content.Context
-import android.content.ComponentName
-import android.content.Intent
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
@@ -11,15 +8,11 @@ import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
-import androidx.media3.session.SessionToken
-import com.google.common.util.concurrent.MoreExecutors
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.MusicRepository
 import com.puretone.player.data.settings.PureToneSettings
@@ -29,7 +22,6 @@ import com.puretone.player.effect.AudioEffectController
 import com.puretone.player.MainActivity
 import com.puretone.player.playback.cast.DlnaCastManager
 import com.puretone.player.widget.WidgetUpdater
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -115,13 +107,13 @@ private data class PendingPlay(
 @Singleton
 @OptIn(UnstableApi::class)
 class PlaybackManager @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val musicRepository: MusicRepository,
     private val apeTranscoder: ApeTranscoder,
     private val audioEffectController: AudioEffectController,
     private val settings: SettingsRepository,
     private val widgetUpdater: WidgetUpdater,
-    private val dlnaCast: DlnaCastManager
+    private val dlnaCast: DlnaCastManager,
+    private val serviceLauncher: PlaybackServiceLauncher
 ) {
 
     private var player: ExoPlayer? = null
@@ -154,6 +146,19 @@ class PlaybackManager @Inject constructor(
     val uiState: StateFlow<PlaybackUiState> = _uiState.asStateFlow()
 
     /**
+     * APE 按需转码统一入口（P1-1 拆分第三刀）。
+     *
+     * 转码引擎仍是 [ApeTranscoder]（缓存 / 同曲并发去重 / LRU 都在那一层），
+     * 这里只统一「转码中标记」与「异常 / 取消」语义——此前三个调用点各写一遍，
+     * 只有出错重试那条用了 `try/finally`，另两处一旦中途抛出就会把 UI 永久
+     * 卡在「APE 转码中…」。
+     */
+    private val apeResolver = ApePlaybackResolver(
+        transcode = { songId, path -> apeTranscoder.ensureWav(songId, path) },
+        onTranscoding = { transcoding -> _uiState.update { it.copy(isTranscoding = transcoding) } },
+    )
+
+    /**
      * 进程级协程作用域。
      *
      * 刻意挂一个 [CoroutineExceptionHandler]：本管理器大量逻辑跑在此作用域的
@@ -171,9 +176,10 @@ class PlaybackManager @Inject constructor(
 
     private var sleepTimerJob: Job? = null
     private var settingsJob: Job? = null
-    /** 后台启动兜底临时持有的 MediaController（见 [startServiceByBinding]） */
-    private var bootstrapController: MediaController? = null
     private var apeRetryIndex: Int = -1
+
+    // 服务拉起 / 兜底 controller 已下沉到 PlaybackServiceLauncher（P1-1 拆分第二刀）：
+    // 那里装的是 Android 8+ 后台启动禁令的绕行逻辑，不属于播放编排。
 
     /** 播放会话保存的去抖任务（P3-20：连续暂停/播放时取消上一个，避免协程堆叠） */
     private var saveSessionJob: Job? = null
@@ -213,9 +219,9 @@ class PlaybackManager @Inject constructor(
             _uiState.update { it.copy(isPlaying = isPlaying) }
             // 桌面小部件同步（内部去抖，连续变化只推一次 IPC）
             widgetUpdater.requestUpdate()
-            // 注意：此处绝不可调用 ensureServiceStarted()——播放器由服务创建，
+            // 注意：此处绝不可调用 serviceLauncher.ensureStarted()——播放器由服务创建，
             // 能收到本回调即说明服务已在运行；且历史上的 startForegroundService
-            // 调用正是「播放约 30s 后闪退」的直接触发点（见 ensureServiceStarted 注释）。
+            // 调用正是「播放约 30s 后闪退」的直接触发点（见 PlaybackServiceLauncher.ensureStarted 注释）。
             saveSessionDebounced()
         }
 
@@ -515,16 +521,9 @@ class PlaybackManager @Inject constructor(
         // 备援播放器只负责「挂接音效会话」与错误兜底，不驱动 UI/切歌（淡入淡出由本类统一编排）
         secondary.addListener(secondaryListener)
         audioEffectController.attachToSession(player.audioSessionId)
-        // 由「后台 bind 兜底」临时持有的 controller：服务已起、命令已排入，稍后释放。
-        // 若此时服务里已有播放内容，服务自己会保持存活（MediaSessionService 语义）。
-        bootstrapController?.let { controller ->
-            bootstrapController = null
-            scope.launch {
-                delay(3_000L)
-                runCatching { controller.release() }
-                    .onFailure { Log.w(TAG, "release bootstrap controller failed", it) }
-            }
-        }
+        // 由「后台 bind 兜底」临时持有的 controller：服务已起、命令已排入，交由
+        // launcher 延迟释放（若此时服务里已有播放内容，服务自己会保持存活）。
+        serviceLauncher.onServiceBound()
         // 订阅设置：倍速 / 睡眠定时 / 无缝播放 / 播放顺序 / 音效 实时生效
         settingsJob = scope.launch {
             settings.settings.collect { applySettings(it) }
@@ -707,7 +706,7 @@ class PlaybackManager @Inject constructor(
             // bind 后点歌与恢复两条命令并发，旧会话队列可能覆盖用户的新选择。
             pendingPlay = PendingPlay(songs, startIndex, startPositionMs)
             pendingRestore = false
-            ensureServiceStarted()
+            serviceLauncher.ensureStarted()
             return
         }
         scope.launch { doSetQueueAndPlay(songs, startIndex, startPositionMs, autoPlay = true) }
@@ -731,20 +730,19 @@ class PlaybackManager @Inject constructor(
         // 就说明自己是过期任务，必须放弃——否则会用旧队列覆盖掉新队列
         // （表现为「点了新歌，播的却是上一首/旧队列」）。
         val generation = ++queueGeneration
-        val entries = songs.map { it.toQueueEntry(nextQueueKey()) }
+        val entries = songs.map { PlaybackMediaItems.toQueueEntry(it, nextQueueKey()) }
 
         // 只转码「即将播放的这一首」：整队预转码会让 20 首 APE 的专辑等几十秒才出声。
         // 其余 APE 在切歌/出错时按需转码（见 playAtIndex / handlePlayerError / warmUpFollowingApe）。
         // P3-17：索引不再裸取——越界（调用方传错）时静默放弃，而不是抛 IndexOutOfBounds。
         val startSong = songs.getOrNull(startIndex) ?: return
-        val startUri = if (startSong.isApe) {
-            _uiState.update { it.copy(isTranscoding = true) }
-            val wav = runCatching { apeTranscoder.ensureWav(startSong.id, startSong.path) }.getOrNull()
-            _uiState.update { it.copy(isTranscoding = false) }
-            wav?.let { Uri.fromFile(it) }
-        } else {
-            mediaStoreUri(startSong)
-        }
+        // 转码中标记与异常/取消语义统一由 apeResolver 负责（含 finally 复位）
+        val startUri = apeResolver.resolveUri(
+            songId = startSong.id,
+            path = startSong.path,
+            isApe = startSong.isApe,
+            mediaStoreUri = { PlaybackMediaItems.mediaStoreUri(startSong) }
+        )
         if (startUri == null) {
             _uiState.update { it.copy(error = "无法解析播放地址") }
             return
@@ -753,11 +751,11 @@ class PlaybackManager @Inject constructor(
         // 其余项先按「非 APE 直连、APE 占位源路径」入库；切到它们时再按需转码替换 URI。
         val mediaItems = songs.mapIndexed { index, song ->
             if (index == startIndex) {
-                song.toMediaItem(startUri)
+                PlaybackMediaItems.toMediaItem(song, startUri)
             } else if (song.isApe) {
-                song.toMediaItem(rawPathUri(song.path))
+                PlaybackMediaItems.toMediaItem(song, PlaybackMediaItems.rawPathUri(song.path))
             } else {
-                song.toMediaItem(mediaStoreUri(song))
+                PlaybackMediaItems.toMediaItem(song, PlaybackMediaItems.mediaStoreUri(song))
             }
         }
 
@@ -792,16 +790,16 @@ class PlaybackManager @Inject constructor(
         val p = player
         if (p == null) {
             pendingEnqueue = (pendingEnqueue ?: emptyList()) + songs
-            ensureServiceStarted()
+            serviceLauncher.ensureStarted()
             return
         }
         if (songs.isEmpty()) return
         // P2-13：先递增代次，使任何在途的 setQueueAndPlay（如 APE 首播挂起在 ensureWav）
         // 恢复后检测到代次不符而放弃，避免用户的追加被旧队列覆盖。
         queueGeneration++
-        val entries = songs.map { it.toQueueEntry(nextQueueKey()) }
+        val entries = songs.map { PlaybackMediaItems.toQueueEntry(it, nextQueueKey()) }
         scope.launch {
-            p.addMediaItems(songs.map { it.toMediaItemLazy() })
+            p.addMediaItems(songs.map { PlaybackMediaItems.lazyMediaItem(it) })
             _uiState.update { it.copy(queue = it.queue + entries) }
         }
     }
@@ -821,10 +819,10 @@ class PlaybackManager @Inject constructor(
         if (songs.isEmpty()) return
         // P2-13：先递增代次，使在途 setQueueAndPlay 恢复后失效，避免插播被旧队列覆盖。
         queueGeneration++
-        val entries = songs.map { it.toQueueEntry(nextQueueKey()) }
+        val entries = songs.map { PlaybackMediaItems.toQueueEntry(it, nextQueueKey()) }
         scope.launch {
             val insertAt = (_uiState.value.queueIndex + 1).coerceIn(0, _uiState.value.queue.size)
-            p.addMediaItems(insertAt, songs.map { it.toMediaItemLazy() })
+            p.addMediaItems(insertAt, songs.map { PlaybackMediaItems.lazyMediaItem(it) })
             _uiState.update { state ->
                 val merged = state.queue.toMutableList().also { q -> q.addAll(insertAt, entries) }
                 state.copy(queue = merged)
@@ -838,15 +836,13 @@ class PlaybackManager @Inject constructor(
         // P2-13：服务未就绪时旧实现写 PendingPlay(emptyList(), index, 0L)，
         // bind 后 doSetQueueAndPlay 在 songs.isEmpty() 处直接 return → 点了队列项却无声。
         // 改为标记「待恢复会话」，服务起来后由 bind() 真正恢复上次队列。
-        val p = player ?: run { pendingRestore = true; ensureServiceStarted(); return }
+        val p = player ?: run { pendingRestore = true; serviceLauncher.ensureStarted(); return }
         if (index !in _uiState.value.queue.indices) return
         scope.launch {
             val entry = _uiState.value.queue[index]
             if (entry.isApe) {
-                _uiState.update { it.copy(isTranscoding = true) }
-                val wav = runCatching { apeTranscoder.ensureWav(entry.songId, entry.filePath) }.getOrNull()
-                _uiState.update { it.copy(isTranscoding = false) }
-                if (wav != null) replaceMediaItemUri(index, wav)
+                apeResolver.transcodeToFile(entry.songId, entry.filePath)
+                    ?.let { replaceMediaItemUri(index, it) }
             }
             p.seekTo(index, 0L)
             p.prepare()
@@ -933,7 +929,7 @@ class PlaybackManager @Inject constructor(
         val p = player
         if (p == null) {
             pendingRestore = true
-            ensureServiceStarted()
+            serviceLauncher.ensureStarted()
             return
         }
         if (p.isPlaying) pause() else play()
@@ -944,7 +940,7 @@ class PlaybackManager @Inject constructor(
         val p = player
         if (p == null) {
             pendingRestore = true
-            ensureServiceStarted()
+            serviceLauncher.ensureStarted()
             return
         }
         if (p.mediaItemCount == 0) {
@@ -1194,16 +1190,9 @@ class PlaybackManager @Inject constructor(
         if (entry != null && entry.isApe && apeRetryIndex != index) {
             apeRetryIndex = index
             scope.launch {
-                // P0-2：与 doSetQueueAndPlay / playAtIndex 一致包 runCatching——
-                // ensureWav 一旦抛出（IO/FFmpegKit/取消），协程会经 SupervisorJob
-                // 直达未捕获异常处理器导致进程崩溃；isTranscoding 用 finally 保证
-                // 一定复位，否则 UI 会永久卡在「APE 转码中…」。
-                _uiState.update { it.copy(isTranscoding = true) }
-                val wav = try {
-                    runCatching { apeTranscoder.ensureWav(entry.songId, entry.filePath) }.getOrNull()
-                } finally {
-                    _uiState.update { it.copy(isTranscoding = false) }
-                }
+                // P0-2：转码失败/取消的语义统一由 apeResolver 处理（finally 复位标记，
+                // 异常收敛为 null，取消原样抛出），此处只负责结果分支。
+                val wav = apeResolver.transcodeToFile(entry.songId, entry.filePath)
                 if (wav != null) {
                     replaceMediaItemUri(index, wav)
                     p.prepare()
@@ -1241,47 +1230,8 @@ class PlaybackManager @Inject constructor(
         scope.launch { musicRepository.recordCompletion(songId) }
     }
 
-    /**
-     * 确保播放服务已启动（冷启动兜底）。
-     *
-     * 刻意使用 startService() 而非 startForegroundService()：
-     * 后者自 Android 8 起带有「5 秒内必须调用 Service.startForeground()」的硬性时限，
-     * 否则系统抛 ForegroundServiceDidNotStartInTimeException 直接杀进程。
-     * 前台化时机由 Media3 的 MediaSessionService 自行判断（内部通知控制器 +
-     * shouldRunInForeground），本 App 无从保证时限，故绝不主动 arm 这颗炸弹。
-     * 前台服务类型 mediaPlayback 已在清单声明，Media3 转前台时会自带该类型。
-     */
-    private fun ensureServiceStarted() {
-        runCatching {
-            context.startService(Intent(context, PlaybackService::class.java))
-        }.onFailure { e ->
-            Log.w(TAG, "startService failed, fallback to session bind", e)
-            startServiceByBinding()
-        }
-    }
-
-    /**
-     * 后台启动兜底：通过 MediaSession 的绑定通道拉起服务。
-     *
-     * Android 8+ 禁止后台应用 [Context.startService]，而「桌面小部件点击」正是后台场景
-     * （App 在后台、进程可能连播放器都没创建）。[MediaController] 走的是 bindService，
-     * 不受该限制——MediaSessionService 被绑定后会自动创建并自行前台化。
-     * 拉起来的临时 controller 在 [bind] 之后延迟释放（服务此时若有播放内容会自己存活）。
-     */
-    private fun startServiceByBinding() {
-        runCatching {
-            val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
-            val future = MediaController.Builder(context, token).buildAsync()
-            future.addListener(
-                {
-                    runCatching { future.get() }
-                        .onSuccess { bootstrapController = it }
-                        .onFailure { Log.w(TAG, "bind MediaSessionService failed", it) }
-                },
-                MoreExecutors.directExecutor()
-            )
-        }.onFailure { Log.w(TAG, "build MediaController failed", it) }
-    }
+    // ensureServiceStarted / startServiceByBinding 已下沉到 PlaybackServiceLauncher
+    // （P1-1 拆分第二刀），调用点统一走 serviceLauncher.ensureStarted()。
 
     /**
      * 确保服务与播放器就绪（后台命令入口，如桌面小部件）。
@@ -1293,7 +1243,7 @@ class PlaybackManager @Inject constructor(
      */
     suspend fun ensureServiceReady(timeoutMs: Long = 3_000L): Boolean {
         if (player != null) return true
-        ensureServiceStarted()
+        serviceLauncher.ensureStarted()
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         while (player == null && SystemClock.elapsedRealtime() < deadline) {
             delay(50L)
@@ -1301,12 +1251,10 @@ class PlaybackManager @Inject constructor(
         return player != null
     }
 
-    /** 空闲时停止服务；同样兜底，避免 stopService 抛异常导致崩溃 */
+    /** 空闲时停止服务（空闲判定需要读播放器，故留在此处；停服务本身下沉到 launcher） */
     private fun stopServiceIfIdle() {
         if ((player?.isPlaying != true) && (player?.mediaItemCount ?: 0) == 0) {
-            runCatching {
-                context.stopService(Intent(context, PlaybackService::class.java))
-            }.onFailure { Log.w(TAG, "stopService failed", it) }
+            serviceLauncher.stopService()
         }
     }
 
@@ -1314,48 +1262,8 @@ class PlaybackManager @Inject constructor(
         const val TAG = "PlaybackManager"
     }
 
-    /**
-     * 惰性构建媒体项：
-     * - 非 APE：直连 MediaStore content URI（本地文件，打开即播）；
-     * - APE：先以源文件路径占位，ExoPlayer 无法解码时会走
-     *   [handlePlayerError] → 转码 → [replaceMediaItemUri] 重试，
-     *   或由 [playAtIndex] / [warmUpFollowingApe] 提前按需转码替换。
-     *
-     * 这样「追加/插播」不必等待整队转码，APE 队列也能秒级入队。
-     */
-    private fun SongEntity.toMediaItemLazy(): MediaItem {
-        val uri = if (isApe) rawPathUri(path) else mediaStoreUri(this)
-        return toMediaItem(uri)
-    }
-
-    private fun mediaStoreUri(song: SongEntity): Uri =
-        Uri.parse("content://media/external/audio/media/${song.mediaStoreId}")
-
-    /**
-     * 把裸文件路径转成 URI，转义 `#` / `?`（P3-23）。
-     * 这两个字符会被 [Uri.parse] 误判为 fragment / query，导致路径被截断或解析异常。
-     * 用于 APE 占位源（本就设计为解码失败）与「playUri 缺失」的回退路径，
-     * 使错误类型更准确、避免偶发的路径截断误播。
-     */
-    private fun rawPathUri(path: String): Uri =
-        Uri.parse(path.replace("#", "%23").replace("?", "%3F"))
-
-    private fun SongEntity.toMediaItem(playUri: Uri?): MediaItem {
-        val metadata = MediaMetadata.Builder()
-            .setTitle(title)
-            .setArtist(artist)
-            .setAlbumTitle(album)
-            .setArtworkUri(coverUri?.let { Uri.parse(it) })
-            .setIsBrowsable(false)
-            .setIsPlayable(true)
-            .setDurationMs(duration)
-            .build()
-        return MediaItem.Builder()
-            .setUri(playUri ?: rawPathUri(path))
-            .setMediaId(id.toString())
-            .setMediaMetadata(metadata)
-            .build()
-    }
+    // 媒体项 / URI / 队列项构造已抽到 PlaybackMediaItems（P1-1 拆分第一刀）：
+    // 那一簇是纯映射，不需要播放器实例与 UI 状态，独立成文件后可单测。
 
     private fun replaceMediaItemUri(index: Int, wavFile: File) {
         val p = player ?: return
@@ -1384,18 +1292,6 @@ class PlaybackManager @Inject constructor(
         }
     }
 
-    private fun SongEntity.toQueueEntry(key: Long) = QueueEntry(
-        songId = id,
-        title = title,
-        artist = artist,
-        coverUri = coverUri?.let { Uri.parse(it) },
-        durationMs = duration,
-        isApe = isApe,
-        filePath = path,
-        key = key,
-        rgTrackGain = rgTrackGain,
-        rgAlbumGain = rgAlbumGain
-    )
 }
 
 /**
