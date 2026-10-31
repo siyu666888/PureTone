@@ -17,4 +17,5 @@ import dagger.hilt.components.SingletonComponent
 interface WidgetEntryPoint {
     fun playbackManager(): PlaybackManager
     fun widgetStateProvider(): WidgetStateProvider
+    fun widgetUpdater(): WidgetUpdater
 }

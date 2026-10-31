@@ -41,13 +41,30 @@ class WidgetPinner @Inject constructor(
         if (!isSupported()) return false
         return runCatching {
             val manager = AppWidgetManager.getInstance(context)
-            val provider = ComponentName(context, PureToneWidgetReceiver::class.java)
-            manager.requestPinAppWidget(provider, null, null)
+            manager.requestPinAppWidget(provider(), null, null)
             Log.i(TAG, "requested pin widget")
             true
         }.onFailure { Log.w(TAG, "request pin widget failed", it) }
             .getOrDefault(false)
     }
+
+    /**
+     * 桌面上当前存在的本 App 小部件数量。
+     *
+     * 设置页的开关反映的必须是「真实有没有添加」，而不是一个偏好位：
+     * 用户可能在系统确认弹窗里取消，也可能添加完后又在桌面上长按删掉——
+     * 以 [AppWidgetManager.getAppWidgetIds] 的实际记录为准，每次刷新重新读。
+     */
+    fun pinnedCount(): Int = runCatching {
+        AppWidgetManager.getInstance(context).getAppWidgetIds(provider()).size
+    }.onFailure { Log.w(TAG, "query appWidgetIds failed", it) }
+        .getOrDefault(0)
+
+    /** 桌面上是否已经存在本 App 的小部件 */
+    fun isAdded(): Boolean = pinnedCount() > 0
+
+    private fun provider(): ComponentName =
+        ComponentName(context, PureToneWidgetReceiver::class.java)
 
     private companion object {
         const val TAG = "WidgetPinner"

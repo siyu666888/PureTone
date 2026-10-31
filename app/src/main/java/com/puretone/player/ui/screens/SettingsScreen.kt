@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -36,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import android.os.SystemClock
@@ -146,22 +148,75 @@ fun SettingsScreen(
 
         // 桌面小部件：系统入口（长按桌面 → 小组件 → 翻列表找 App）路径很深，
         // 且部分第三方桌面压根不列出新装 App，这里提供一键「固定到桌面」。
+        //
+        // 交互改为开关 + 前置确认弹窗：
+        // - 开关的 checked 直接来自 AppWidgetManager 的真实记录（[SettingsViewModel.widgetAdded]），
+        //   不是偏好值——用户可能在系统确认里取消，也可能添加后又在桌面上长按删掉；
+        // - 勾选前先弹对话框征得同意，确认后才发起请求；取消则开关自行弹回（状态未变）；
+        // - 已添加时把它拨到「关」不能真的卸载（Android 不允许 App 删除桌面组件），
+        //   改为提示用户到桌面长按移除，避免给一个「点了没反应」的开关。
         val canPinWidget = remember { vm.canPinWidget() }
-        SettingsGroup(title = "桌面") {
-            Row(
-                modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("桌面播放控制小部件", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        if (canPinWidget) "添加后可显示当前歌曲并直接控制播放" else "当前桌面不支持添加小部件",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                TextButton(enabled = canPinWidget, onClick = { vm.pinWidget() }) { Text("添加到桌面") }
+        val widgetAdded by vm.widgetAdded.collectAsStateWithLifecycle()
+        var showAddDialog by remember { mutableStateOf(false) }
+        var showUnpinHint by remember { mutableStateOf(false) }
+        // 从桌面（含确认添加）返回设置页时按真实记录重算开关状态
+        LifecycleResumeEffect(Unit) {
+            vm.refreshWidgetAdded()
+            onPauseOrDispose {}
+        }
+        // 发起添加后补一次刷新：系统那层确认插页不在 App 内，无法拿到完成回调
+        var pinRequested by remember { mutableStateOf(0) }
+        LaunchedEffect(pinRequested) {
+            if (pinRequested > 0) {
+                delay(1_200)
+                vm.refreshWidgetAdded()
             }
+        }
+        SettingsGroup(title = "桌面") {
+            SwitchRow(
+                label = "桌面播放控制小部件",
+                checked = widgetAdded,
+                enabled = canPinWidget || widgetAdded,
+                onChanged = { checked ->
+                    when {
+                        checked && !widgetAdded -> showAddDialog = true
+                        !checked -> showUnpinHint = true
+                    }
+                }
+            )
+        }
+
+        if (showAddDialog) {
+            AlertDialog(
+                onDismissRequest = { showAddDialog = false },
+                title = { Text("添加桌面小部件") },
+                text = {
+                    Text(
+                        "将在桌面添加 PureTone 播放控制小部件，" +
+                            "可直接查看当前歌曲并控制播放 / 切歌。是否继续？"
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showAddDialog = false
+                        if (vm.pinWidget()) pinRequested++
+                    }) { Text("确认添加") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showAddDialog = false }) { Text("取消") }
+                }
+            )
+        }
+
+        if (showUnpinHint) {
+            AlertDialog(
+                onDismissRequest = { showUnpinHint = false },
+                title = { Text("已在桌面上添加") },
+                text = { Text("如需移除，请在桌面长按该小部件，拖到「移除」区域即可。") },
+                confirmButton = {
+                    TextButton(onClick = { showUnpinHint = false }) { Text("知道了") }
+                }
+            )
         }
 
         // 存储

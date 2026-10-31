@@ -10,6 +10,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -54,8 +55,22 @@ class SettingsViewModel @Inject constructor(
 
     // ---------- 桌面小部件 ----------
 
-    /** 桌面是否支持「固定到桌面」（不支持时设置页该入口置灰） */
+    /** 桌面是否支持「固定到桌面」（不支持时设置页该开关置灰） */
     fun canPinWidget(): Boolean = widgetPinner.isSupported()
+
+    /**
+     * 桌面上是否真实存在本 App 的小部件。
+     *
+     * 这是「真实状态」而非偏好值：用户可能在系统确认弹窗里取消，也可能添加后又在
+     * 桌面上长按删掉。开关只展示它，由 [refreshWidgetAdded] 按需重读。
+     */
+    private val _widgetAdded = MutableStateFlow(false)
+    val widgetAdded: StateFlow<Boolean> = _widgetAdded.asStateFlow()
+
+    /** 重新查询桌面上的小部件数量（进入设置页 / 从桌面返回时调用） */
+    fun refreshWidgetAdded() {
+        _widgetAdded.value = widgetPinner.isAdded()
+    }
 
     /** 请求把播放控制小部件固定到桌面；返回 false = 当前环境不支持 */
     fun pinWidget(): Boolean = widgetPinner.requestPin()
