@@ -144,6 +144,11 @@ android {
         baseline = file("lint-baseline.xml")
         warningsAsErrors = true
         abortOnError = true
+        // ObsoleteLintCustomCheck 检查的是**第三方库自带的** lint.jar 是否引用了过时 API
+        // （报 "Library lint checks reference invalid APIs"）。它衡量的不是本项目代码质量，
+        // 结果完全取决于当时依赖缓存里有哪些库——本地 3 条（Warning），CI 上 63 条（Error），
+        // 两者不一致且无法在代码层面修正。故禁用，避免门禁因环境抖动误报。
+        disable += setOf("ObsoleteLintCustomCheck")
     }
 }
 
