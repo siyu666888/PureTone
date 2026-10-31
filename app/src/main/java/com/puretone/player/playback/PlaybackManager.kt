@@ -153,6 +153,33 @@ class PlaybackManager @Inject constructor(
     private var settingsJob: Job? = null
 
     /**
+     * 播放会话存档（P1-1 拆分第五刀）。
+     *
+     * 「保存位置钳到 duration-500」与「恢复时按保存顺序重排」两个已踩过的修复点都在这里，
+     * 抽出来后可纯 JVM 锁定（见 [PlaybackSessionStore] 类注释）。
+     */
+    private val sessionStore: PlaybackSessionStore = PlaybackSessionStore(
+        archive = object : PlaybackSessionArchive {
+            override suspend fun load(): SavedSession? =
+                musicRepository.loadPlaybackSession()?.let {
+                    SavedSession(songIds = it.songIds, index = it.index, positionMs = it.positionMs)
+                }
+
+            override suspend fun songsByIds(ids: List<Long>): List<SongEntity> =
+                musicRepository.getSongs(ids)
+
+            override suspend fun save(songIds: List<Long>, index: Int, positionMs: Long) {
+                musicRepository.savePlaybackSession(songIds, index, positionMs)
+            }
+
+            override suspend fun clear() {
+                musicRepository.clearPlaybackSession()
+            }
+        },
+        scope = scope
+    )
+
+    /**
      * 交叉淡化协调器（P1-1 拆分第四刀）。
      *
      * 备援播放器、其 ReplayGain 处理器、以及「淡出方 / 淡入索引 / 剩余曲目 / 渐变协程」
@@ -225,9 +252,6 @@ class PlaybackManager @Inject constructor(
 
     // 服务拉起 / 兜底 controller 已下沉到 PlaybackServiceLauncher（P1-1 拆分第二刀）：
     // 那里装的是 Android 8+ 后台启动禁令的绕行逻辑，不属于播放编排。
-
-    /** 播放会话保存的去抖任务（P3-20：连续暂停/播放时取消上一个，避免协程堆叠） */
-    private var saveSessionJob: Job? = null
 
     /** 队列项唯一实例序号（拖拽重排需稳定 key，同一首歌可多次入队） */
     private var queueEntrySeq: Long = 0L
@@ -896,7 +920,7 @@ class PlaybackManager @Inject constructor(
         // 旧实现漏了后者，仍挂起在 APE 转码里的旧 setQueue 恢复后会把队列又写回来
         // （历史现象：点了清空，队列隔一会儿自己冒回来）。
         gate.onQueueStructureChanged()
-        scope.launch { musicRepository.clearPlaybackSession() }
+        sessionStore.clear()
         stopServiceIfIdle()
     }
 
@@ -983,7 +1007,7 @@ class PlaybackManager @Inject constructor(
         // 会把这次已停止的队列又播出来，与用户「显式停止」意图相反。
         gate.clearPending()
         // 显式停止即放弃续播：清会话，否则下次冷启动会把已停的队列又恢复出来
-        scope.launch { musicRepository.clearPlaybackSession() }
+        sessionStore.clear()
         stopServiceIfIdle()
     }
 
@@ -1114,13 +1138,9 @@ class PlaybackManager @Inject constructor(
         if (!canRestoreSession(playerItemCount = p?.mediaItemCount ?: 0, isPlaying = p?.isPlaying == true)) {
             return false
         }
-        val saved = musicRepository.loadPlaybackSession() ?: return false
-        if (saved.songIds.isEmpty()) return false
-        // 按保存的顺序重建队列并保留重复项：getByIds 是 `IN (:ids)` 查询，
-        // 既无 ORDER BY 也会被 SQL 去重——直接拿它恢复会顺序错位、重复歌丢失（P0-7）。
-        val byId = musicRepository.getSongs(saved.songIds).associateBy { it.id }
-        val songs = saved.songIds.mapNotNull { byId[it] }
-        if (songs.isEmpty()) return false
+        // 按保存顺序重建队列（含重复项）：顺序还原与「曲目已删除」过滤都在 sessionStore 内
+        val restored = sessionStore.restoreQueue() ?: return false
+        val songs = restored.songs
         // P1-2：上面的 DB 读取是挂起点——这期间用户可能已经点了别的歌起播
         // （setQueueAndPlay 会重建队列）。起播前必须再查一次守卫：否则旧会话
         // 队列会覆盖用户的新选择，表现为「点了新歌却播出旧队列/旧歌」。
@@ -1136,8 +1156,8 @@ class PlaybackManager @Inject constructor(
         // 再 pause()，APE 队列会在 ensureWav 挂起导致 pause 先于 play 执行，行为不确定）。
         doSetQueueAndPlay(
             songs,
-            saved.index.coerceIn(0, songs.lastIndex),
-            saved.positionMs,
+            restored.index,
+            restored.positionMs,
             autoPlay = false
         )
         return true
@@ -1155,34 +1175,31 @@ class PlaybackManager @Inject constructor(
     }
 
     private fun saveSessionDebounced() {
-        // P3-20：取消上一个去抖任务再排新的——连续切播放/暂停时不会堆一串
-        // 各睡 800ms 的协程（旧实现每次都新起一个）
-        saveSessionJob?.cancel()
-        saveSessionJob = scope.launch { delay(800); saveSessionNow() }
+        // 快照在写入时刻才求值：去抖的意义就是「以最新状态写一次」
+        sessionStore.saveDebounced { sessionSnapshot() }
     }
 
     private fun saveSessionNow() {
-        val state = _uiState.value
-        if (state.queue.isEmpty()) return
-        scope.launch {
-            val p = player
-            val rawPosition = (p?.currentPosition ?: 0L).coerceAtLeast(0L)
-            // duration 未知时 ExoPlayer 返回 C.TIME_UNSET（远小于 0），takeIf 挡掉
-            val duration = p?.duration?.takeIf { it > 0 } ?: 0L
-            // P2-17：STATE_ENDED 时 currentPosition 即总时长，原样存下去次
-            // restoreLastSession 以 positionMs = duration 起播，seek 到结尾
-            // 立即再次 ENDED——表现为「续播恢复了但什么都没发生」。
-            // 统一钳到 duration-500 以内（时长未知或极短（<500ms）时保底 0）。
-            val position =
-                if (duration > 0L) rawPosition.coerceIn(0L, (duration - 500L).coerceAtLeast(0L))
-                else rawPosition
-            musicRepository.savePlaybackSession(
-                songIds = state.queue.map { it.songId },
-                index = state.queueIndex,
-                positionMs = position
-            )
-        }
+        val snapshot = sessionSnapshot() ?: return
+        sessionStore.saveNow(snapshot)
     }
+
+    /** 当前待存档的会话快照；队列为空（无可存档内容）时为 null */
+    private fun sessionSnapshot(): SavedSession? {
+        val state = _uiState.value
+        if (state.queue.isEmpty()) return null
+        return SavedSession(
+            songIds = state.queue.map { it.songId },
+            index = state.queueIndex,
+            positionMs = sessionStore.positionToSave(currentPosition(), currentDuration())
+        )
+    }
+
+    /** 当前播放位置（毫秒，非负） */
+    private fun currentPosition(): Long = (player?.currentPosition ?: 0L).coerceAtLeast(0L)
+
+    /** 当前曲目时长；未知（ExoPlayer 返回 C.TIME_UNSET 等负值）时按 0 处理 */
+    private fun currentDuration(): Long = player?.duration?.takeIf { it > 0 } ?: 0L
 
     // ---------- 内部 ----------
 
