@@ -365,13 +365,15 @@ class PlaybackManager @Inject constructor(
      * APE 等需异步转码的格式在边界无法精确对齐，不参与淡化（退化无缝/曲间停顿）。
      */
     private fun maybeStartCrossfade(p: ExoPlayer) {
-        if (crossfading || crossfadeMs <= 0 || !p.hasNextMediaItem()) return
+        if (crossfading || crossfadeMs <= 0) return
         val duration = p.duration.takeIf { it > 0 } ?: return
-        val remain = duration - p.currentPosition
-        if (remain > crossfadeMs + 400 || remain <= 0) return
+        val position = p.currentPosition
+        val hasNext = p.hasNextMediaItem()
         val nextIndex = p.currentMediaItemIndex + 1
         val nextEntry = _uiState.value.queue.getOrNull(nextIndex) ?: return
-        if (nextEntry.isApe) return
+        // 触发决策抽取到 CrossfadePolicy（纯函数，独立单测锁定边界），行为不变
+        if (!CrossfadePolicy.shouldTrigger(duration, position, crossfadeMs, hasNext, nextEntry.isApe)) return
+        val remain = duration - position
         startCrossfade(p, nextIndex, nextEntry, remain)
     }
 
