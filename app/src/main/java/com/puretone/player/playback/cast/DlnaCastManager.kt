@@ -168,13 +168,24 @@ class DlnaCastManager @Inject constructor(
      * 失败（设备拒绝/网络异常/转码失败）只回写 [CastState.error] 并返回 false，
      * 绝不抛异常。
      */
-    suspend fun castSong(song: SongEntity): Boolean {
+    suspend fun castSong(song: SongEntity): Boolean = castSong(song.id, song.title, song.path)
+
+    /**
+     * 投屏一首歌（按 id / 标题 / 源文件路径三要素）。
+     *
+     * 切歌场景（M1 收尾）拿到的只有队列条目 [com.puretone.player.playback.QueueEntry]，
+     * 没有完整的 [SongEntity]；而投送真实需要的正是这三样：
+     * - [songId] 用于查 [ApeTranscoder] 转码缓存；
+     * - [path] 是转码输入 / 直投的绝对文件路径；
+     * - [title] 只是渲染器上显示的曲名。
+     */
+    suspend fun castSong(songId: Long, title: String, path: String): Boolean {
         val device = currentDevice ?: run {
             _state.update { it.copy(error = "未选择投屏设备") }
             return false
         }
         val epoch = castEpoch.incrementAndGet()
-        val needsTranscode = CastSourcePolicy.requiresTranscode(song.path)
+        val needsTranscode = CastSourcePolicy.requiresTranscode(path)
 
         if (needsTranscode) {
             // 先把目标设备写进状态：转码可能数十秒，UI 需要「正在为投屏转码…」，
@@ -192,7 +203,7 @@ class DlnaCastManager @Inject constructor(
         }
 
         val prepared = try {
-            preparer.prepare(song.id, song.path)
+            preparer.prepare(songId, path)
         } finally {
             // 无论成功/失败/被取消都要撤掉「准备中」；若此刻状态已被 stopCast 整体
             // 重置，这里写 false 也无副作用
@@ -212,11 +223,11 @@ class DlnaCastManager @Inject constructor(
             is CastFilePreparer.Result.Ready -> prepared.file
         }
         if (prepared.transcoded) {
-            Log.i(TAG, "投送转码产物 ${target.name}（源：${song.path}）")
+            Log.i(TAG, "投送转码产物 ${target.name}（源：$path）")
         }
 
         return try {
-            DLNACast.castLocalFile(target.absolutePath, device, song.title)
+            DLNACast.castLocalFile(target.absolutePath, device, title)
             _state.update {
                 it.copy(
                     isCasting = true,

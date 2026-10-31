@@ -20,6 +20,8 @@ import com.puretone.player.data.settings.SleepTimerMode
 import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.effect.AudioEffectController
 import com.puretone.player.MainActivity
+import com.puretone.player.playback.cast.CastDevice
+import com.puretone.player.playback.cast.CastState
 import com.puretone.player.playback.cast.DlnaCastManager
 import com.puretone.player.widget.WidgetUpdater
 import kotlinx.coroutines.CoroutineScope
@@ -107,7 +109,7 @@ class PlaybackManager @Inject constructor(
     private val widgetUpdater: WidgetUpdater,
     private val dlnaCast: DlnaCastManager,
     private val serviceLauncher: PlaybackServiceLauncher
-) {
+) : CastCommandSink {
 
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
@@ -176,6 +178,12 @@ class PlaybackManager @Inject constructor(
      * 「清空队列后自己冒回来」「bind 后旧会话盖掉新点歌」三类缺陷。详见其类注释。
      */
     private val gate = PlaybackCommandGate()
+
+    /** 投屏态的 MediaSession 门面。在 [bind] 时按当前 player 重建（player 换了就要换包装） */
+    private var castPlayer: CastPlaybackPlayer? = null
+    /** MediaSession 当前是否挂在门面上（避免每次状态刷新都重复 setPlayer） */
+    private var routedToCast = false
+    private var castRoutingJob: Job? = null
 
     // 服务拉起 / 兜底 controller 已下沉到 PlaybackServiceLauncher（P1-1 拆分第二刀）：
     // 那里装的是 Android 8+ 后台启动禁令的绕行逻辑，不属于播放编排。
@@ -518,6 +526,17 @@ class PlaybackManager @Inject constructor(
         settingsJob = scope.launch {
             settings.settings.collect { applySettings(it) }
         }
+        // 投屏路由（M1 收尾）：门面必须包住**当前**这个 player，故每次 bind 重建
+        castPlayer = CastPlaybackPlayer(player, this)
+        castRoutingJob?.cancel()
+        castRoutingJob = scope.launch {
+            dlnaCast.state.collect { st ->
+                // 投屏期本地 ExoPlayer 是暂停的，onIsPlayingChanged 只会推 false；
+                // UI 的播放态镜像改跟渲染器，否则手机显示「暂停」而电视在播。
+                if (st.isCasting) _uiState.update { it.copy(isPlaying = st.isPlaying) }
+                routeSessionToCast(st.isCasting)
+            }
+        }
         // 执行挂起请求：一次性取走全部（重放期间新来的命令会留在槽里，不被这次重放吞掉）
         val pending = gate.drain()
         val playReq = pending.play
@@ -557,6 +576,27 @@ class PlaybackManager @Inject constructor(
         // 解绑只作废「追加」与「续播」（依赖当前会话的队列/设置），
         // 保留 pendingPlay——用户显式点的歌在服务重建后仍应执行。
         gate.clearSessionBoundPending()
+        // session/player 都将被释放：停掉路由订阅，避免对已死对象调 setPlayer
+        castRoutingJob?.cancel()
+        castRoutingJob = null
+        castPlayer = null
+        routedToCast = false
+    }
+
+    /**
+     * 把 MediaSession 的 player 在「本地 ExoPlayer」与「投屏门面」之间切换。
+     *
+     * 只在跨越投屏边界时调用：频繁 setPlayer 会让 Media3 反复重建通知与内部控制器。
+     * 切换失败（session 已释放等）只记日志——投屏是附加能力，不能因此崩掉播放链路。
+     */
+    private fun routeSessionToCast(toCast: Boolean) {
+        if (toCast == routedToCast) return
+        val target = if (toCast) castPlayer else player
+        val s = session
+        if (target == null || s == null) return
+        runCatching { s.setPlayer(target) }
+            .onFailure { Log.w(TAG, "session.setPlayer failed (toCast=$toCast)", it) }
+            .onSuccess { routedToCast = toCast }
     }
 
     /**
@@ -763,7 +803,9 @@ class PlaybackManager @Inject constructor(
 
         p.setMediaItems(mediaItems, startIndex, startPositionMs)
         p.prepare()
-        if (autoPlay) p.play() else p.pause()
+        // 投屏态不起播本地：这里只是重建「镜像队列」，出声的是随后重新投送的渲染器。
+        // 否则手机与电视同时出声，且电视仍停在旧曲上。
+        if (dlnaCast.state.value.isCasting) p.pause() else if (autoPlay) p.play() else p.pause()
         _uiState.update {
             it.copy(
                 queue = entries,
@@ -773,6 +815,8 @@ class PlaybackManager @Inject constructor(
                 error = null
             )
         }
+        // 投屏中直接点了另一首：把新曲投给渲染器，否则电视继续播旧的那首
+        recastCurrentIfCasting()
         saveSessionNow()
         applyReplayGainForCurrent()
         if (!autoPlay) warmUpFollowingApe()
@@ -843,7 +887,14 @@ class PlaybackManager @Inject constructor(
             }
             p.seekTo(index, 0L)
             p.prepare()
-            p.play()
+            if (dlnaCast.state.value.isCasting) {
+                // 投屏态不本地起播：只推进本地镜像（通知栏据此显示当前曲），
+                // 真正出声的是随后重新投送的渲染器。否则手机与电视同时出声。
+                p.pause()
+            } else {
+                p.play()
+            }
+            recastCurrentIfCasting()
         }
     }
 
@@ -927,6 +978,12 @@ class PlaybackManager @Inject constructor(
 
     fun togglePlayPause() {
         cancelCrossfade()
+        // 投屏态：必须按**渲染器**的状态取反。本地 ExoPlayer 恒为暂停，
+        // 若按它判断，投屏中按暂停会走成「播放」，用户永远停不下来。
+        if (dlnaCast.state.value.isCasting) {
+            if (dlnaCast.state.value.isPlaying) pause() else play()
+            return
+        }
         val p = player
         if (p == null) {
             gate.pendRestore()
@@ -938,6 +995,12 @@ class PlaybackManager @Inject constructor(
 
     fun play() {
         cancelCrossfade()
+        // 投屏态：命令属于渲染器。本地若也起播，手机与电视会同时出声。
+        if (dlnaCast.state.value.isCasting) {
+            scope.launch { dlnaCast.play() }
+            _uiState.update { it.copy(isPlaying = true) }
+            return
+        }
         val p = player
         if (p == null) {
             gate.pendRestore()
@@ -953,6 +1016,14 @@ class PlaybackManager @Inject constructor(
 
     fun pause() {
         cancelCrossfade()
+        // 投屏态：暂停的是渲染器。本地本就是暂停的，这里不能再去 pause 本地
+        // （否则 stopCast 后恢复本地播放时，位置/状态会被二次重置）。
+        if (dlnaCast.state.value.isCasting) {
+            scope.launch { dlnaCast.pause() }
+            _uiState.update { it.copy(isPlaying = false) }
+            saveSessionNow()
+            return
+        }
         player?.pause()
         // 同步刷新播放态：onIsPlayingChanged 监听是异步的，投屏 startCast 暂停本地后
         // 若不立即置 false，UI 会短暂显示「播放中」与投屏中提示条冲突（P0-2-③）。
@@ -1011,6 +1082,7 @@ class PlaybackManager @Inject constructor(
             val id = runCatching { p.getMediaItemAt(target)?.mediaId?.toLongOrNull() }.getOrNull()
             _uiState.update { it.copy(currentSongId = id, queueIndex = target, positionMs = 0L, durationMs = 0L) }
         }
+        recastCurrentIfCasting()
     }
 
     fun previous() {
@@ -1026,13 +1098,21 @@ class PlaybackManager @Inject constructor(
             // 无上一首：回到当前曲开头（与原 else 分支 p.seekTo(0L) 一致）
             _uiState.update { it.copy(positionMs = 0L) }
         }
+        recastCurrentIfCasting()
     }
 
     fun seekTo(positionMs: Long) {
         cancelCrossfade()
+        val ms = positionMs.coerceAtLeast(0L)
+        // 投屏态：进度条拖的是渲染器上的位置，本地进度由投屏轮询同步
+        if (dlnaCast.state.value.isCasting) {
+            scope.launch { dlnaCast.seek(ms) }
+            _uiState.update { it.copy(positionMs = ms) }
+            return
+        }
         val p = player ?: return
-        p.seekTo(positionMs.coerceAtLeast(0L))
-        _uiState.update { it.copy(positionMs = positionMs.coerceAtLeast(0L)) }
+        p.seekTo(ms)
+        _uiState.update { it.copy(positionMs = ms) }
     }
 
     /**
@@ -1274,6 +1354,85 @@ class PlaybackManager @Inject constructor(
             val updated = p.getMediaItemAt(index).buildUpon().setUri(Uri.fromFile(wavFile)).build()
             p.replaceMediaItem(index, updated)
         }.onFailure { Log.w(TAG, "replaceMediaItemUri failed at index=$index", it) }
+    }
+
+    // ---------- 投屏（M1 收尾：MediaSession 切换 + 命令路由） ----------
+
+    /**
+     * 开始投屏：暂停本地 → 选定设备 → 投送当前曲。
+     *
+     * 路由语义与 ViewModel 时期一致：投屏失败（设备拒绝/网络异常/APE 转码失败）时
+     * **恢复本地播放**——否则用户点了投屏却两头都没声音，且看不出发生了什么。
+     * 若另一次投送仍在进行（已投屏或正在准备），说明是并发/过期场景，由它接管，
+     * 本次不抢回本地播放。
+     */
+    fun startCast(device: CastDevice, song: SongEntity) {
+        scope.launch {
+            if (_uiState.value.isPlaying) pause()
+            dlnaCast.selectDevice(device)
+            val ok = dlnaCast.castSong(song)
+            if (!ok) {
+                val st = dlnaCast.state.value
+                if (!st.isCasting && !st.isPreparing) play()
+            }
+        }
+    }
+
+    /**
+     * 停止投屏：停渲染器 → MediaSession 切回本地 → 本地从原位置续播。
+     *
+     * 无条件续播而非「若本地非播放才播」：投屏期本地必然是暂停的，停止投屏的意图就是
+     * 回到手机上继续听。若按 uiState 判断会误判——投屏期 uiState.isPlaying 跟随的是
+     * 渲染器（见 bind 里的投屏状态订阅），停止后它仍是 true，会被读成「正在播放」而
+     * 不恢复，用户就既听不到电视也听不到手机。
+     */
+    fun stopCast() {
+        scope.launch {
+            dlnaCast.stopCast()
+            play()
+        }
+    }
+
+    /**
+     * 投屏期本地切歌后，把「当前曲」重新投给渲染器。
+     *
+     * DLNA push 是一次性的：手机队列怎么变渲染器都不知道，不会自动跟着切。
+     * 不重投的话，电视会继续播旧的那首，而通知栏显示的是另一首。
+     */
+    private fun recastCurrentIfCasting() {
+        if (!dlnaCast.state.value.isCasting) return
+        val entry = _uiState.value.currentEntry ?: return
+        scope.launch { dlnaCast.castSong(entry.songId, entry.title, entry.filePath) }
+    }
+
+    // ---------- CastCommandSink：门面回调 ----------
+
+    override val castState: CastState
+        get() = dlnaCast.state.value
+
+    override fun playOnRenderer() {
+        scope.launch { dlnaCast.play() }
+    }
+
+    override fun pauseOnRenderer() {
+        scope.launch { dlnaCast.pause() }
+    }
+
+    override fun seekOnRenderer(positionMs: Long) {
+        scope.launch { dlnaCast.seek(positionMs) }
+    }
+
+    /** 门面收到的是「切到第 N 首」：走常规点播路径，末尾会自动重投 */
+    override fun skipToIndex(index: Int) {
+        playAtIndex(index)
+    }
+
+    override fun skipToNext() {
+        next()
+    }
+
+    override fun skipToPrevious() {
+        previous()
     }
 
     /**

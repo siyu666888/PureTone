@@ -146,100 +146,6 @@ fun SettingsScreen(
             }
         }
 
-        // 桌面小部件：系统入口（长按桌面 → 小组件 → 翻列表找 App）路径很深，
-        // 且部分第三方桌面压根不列出新装 App，这里提供一键「固定到桌面」。
-        //
-        // 交互改为开关 + 前置确认弹窗：
-        // - 开关的 checked 直接来自 AppWidgetManager 的真实记录（[SettingsViewModel.widgetAdded]），
-        //   不是偏好值——用户可能在系统确认里取消，也可能添加后又在桌面上长按删掉；
-        // - 勾选前先弹对话框征得同意，确认后才发起请求；取消则开关自行弹回（状态未变）；
-        // - 已添加时把它拨到「关」不能真的卸载（Android 不允许 App 删除桌面组件），
-        //   改为提示用户到桌面长按移除，避免给一个「点了没反应」的开关。
-        val canPinWidget = remember { vm.canPinWidget() }
-        val widgetAdded by vm.widgetAdded.collectAsStateWithLifecycle()
-        var showAddDialog by remember { mutableStateOf(false) }
-        var showUnpinHint by remember { mutableStateOf(false) }
-        // 从桌面（含确认添加）返回设置页时按真实记录重算开关状态
-        LifecycleResumeEffect(Unit) {
-            vm.refreshWidgetAdded()
-            onPauseOrDispose {}
-        }
-        // 发起添加后补一次刷新：系统那层确认插页不在 App 内，无法拿到完成回调
-        var pinRequested by remember { mutableStateOf(0) }
-        LaunchedEffect(pinRequested) {
-            if (pinRequested > 0) {
-                delay(1_200)
-                vm.refreshWidgetAdded()
-            }
-        }
-        SettingsGroup(title = "桌面") {
-            SwitchRow(
-                label = "桌面播放控制小部件",
-                checked = widgetAdded,
-                enabled = canPinWidget || widgetAdded,
-                onChanged = { checked ->
-                    when {
-                        checked && !widgetAdded -> showAddDialog = true
-                        !checked -> showUnpinHint = true
-                    }
-                }
-            )
-        }
-
-        if (showAddDialog) {
-            AlertDialog(
-                onDismissRequest = { showAddDialog = false },
-                title = { Text("添加桌面小部件") },
-                text = {
-                    Text(
-                        "将在桌面添加 PureTone 播放控制小部件，" +
-                            "可直接查看当前歌曲并控制播放 / 切歌。是否继续？"
-                    )
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        showAddDialog = false
-                        if (vm.pinWidget()) pinRequested++
-                    }) { Text("确认添加") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showAddDialog = false }) { Text("取消") }
-                }
-            )
-        }
-
-        if (showUnpinHint) {
-            AlertDialog(
-                onDismissRequest = { showUnpinHint = false },
-                title = { Text("已在桌面上添加") },
-                text = { Text("如需移除，请在桌面长按该小部件，拖到「移除」区域即可。") },
-                confirmButton = {
-                    TextButton(onClick = { showUnpinHint = false }) { Text("知道了") }
-                }
-            )
-        }
-
-        // 存储
-        SettingsGroup(title = "存储") {
-            // APE 转码缓存：按字节上限 LRU（见 ApeTranscoder），此处可查大小并一键清理
-            val cacheSize by vm.apeCacheSize.collectAsStateWithLifecycle()
-            LaunchedEffect(Unit) { vm.refreshApeCacheSize() }
-            Row(
-                modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "APE 转码缓存" + if (cacheSize >= 0L) "（${formatBytes(cacheSize)}）" else "",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(
-                    onClick = { vm.clearApeCache() },
-                    enabled = cacheSize != 0L
-                ) { Text("清理") }
-            }
-        }
-
         // 音效
         SettingsGroup(title = "音效") {
             // 均衡器：行可点击进入均衡器页调节；右侧新增开关，直接启停音效
@@ -258,21 +164,108 @@ fun SettingsScreen(
         // 实验室（实验性功能）：总开关常驻可见，关闭时其下所有子分类（入口 + 设置项）整体隐藏
         SettingsGroup(title = "实验室") {
             SwitchRow(
-                label = "启用实验室功能",
+                label = "实验室",
                 checked = s.labEnabled,
                 onChanged = { vm.setLabEnabled(it) }
             )
-            Text(
-                "收起/展开实验性高级设置（如响度归一）。关闭后下列子分类将不再显示。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
         }
 
-        // ReplayGain（P1）：响度归一化，让不同音量的歌曲听起来响度一致
-        // —— 迁移至「实验室」分类下：仅当实验室开关开启时显示（含本分类入口）。
         if (s.labEnabled) {
+            // 桌面小部件：系统入口（长按桌面 → 小组件 → 翻列表找 App）路径很深，
+            // 且部分第三方桌面压根不列出新装 App，这里提供一键「固定到桌面」。
+            //
+            // 交互改为开关 + 前置确认弹窗：
+            // - 开关的 checked 直接来自 AppWidgetManager 的真实记录（[SettingsViewModel.widgetAdded]），
+            //   不是偏好值——用户可能在系统确认里取消，也可能添加后又在桌面上长按删掉；
+            // - 勾选前先弹对话框征得同意，确认后才发起请求；取消则开关自行弹回（状态未变）；
+            // - 已添加时把它拨到「关」不能真的卸载（Android 不允许 App 删除桌面组件），
+            //   改为提示用户到桌面长按移除，避免给一个「点了没反应」的开关。
+            val canPinWidget = remember { vm.canPinWidget() }
+            val widgetAdded by vm.widgetAdded.collectAsStateWithLifecycle()
+            var showAddDialog by remember { mutableStateOf(false) }
+            var showUnpinHint by remember { mutableStateOf(false) }
+            // 从桌面（含确认添加）返回设置页时按真实记录重算开关状态
+            LifecycleResumeEffect(Unit) {
+                vm.refreshWidgetAdded()
+                onPauseOrDispose {}
+            }
+            // 发起添加后补一次刷新：系统那层确认插页不在 App 内，无法拿到完成回调
+            var pinRequested by remember { mutableStateOf(0) }
+            LaunchedEffect(pinRequested) {
+                if (pinRequested > 0) {
+                    delay(1_200)
+                    vm.refreshWidgetAdded()
+                }
+            }
+            SettingsGroup(title = "桌面") {
+                SwitchRow(
+                    label = "桌面播放控制小部件",
+                    checked = widgetAdded,
+                    enabled = canPinWidget || widgetAdded,
+                    onChanged = { checked ->
+                        when {
+                            checked && !widgetAdded -> showAddDialog = true
+                            !checked -> showUnpinHint = true
+                        }
+                    }
+                )
+            }
+
+            if (showAddDialog) {
+                AlertDialog(
+                    onDismissRequest = { showAddDialog = false },
+                    title = { Text("添加桌面小部件") },
+                    text = {
+                        Text(
+                            "将在桌面添加 PureTone 播放控制小部件，" +
+                                "可直接查看当前歌曲并控制播放 / 切歌。是否继续？"
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showAddDialog = false
+                            if (vm.pinWidget()) pinRequested++
+                        }) { Text("确认添加") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showAddDialog = false }) { Text("取消") }
+                    }
+                )
+            }
+
+            if (showUnpinHint) {
+                AlertDialog(
+                    onDismissRequest = { showUnpinHint = false },
+                    title = { Text("已在桌面上添加") },
+                    text = { Text("如需移除，请在桌面长按该小部件，拖到「移除」区域即可。") },
+                    confirmButton = {
+                        TextButton(onClick = { showUnpinHint = false }) { Text("知道了") }
+                    }
+                )
+            }
+
+            // 存储
+            SettingsGroup(title = "存储") {
+                // APE 转码缓存：按字节上限 LRU（见 ApeTranscoder），此处可查大小并一键清理
+                val cacheSize by vm.apeCacheSize.collectAsStateWithLifecycle()
+                LaunchedEffect(Unit) { vm.refreshApeCacheSize() }
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "APE 转码缓存" + if (cacheSize >= 0L) "（${formatBytes(cacheSize)}）" else "",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = { vm.clearApeCache() },
+                        enabled = cacheSize != 0L
+                    ) { Text("清理") }
+                }
+            }
+
+            // ReplayGain（P1）：响度归一化，让不同音量的歌曲听起来响度一致
             SettingsGroup(title = "响度（ReplayGain）") {
                 SwitchRow(
                     label = "启用 ReplayGain",
