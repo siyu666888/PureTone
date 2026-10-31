@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>智能歌单图标预览</title>
+<style>
+  body { background:#f5f5fa; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; margin:0; padding:32px; }
+  h1 { font-size:18px; color:#333; font-weight:600; }
+  .row { display:flex; gap:28px; flex-wrap:wrap; margin-top:24px; align-items:flex-end; }
+  .cell { text-align:center; }
+  .card {
+    width:140px; height:140px; border-radius:20px;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 4px 14px rgba(0,0,0,0.08);
+  }
+  .label { margin-top:10px; font-size:13px; color:#555; }
+  svg { width:96px; height:96px; }
+  .scale { font-size:11px; color:#999; margin-top:2px; }
+</style>
+</head>
+<body>
+  <h1>智能歌单图标预览（还原 SmartPlaylistIcons.kt 矢量坐标）</h1>
+  <div class="row" id="row"></div>
+
+<script>
+// ---- 颜色（与品牌体系统一）----
+const PRIMARY = "#5E6AD2";
+const FAVORITE_RED = "#E53935";
+const TERTIARY = "#7A56C6";
+const CARD_BG = "#E4E3FA";
+
+const DEG = Math.PI/180;
+
+// 还原 drawCircularArrow：填充式扇环 + 实心三角箭头
+function circularArrow(cx, cy, radius, startDeg, sweepDeg) {
+  const R = radius + 0.9, r = radius - 0.9;
+  const sR = startDeg*DEG, eR = (startDeg+sweepDeg)*DEG;
+  const oS = [cx + R*Math.cos(sR), cy + R*Math.sin(sR)];
+  const oE = [cx + R*Math.cos(eR), cy + R*Math.sin(eR)];
+  const iE = [cx + r*Math.cos(eR), cy + r*Math.sin(eR)];
+  const seg = `M ${oS[0]} ${oS[1]} `
+            + `A ${R} ${R} 0 0 1 ${oE[0]} ${oE[1]} `
+            + `L ${iE[0]} ${iE[1]} `
+            + `A ${r} ${r} 0 0 0 ${(cx+r*Math.cos(sR)).toFixed(3)} ${(cy+r*Math.sin(sR)).toFixed(3)} Z`;
+  const tx = -Math.sin(eR), ty = Math.cos(eR);
+  const ah = 3.0;
+  const tip = [oE[0]+tx*ah, oE[1]+ty*ah];
+  const px = -ty, py = tx;
+  const lx = [oE[0]-px*ah*0.7, oE[1]-py*ah*0.7];
+  const rx = [oE[0]+px*ah*0.7, oE[1]+py*ah*0.7];
+  const tri = `M ${tip[0]} ${tip[1]} L ${lx[0]} ${lx[1]} L ${rx[0]} ${rx[1]} Z`;
+  return seg + " " + tri;
+}
+
+const cx = 12, cy = 12;
+
+// 三图标 SVG 内容
+const glyphs = {
+  recentlyAdded: `
+    <path d="M 6 3 L 18 3 L 18 4.8 L 13.5 11.1 L 13.5 12.9 L 18 19.2 L 18 21 L 6 21 L 6 19.2 L 10.5 12.9 L 10.5 11.1 L 6 4.8 Z" fill="${PRIMARY}"/>
+  `,
+  myFavorites: `
+    <path d="M 12 21.35 L 10.55 20.03 C 5.4 15.36 2 12.28 2 8.5 C 2 5.42 4.42 3 7.5 3 C 9.24 3 10.91 3.81 12 5.09 C 13.09 3.81 14.76 3 16.5 3 C 19.58 3 22 5.42 22 8.5 C 22 12.28 18.6 15.36 13.45 20.04 L 12 21.35 Z" fill="${FAVORITE_RED}"/>
+  `,
+  recentlyPlayed: `
+    <g fill="${TERTIARY}">
+      <path d="${circularArrow(cx,cy,8.5,250,70)}"/>
+      <path d="${circularArrow(cx,cy,8.5,10,70)}"/>
+      <path d="${circularArrow(cx,cy,8.5,130,70)}"/>
+    </g>
+  `
+};
+
+const items = [
+  { key:"recentlyAdded",  tint:PRIMARY,       label:"最近添加", desc:"沙漏(左) + 右侧独立加号" },
+  { key:"myFavorites",    tint:FAVORITE_RED,  label:"我的最爱", desc:"爱心 + 中心镂空音符(下移)" },
+  { key:"recentlyPlayed", tint:TERTIARY,      label:"最近播放", desc:"中心音符(下移) + 环形箭头" },
+];
+
+const row = document.getElementById("row");
+items.forEach(it => {
+  const cell = document.createElement("div");
+  cell.className = "cell";
+  cell.innerHTML = `
+    <div class="card" style="background:${CARD_BG}">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">${glyphs[it.key]}</svg>
+    </div>
+    <div class="label">${it.label}</div>
+    <div class="scale">${it.desc}</div>`;
+  row.appendChild(cell);
+});
+</script>
+</body>
+</html>

@@ -93,6 +93,8 @@ import com.puretone.player.ui.LibraryViewModel
 import com.puretone.player.ui.MetadataViewModel
 import com.puretone.player.ui.PlayerViewModel
 import com.puretone.player.ui.components.FavoriteRed
+import com.puretone.player.ui.components.SmartPlaylistGlyph
+import com.puretone.player.ui.components.SmartPlaylistKind
 import com.puretone.player.ui.components.SongRow
 import com.puretone.player.ui.Routes
 import kotlinx.coroutines.delay
@@ -102,7 +104,7 @@ import kotlinx.coroutines.delay
  */
 private data class SmartPlaylist(
     val title: String,
-    val icon: ImageVector,
+    val kind: SmartPlaylistKind,
     val songs: List<SongEntity>
 )
 
@@ -123,9 +125,9 @@ private fun SmartPlaylistsRow(
     modifier: Modifier = Modifier
 ) {
     val items = listOf(
-        SmartPlaylist("最近添加", Icons.Rounded.Add, recentlyAdded),
-        SmartPlaylist("我的最爱", Icons.Rounded.Favorite, topSongs),
-        SmartPlaylist("最近播放", Icons.Filled.PlayArrow, recentlyPlayed)
+        SmartPlaylist("最近添加", SmartPlaylistKind.RECENTLY_ADDED, recentlyAdded),
+        SmartPlaylist("我的最爱", SmartPlaylistKind.MY_FAVORITES, topSongs),
+        SmartPlaylist("最近播放", SmartPlaylistKind.RECENTLY_PLAYED, recentlyPlayed)
     )
     // 三卡按 weight 均分整屏宽度：固定内边距 + 等分，杜绝横向滚动与卡片溢出（用户诉求）。
     Row(
@@ -160,11 +162,9 @@ private fun SmartPlaylistCard(
             modifier = Modifier.padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                sp.icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.width(28.dp).height(28.dp)
+            SmartPlaylistGlyph(
+                kind = sp.kind,
+                modifier = Modifier.size(28.dp)
             )
             Spacer(Modifier.width(10.dp))
             Column {
