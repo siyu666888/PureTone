@@ -134,9 +134,10 @@ jobs:
             && echo "baseline.prof OK" \
             || { echo "::error::assets/dexopt/baseline.prof 缺失"; exit 1; }
 
-      # lint 先只做「信息收集」：不因既有告警阻塞 CI，等告警清零后再去掉 continue-on-error。
-      - name: 静态检查 (lint)
-        continue-on-error: true
+      # lint 现在是真门禁：存量告警已冻结在 app/lint-baseline.xml（入库，本地与 CI 共用），
+      # 只有新增告警才会让这一步失败。已用一个临时探针（故意 Toast 不 show）验证过
+      # 闸门确实会拦，不是形同虚设。
+      - name: 静态检查 (lint，新增告警即失败)
         run: ./gradlew lintDebug --no-daemon
 
       - name: 上传 APK 产物

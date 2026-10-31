@@ -133,6 +133,18 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }
+
+    // lint 门禁（P2）：存量告警冻结进 lint-baseline.xml，只有**新增**告警才会让 CI 变红。
+    // - baseline 文件入库，本地与 CI 共用同一份，避免「同一个告警在 CI 上才算」的偏差；
+    // - warningsAsErrors：让新出现的 Warning 也阻断构建（否则 abortOnError 只管 Error，
+    //   Warning 会被静默放过，门禁形同虚设）；
+    // - 要清理存量告警时，从基线里删掉对应条目再修，不要整体删文件重生成——
+    //   那会一次性把既有问题全部重新冻结，等于闸门失效。
+    lint {
+        baseline = file("lint-baseline.xml")
+        warningsAsErrors = true
+        abortOnError = true
+    }
 }
 
 kotlin {
