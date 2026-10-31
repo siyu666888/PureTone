@@ -45,6 +45,9 @@ class SettingsViewModel @Inject constructor(
     fun setSleepTimerEndOfTrack() = viewModelScope.launch { settings.setSleepTimerEndOfTrack() }
     fun setEqEnabled(enabled: Boolean) = viewModelScope.launch { settings.setEqEnabled(enabled) }
 
+    // ---------- 实验室（实验性功能总开关） ----------
+    fun setLabEnabled(enabled: Boolean) = viewModelScope.launch { settings.setLabEnabled(enabled) }
+
     // ---------- ReplayGain（P1） ----------
     fun setReplayGainEnabled(enabled: Boolean) =
         viewModelScope.launch { settings.setReplayGainEnabled(enabled) }

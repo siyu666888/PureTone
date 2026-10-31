@@ -255,39 +255,57 @@ fun SettingsScreen(
             }
         }
 
-        // ReplayGain（P1）：响度归一化，让不同音量的歌曲听起来响度一致
-        SettingsGroup(title = "响度（ReplayGain）") {
+        // 实验室（实验性功能）：总开关常驻可见，关闭时其下所有子分类（入口 + 设置项）整体隐藏
+        SettingsGroup(title = "实验室") {
             SwitchRow(
-                label = "启用 ReplayGain",
-                checked = s.replayGainEnabled,
-                onChanged = { vm.setReplayGainEnabled(it) }
-            )
-            // 模式：按曲目（每首独立归一）/ 按专辑（同专辑内响度一致，曲目间过渡更平）
-            val rgModes = listOf(PureToneSettings.RG_TRACK, PureToneSettings.RG_ALBUM)
-            val rgModeLabels = listOf("曲目", "专辑")
-            SettingsSegmentRow(
-                label = "模式",
-                options = rgModeLabels,
-                selectedIndex = rgModes.indexOf(s.replayGainMode).coerceAtLeast(0),
-                enabled = s.replayGainEnabled,
-                onSelect = { vm.setReplayGainMode(rgModes[it]) }
-            )
-            // preamp：在 RG 增益之上叠加的手调补偿（dB，范围 -12 ~ +12）
-            SliderRow(
-                label = "补偿 (dB)",
-                value = s.replayGainPreampDb,
-                valueRange = PureToneSettings.RG_PREAMP_MIN_DB..PureToneSettings.RG_PREAMP_MAX_DB,
-                steps = 48, // -12..12 共 24 个整数 dB，每 0.5 一档 → 48 步
-                enabled = s.replayGainEnabled,
-                valueText = "%.1f dB".format(s.replayGainPreampDb),
-                onValueChange = { vm.setReplayGainPreamp(it) }
+                label = "启用实验室功能",
+                checked = s.labEnabled,
+                onChanged = { vm.setLabEnabled(it) }
             )
             Text(
-                "依据音频文件内 ReplayGain 标签自动调整响度，文件无标签时本项不生效。",
+                "收起/展开实验性高级设置（如响度归一）。关闭后下列子分类将不再显示。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp)
             )
+        }
+
+        // ReplayGain（P1）：响度归一化，让不同音量的歌曲听起来响度一致
+        // —— 迁移至「实验室」分类下：仅当实验室开关开启时显示（含本分类入口）。
+        if (s.labEnabled) {
+            SettingsGroup(title = "响度（ReplayGain）") {
+                SwitchRow(
+                    label = "启用 ReplayGain",
+                    checked = s.replayGainEnabled,
+                    onChanged = { vm.setReplayGainEnabled(it) }
+                )
+                // 模式：按曲目（每首独立归一）/ 按专辑（同专辑内响度一致，曲目间过渡更平）
+                val rgModes = listOf(PureToneSettings.RG_TRACK, PureToneSettings.RG_ALBUM)
+                val rgModeLabels = listOf("曲目", "专辑")
+                SettingsSegmentRow(
+                    label = "模式",
+                    options = rgModeLabels,
+                    selectedIndex = rgModes.indexOf(s.replayGainMode).coerceAtLeast(0),
+                    enabled = s.replayGainEnabled,
+                    onSelect = { vm.setReplayGainMode(rgModes[it]) }
+                )
+                // preamp：在 RG 增益之上叠加的手调补偿（dB，范围 -12 ~ +12）
+                SliderRow(
+                    label = "补偿 (dB)",
+                    value = s.replayGainPreampDb,
+                    valueRange = PureToneSettings.RG_PREAMP_MIN_DB..PureToneSettings.RG_PREAMP_MAX_DB,
+                    steps = 48, // -12..12 共 24 个整数 dB，每 0.5 一档 → 48 步
+                    enabled = s.replayGainEnabled,
+                    valueText = "%.1f dB".format(s.replayGainPreampDb),
+                    onValueChange = { vm.setReplayGainPreamp(it) }
+                )
+                Text(
+                    "依据音频文件内 ReplayGain 标签自动调整响度，文件无标签时本项不生效。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+            }
         }
 
         // 品牌 + 版本号（居中，置于内容最底部）

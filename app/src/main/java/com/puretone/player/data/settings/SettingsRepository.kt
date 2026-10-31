@@ -107,7 +107,17 @@ data class PureToneSettings(
      * 用户自定义均衡器预设：名称 → 10 段增益（dB，mB）。
      * 非 DataStore 直存字段，由 [Keys.eqCustomPresets] 经 JSON 编解码派生。
      */
-    val eqCustomPresets: Map<String, List<Int>> = emptyMap()
+    val eqCustomPresets: Map<String, List<Int>> = emptyMap(),
+
+    // ---------- lab_ ----------
+    /**
+     * 实验室（实验性功能）总开关。
+     *
+     * 关闭时，设置页「实验室」分类下的所有子项（入口 + 设置项，如响度 ReplayGain）
+     * 全部隐藏。默认值取 true：**保留现有 ReplayGain 可见性、不回归**，
+     * 用户可主动关闭以收起实验性功能。开关本身常驻可见，便于重新开启。
+     */
+    val labEnabled: Boolean = true
 ) {
     companion object {
         const val THEME_SYSTEM = "SYSTEM"
@@ -186,6 +196,8 @@ class SettingsRepository @Inject constructor(
         val virtualizer = intPreferencesKey("eq_virtualizer")
         /** 用户自定义均衡器预设（JSON：名称 → 10 段增益列表） */
         val eqCustomPresets = stringPreferencesKey("eq_custom_presets")
+        // lab_
+        val labEnabled = booleanPreferencesKey("lab_enabled")
     }
 
     /**
@@ -226,7 +238,8 @@ class SettingsRepository @Inject constructor(
                 eqBandLevels = decodeBands(prefs[Keys.eqBandLevels]) ?: defaults.eqBandLevels,
                 bassBoostStrength = prefs[Keys.bassBoost] ?: defaults.bassBoostStrength,
                 virtualizerStrength = prefs[Keys.virtualizer] ?: defaults.virtualizerStrength,
-                eqCustomPresets = decodeCustomPresets(prefs[Keys.eqCustomPresets])
+                eqCustomPresets = decodeCustomPresets(prefs[Keys.eqCustomPresets]),
+                labEnabled = prefs[Keys.labEnabled] ?: defaults.labEnabled
             ).let { s ->
                 // 定时状态归一化（此前只处理 MINUTES 的过期，现在多一种 END_OF_TRACK）：
                 // 1) 倒计时型定时已过期 → 四个字段全部归零。老数据中「到期时刻还在、
@@ -341,6 +354,9 @@ class SettingsRepository @Inject constructor(
     suspend fun setCrossfadeMs(ms: Int) = edit {
         it[Keys.crossfadeMs] = ms.coerceIn(PureToneSettings.CROSSFADE_MIN_MS, PureToneSettings.CROSSFADE_MAX_MS)
     }
+
+    // ---------- lab_ ----------
+    suspend fun setLabEnabled(enabled: Boolean) = edit { it[Keys.labEnabled] = enabled }
 
     // ---------- replaygain_ ----------
     suspend fun setReplayGainEnabled(enabled: Boolean) = edit { it[Keys.replayGainEnabled] = enabled }
