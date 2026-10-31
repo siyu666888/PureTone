@@ -46,39 +46,6 @@
     </issue>
 
     <issue
-        id="GradleDependency"
-        message="A newer version of androidx.core:core-ktx than 1.13.1 is available: 1.16.0"
-        errorLine1="coreKtx = &quot;1.13.1&quot;"
-        errorLine2="          ~~~~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="10"
-            column="11"/>
-    </issue>
-
-    <issue
-        id="GradleDependency"
-        message="A newer version of androidx.core:core-ktx than 1.13.1 is available: 1.16.0"
-        errorLine1="coreKtx = &quot;1.13.1&quot;"
-        errorLine2="          ~~~~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="10"
-            column="11"/>
-    </issue>
-
-    <issue
-        id="GradleDependency"
-        message="A newer version of androidx.core:core-ktx than 1.13.1 is available: 1.16.0"
-        errorLine1="coreKtx = &quot;1.13.1&quot;"
-        errorLine2="          ~~~~~~~~">
-        <location
-            file="../gradle/libs.versions.toml"
-            line="10"
-            column="11"/>
-    </issue>
-
-    <issue
         id="ExportedService"
         message="Exported service does not require permission"
         errorLine1="        &lt;service"
@@ -224,7 +191,7 @@
         errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="build.gradle.kts"
-            line="206"
+            line="214"
             column="20"/>
     </issue>
 

@@ -144,11 +144,19 @@ android {
         baseline = file("lint-baseline.xml")
         warningsAsErrors = true
         abortOnError = true
-        // ObsoleteLintCustomCheck 检查的是**第三方库自带的** lint.jar 是否引用了过时 API
-        // （报 "Library lint checks reference invalid APIs"）。它衡量的不是本项目代码质量，
-        // 结果完全取决于当时依赖缓存里有哪些库——本地 3 条（Warning），CI 上 63 条（Error），
-        // 两者不一致且无法在代码层面修正。故禁用，避免门禁因环境抖动误报。
-        disable += setOf("ObsoleteLintCustomCheck")
+        disable += setOf(
+            // 检查的是**第三方库自带的** lint.jar 是否引用了过时 API
+            //（报 "Library lint checks reference invalid APIs"）。衡量的不是本项目代码质量，
+            // 结果完全取决于当时依赖缓存里有哪些库——本地 3 条（Warning），CI 上 63 条
+            //（Error），两者不一致且无法在代码层面修正。
+            "ObsoleteLintCustomCheck",
+            // 以下三项是「有新版本可用」类检查：AGP 9.5.0、依赖升级等。它们随时间推移
+            // 必然变化——今天通过，明天某个库发版就红，与本次改动毫无关系。留着会让
+            // 门禁变成随机失败的噪音源，反而掩盖真正的代码问题。依赖升级另行跟进。
+            "AndroidGradlePluginVersion",
+            "GradleDependency",
+            "NewerVersionAvailable"
+        )
     }
 }
 
