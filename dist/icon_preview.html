@@ -54,10 +54,33 @@ function circularArrow(cx, cy, radius, startDeg, sweepDeg) {
 
 const cx = 12, cy = 12;
 
+// 还原 roundedPolygon：二次贝塞尔转角平滑（与 SmartPlaylistIcons.kt 一致）
+function roundedPolygon(pts, radius) {
+  const n = pts.length;
+  const t1 = [], t2 = [];
+  for (let i = 0; i < n; i++) {
+    const prev = pts[(i - 1 + n) % n], cur = pts[i], next = pts[(i + 1) % n];
+    const d1 = [cur[0]-prev[0], cur[1]-prev[1]];
+    const d2 = [next[0]-cur[0], next[1]-cur[1]];
+    const l1 = Math.hypot(d1[0], d1[1]), l2 = Math.hypot(d2[0], d2[1]);
+    const r = Math.min(radius, l1/2, l2/2);
+    const e1 = [d1[0]/l1, d1[1]/l1], e2 = [d2[0]/l2, d2[1]/l2];
+    t1.push([cur[0]-e1[0]*r, cur[1]-e1[1]*r]);
+    t2.push([cur[0]+e2[0]*r, cur[1]+e2[1]*r]);
+  }
+  let d = `M ${t1[0][0]} ${t1[0][1]} `;
+  for (let i = 0; i < n; i++) {
+    const nxt = (i + 1) % n;
+    d += `Q ${pts[i][0]} ${pts[i][1]} ${t2[i][0]} ${t2[i][1]} `;
+    d += `L ${t1[nxt][0]} ${t1[nxt][1]} `;
+  }
+  return d + "Z";
+}
+
 // 三图标 SVG 内容
 const glyphs = {
   recentlyAdded: `
-    <path d="M 6 3 L 18 3 L 18 4.8 L 13.5 11.1 L 13.5 12.9 L 18 19.2 L 18 21 L 6 21 L 6 19.2 L 10.5 12.9 L 10.5 11.1 L 6 4.8 Z" fill="${PRIMARY}"/>
+    <path d="${roundedPolygon([[6,3],[18,3],[13,12],[18,21],[6,21],[11,12]], 1.5)}" fill="${PRIMARY}"/>
   `,
   myFavorites: `
     <path d="M 12 21.35 L 10.55 20.03 C 5.4 15.36 2 12.28 2 8.5 C 2 5.42 4.42 3 7.5 3 C 9.24 3 10.91 3.81 12 5.09 C 13.09 3.81 14.76 3 16.5 3 C 19.58 3 22 5.42 22 8.5 C 22 12.28 18.6 15.36 13.45 20.04 L 12 21.35 Z" fill="${FAVORITE_RED}"/>

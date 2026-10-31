@@ -46,14 +46,51 @@ fun SmartPlaylistGlyph(kind: SmartPlaylistKind, modifier: Modifier = Modifier) {
     }
 }
 
-/** 最近添加：沙漏（高度压缩至与爱心一致，居中于 x12） */
+/** 最近添加：沙漏（腰部收窄至颈宽约 2.0，漏斗壁约 61°，各转角二次贝塞尔圆弧平滑） */
 private fun DrawScope.drawHourglass(color: Color) {
-    val glass = Path().apply {
-        moveTo(6f, 3f); lineTo(18f, 3f); lineTo(18f, 4.8f); lineTo(13.5f, 11.1f)
-        lineTo(13.5f, 12.9f); lineTo(18f, 19.2f); lineTo(18f, 21f); lineTo(6f, 21f)
-        lineTo(6f, 19.2f); lineTo(10.5f, 12.9f); lineTo(10.5f, 11.1f); lineTo(6f, 4.8f); close()
+    val pts = listOf(
+        Offset(6f, 3f),     // 左上
+        Offset(18f, 3f),    // 右上
+        Offset(13f, 12f),   // 腰部右
+        Offset(18f, 21f),   // 右下
+        Offset(6f, 21f),    // 左下
+        Offset(11f, 12f)    // 腰部左
+    )
+    drawPath(roundedPolygon(pts, 1.5f), color)
+}
+
+/**
+ * 多边形转角平滑：在每个顶点沿相邻边各回退 r 取得切线点 t1/t2，再用「以原顶点为控制点的
+ * 二次贝塞尔曲线」连接相邻切线点。对凸角与腰部凹角均适用，得到无锐利折角的光滑轮廓。
+ * r 按相邻边长的一半自动 clamp，防止过圆或自交。
+ */
+private fun roundedPolygon(points: List<Offset>, radius: Float): Path {
+    val n = points.size
+    val t1 = Array(n) { Offset.Zero }
+    val t2 = Array(n) { Offset.Zero }
+    for (i in 0 until n) {
+        val prev = points[(i - 1 + n) % n]
+        val cur = points[i]
+        val next = points[(i + 1) % n]
+        val d1 = cur - prev
+        val d2 = next - cur
+        val len1 = d1.getDistance()
+        val len2 = d2.getDistance()
+        val r = (len1 / 2f).coerceAtMost(len2 / 2f).coerceAtMost(radius)
+        val e1 = if (len1 > 0f) d1 / len1 else Offset.Zero
+        val e2 = if (len2 > 0f) d2 / len2 else Offset.Zero
+        t1[i] = cur - e1 * r
+        t2[i] = cur + e2 * r
     }
-    drawPath(glass, color)
+    val path = Path()
+    path.moveTo(t1[0].x, t1[0].y)
+    for (i in 0 until n) {
+        val nxt = (i + 1) % n
+        path.quadraticTo(points[i].x, points[i].y, t2[i].x, t2[i].y)
+        path.lineTo(t1[nxt].x, t1[nxt].y)
+    }
+    path.close()
+    return path
 }
 
 /** 我的最爱：爱心（Material 标准心形路径） */
