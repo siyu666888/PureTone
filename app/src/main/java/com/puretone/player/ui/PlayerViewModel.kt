@@ -178,8 +178,38 @@ class PlayerViewModel @Inject constructor(
     }
     // P4：删除无调用方的 play()/pause()——UI 一律走 togglePlay()（播放/暂停互斥），
     // 留着两个裸入口反而容易被误用
-    fun next() = playback.next()
-    fun prev() = playback.previous()
+    /**
+     * 下一首。
+     * 投屏态路由（M1 止血）：本地播放器已暂停，若仍调本地 next 只会推进本地队列、
+     * 电视停在上一首，造成状态撕裂。改为先推进本地镜像（同步刷新 uiState，不出声），
+     * 再按新的 currentSongId 投屏该曲，使「UI 当前曲目」与电视一致。
+     */
+    fun next() {
+        if (dlnaCast.state.value.isCasting) {
+            viewModelScope.launch(ceh) {
+                playback.next()
+                val song = state.value.currentSongId?.let { runCatching { repo.getSong(it) }.getOrNull() }
+                if (song != null) dlnaCast.castSong(song)
+            }
+        } else {
+            playback.next()
+        }
+    }
+
+    /**
+     * 上一首。投屏态路由同 [next]：推进本地镜像后投屏目标曲目。
+     */
+    fun prev() {
+        if (dlnaCast.state.value.isCasting) {
+            viewModelScope.launch(ceh) {
+                playback.previous()
+                val song = state.value.currentSongId?.let { runCatching { repo.getSong(it) }.getOrNull() }
+                if (song != null) dlnaCast.castSong(song)
+            }
+        } else {
+            playback.previous()
+        }
+    }
     fun seek(positionMs: Long) {
         // 投射态路由（M1）：投屏进行中，进度条拖动转交 DLNA 渲染器
         if (dlnaCast.state.value.isCasting) {

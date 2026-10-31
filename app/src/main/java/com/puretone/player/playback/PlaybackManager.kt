@@ -27,6 +27,7 @@ import com.puretone.player.data.settings.SleepTimerMode
 import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.effect.AudioEffectController
 import com.puretone.player.MainActivity
+import com.puretone.player.playback.cast.DlnaCastManager
 import com.puretone.player.widget.WidgetUpdater
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -119,7 +120,8 @@ class PlaybackManager @Inject constructor(
     private val apeTranscoder: ApeTranscoder,
     private val audioEffectController: AudioEffectController,
     private val settings: SettingsRepository,
-    private val widgetUpdater: WidgetUpdater
+    private val widgetUpdater: WidgetUpdater,
+    private val dlnaCast: DlnaCastManager
 ) {
 
     private var player: ExoPlayer? = null
@@ -365,6 +367,9 @@ class PlaybackManager @Inject constructor(
      * APE 等需异步转码的格式在边界无法精确对齐，不参与淡化（退化无缝/曲间停顿）。
      */
     private fun maybeStartCrossfade(p: ExoPlayer) {
+        // 投屏守卫（M1 止血）：投屏进行中本地播放器已暂停，若本地仍被 ticker 推进到
+        // 曲尾会误触发双实例交叉淡化，与 DLNA 投屏叠加后果不可预测。投屏态下直接跳过。
+        if (dlnaCast.state.value.isCasting) return
         if (crossfading || crossfadeMs <= 0) return
         val duration = p.duration.takeIf { it > 0 } ?: return
         val position = p.currentPosition
@@ -952,6 +957,9 @@ class PlaybackManager @Inject constructor(
     fun pause() {
         cancelCrossfade()
         player?.pause()
+        // 同步刷新播放态：onIsPlayingChanged 监听是异步的，投屏 startCast 暂停本地后
+        // 若不立即置 false，UI 会短暂显示「播放中」与投屏中提示条冲突（P0-2-③）。
+        _uiState.update { it.copy(isPlaying = false) }
         saveSessionNow()
     }
 
@@ -992,26 +1000,39 @@ class PlaybackManager @Inject constructor(
     fun next() {
         cancelCrossfade()
         val p = player ?: return
+        // 同步计算下一首索引（尊重 repeat/shuffle；INDEX_UNSET = 无下一首）。
+        // 用 Timeline.getNextWindowIndex 与下方 seek 语义一致（顺序/随机/循环三态统一），
+        // 但能立即拿到目标索引，用于同步刷新 UI 镜像——投屏态下 ViewModel 需马上读
+        // currentSongId 决定投屏哪一首，仅靠异步 onMediaItemTransition 会有竞态。
+        val target = p.currentTimeline.getNextWindowIndex(p.currentMediaItemIndex, p.repeatMode, p.shuffleModeEnabled)
         if (p.hasNextMediaItem()) p.seekToNextMediaItem()
         else if (_uiState.value.repeatMode == RepeatMode.ALL && p.mediaItemCount > 0) {
             // P3-15：循环到末尾回绕时，须回到「当前播放顺序」的首位，而非 timeline 的
             // 首位——开启随机时 seekTo(0) 会跳到随机序列之外的第一首，打乱随机体验。
-            //
-            // 注意：Media3 1.4.1 的 ExoPlayer **没有公开的 shuffleOrder getter**
-            // （只有 setShuffleOrder），review 里建议的 player.shuffleOrder 无法编译。
             // 这里改用 Timeline.getFirstWindowIndex(shuffleModeEnabled)——它正是
-            // Media3 自身在 REPEAT_ALL 回绕时使用的索引（见 Timeline.getNextWindowIndex
-            // 实现：命中末窗口时返回 getFirstWindowIndex(shuffleModeEnabled)），
-            // 因此与播放器内部语义完全一致，且是公开 API。
+            // Media3 自身在 REPEAT_ALL 回绕时使用的索引，与播放器内部语义完全一致。
             val first = p.currentTimeline.getFirstWindowIndex(p.shuffleModeEnabled)
             p.seekTo(if (first >= 0) first else 0, 0L)
+        }
+        if (target != C.INDEX_UNSET) {
+            val id = runCatching { p.getMediaItemAt(target)?.mediaId?.toLongOrNull() }.getOrNull()
+            _uiState.update { it.copy(currentSongId = id, queueIndex = target, positionMs = 0L, durationMs = 0L) }
         }
     }
 
     fun previous() {
         cancelCrossfade()
         val p = player ?: return
+        // 同步计算上一首索引（尊重 repeat/shuffle；INDEX_UNSET = 无上一首→回到当前曲开头）。
+        val target = p.currentTimeline.getPreviousWindowIndex(p.currentMediaItemIndex, p.repeatMode, p.shuffleModeEnabled)
         if (p.hasPreviousMediaItem()) p.seekToPreviousMediaItem() else p.seekTo(0L)
+        if (target != C.INDEX_UNSET) {
+            val id = runCatching { p.getMediaItemAt(target)?.mediaId?.toLongOrNull() }.getOrNull()
+            _uiState.update { it.copy(currentSongId = id, queueIndex = target, positionMs = 0L, durationMs = 0L) }
+        } else {
+            // 无上一首：回到当前曲开头（与原 else 分支 p.seekTo(0L) 一致）
+            _uiState.update { it.copy(positionMs = 0L) }
+        }
     }
 
     fun seekTo(positionMs: Long) {
