@@ -43,7 +43,13 @@ object DataModule {
                 PureToneDatabase.MIGRATION_2_3,
                 PureToneDatabase.MIGRATION_3_4,
                 PureToneDatabase.MIGRATION_4_5,
-                PureToneDatabase.MIGRATION_5_6
+                PureToneDatabase.MIGRATION_5_6,
+                // ⚠️ 必须与 @Database(version) 保持一致：漏注册任何一个版本区间，
+                // 升级用户首次开库即抛 "A migration from X to Y was required but not found"
+                // 而闪退（v1.7.0 的线上事故正是漏了 6→7）。迁移单测用独立 builder
+                // 注册了全量迁移，无法替生产代码兜底，故新增 DatabaseMigrationWiringTest
+                // 直接跑本生产 builder 做端到端校验。
+                PureToneDatabase.MIGRATION_6_7
             )
             .build()
 
