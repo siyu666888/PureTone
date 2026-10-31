@@ -1,6 +1,7 @@
 package com.puretone.player.data.repository
 
 import com.puretone.player.data.local.PureToneDatabase
+import com.puretone.player.PureToneApplication
 import com.puretone.player.data.local.dao.PlayHistoryDao
 import com.puretone.player.data.local.dao.PlaylistDao
 import com.puretone.player.data.local.dao.PlaylistWithSongs
@@ -15,6 +16,7 @@ import com.puretone.player.data.local.entity.PlaylistEntity
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.media.ScannedSong
 import com.puretone.player.data.media.MediaStoreScanner
+import com.puretone.player.data.media.isNonMusicPath
 import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.playback.ReplayGainExtractor
 import com.puretone.player.util.UnknownText
@@ -235,6 +237,29 @@ class MusicRepository @Inject constructor(
             }
         }
 
+        // 防误删保险：真正危险的是「大量**音乐**被移除」（通常是当前媒体库路径清单与本地
+        // 库路径口径不一致：多卷漏查 / MediaStore DATA 路径格式差异 / 大小写），而非用户真的
+        // 删了音乐。录音 / 铃声等非音乐文件被过滤移除是预期行为，必须从口径中剔除，否则会
+        // 误伤（曲库里混有较多录音时，正常移除录音会触发误判、导致本应删的录音残留）。
+        // 因此只在「被移除的音乐占现有音乐比例过高」时跳过删除，留待下次全量扫描收敛，并报错落盘。
+        val existingMusic = existingPaths.filterNot { p -> isNonMusicPath(p, existingByPath[p]?.mimeType ?: "") }
+        val removedMusic = removed.filterNot { isNonMusicPath(it, "") }
+        val musicRemovalRatio = if (existingMusic.isNotEmpty()) removedMusic.size.toDouble() / existingMusic.size else 0.0
+        val deletePaths = if (removedMusic.isNotEmpty() && musicRemovalRatio > 0.5) {
+            PureToneApplication.writeCrash(
+                "syncLibrary",
+                IllegalStateException(
+                    "Mass music-removal suppressed: removedMusic=${removedMusic.size} " +
+                        "existingMusic=${existingMusic.size} ratio=$musicRemovalRatio; " +
+                        "removedTotal=${removed.size} currentPaths.size=${currentPaths.size}. " +
+                        "Possible MediaStore path mismatch (volume/format/case)."
+                )
+            )
+            emptyList<String>()
+        } else {
+            removed.toList()
+        }
+
         db.withTransaction {
             if (toUpsert.isNotEmpty()) {
                 // 分片写入（P0-1）：Room 的批量 @Insert/@Update 生成的是单条多值
@@ -244,7 +269,7 @@ class MusicRepository @Inject constructor(
                 toUpsert.chunked(UPSERT_CHUNK).forEach { songDao.upsertAll(it) }
             }
             // 分片删除（规避 SQLite 参数上限）——删除集合"之内"的路径
-            removed.toList().chunked(500).forEach { chunk ->
+            deletePaths.chunked(500).forEach { chunk ->
                 songDao.deleteByPathIn(chunk)
             }
         }

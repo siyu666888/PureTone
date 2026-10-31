@@ -16,13 +16,17 @@ import com.puretone.player.domain.usecase.CreatePlaylistWithSongsUseCase
 import com.puretone.player.domain.usecase.ExportPlaylistUseCase
 import com.puretone.player.domain.usecase.ImportM3uPlaylistUseCase
 import com.puretone.player.playback.PlaybackManager
+import com.puretone.player.PureToneApplication
 import android.net.Uri
+import android.util.Log
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
@@ -58,25 +62,45 @@ class LibraryViewModel @Inject constructor(
     /** 曲库（随排序方式动态切换） */
     val library: StateFlow<List<SongEntity>> = _sortOrder
         .flatMapLatest { repo.observeLibrarySorted(it) }
+        .safeCrash("library")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val recentlyPlayed: StateFlow<List<SongEntity>> = repo.observeRecentlyPlayed(50)
+        .safeCrash("recentlyPlayed")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** 智能歌单：最近添加（最近入库的 N 首，按下库时间倒序） */
     val recentlyAdded: StateFlow<List<SongEntity>> = repo
         .observeLibrarySorted(SongSortOrder.DATE_ADDED)
         .map { it.take(SMART_PLAYLIST_LIMIT) }
+        .safeCrash("recentlyAdded")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** 智能歌单：最常播放 Top N（按 play_count 倒序） */
     val topSongs: StateFlow<List<SongEntity>> = repo
         .observeLibrarySorted(SongSortOrder.PLAY_COUNT)
         .map { it.take(SMART_PLAYLIST_LIMIT) }
+        .safeCrash("topSongs")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val playlists = repo.observePlaylists()
+        .safeCrash("playlists")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * 协程异常统一处理器：捕获 viewModelScope 内未处理异常，写入 crash_last.txt
+     * 并打日志，避免「打开应用即闪退」；异常已落盘，真机可 pull 定位根因。
+     */
+    private val ceh = CoroutineExceptionHandler { _, t ->
+        PureToneApplication.writeCrash("LibraryViewModel", t)
+    }
+
+    /** Room 观察流异常兜底：数据库打开/迁移异常时返回空列表而非崩溃（列表空白但不杀进程） */
+    private fun <T> Flow<List<T>>.safeCrash(tag: String): Flow<List<T>> =
+        catch { e ->
+            PureToneApplication.writeCrash(tag, e)
+            emit(emptyList())
+        }
 
     val isScanning = MutableStateFlow(false)
     val lastSync = MutableStateFlow<SyncResult?>(null)
@@ -97,28 +121,33 @@ class LibraryViewModel @Inject constructor(
         .flatMapLatest { q ->
             if (q.isBlank()) flowOf(emptyList()) else repo.search(q.trim())
         }
+        .safeCrash("searchResults")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** 「我喜欢」收藏列表 */
     val favorites = repo.observeFavorites()
+        .safeCrash("favorites")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** 专辑分组（封面网格墙 / 二级详情页）。flowOn(Default)：分组计算不占主线程（P1-3） */
     val albums: StateFlow<List<AlbumSummary>> = repo.observeLibrary()
         .map { groupAlbums(it) }
         .flowOn(Dispatchers.Default)
+        .safeCrash("albums")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** 歌手分组 */
     val artists: StateFlow<List<ArtistSummary>> = repo.observeLibrary()
         .map { groupArtists(it) }
         .flowOn(Dispatchers.Default)
+        .safeCrash("artists")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** 文件夹分组 */
     val folders: StateFlow<List<FolderSummary>> = repo.observeLibrary()
         .map { groupFolders(it) }
         .flowOn(Dispatchers.Default)
+        .safeCrash("folders")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /**
@@ -144,7 +173,7 @@ class LibraryViewModel @Inject constructor(
      * 两次 syncLibrary 交错的 upsertAll / deleteByPathIn 会留下中间态；
      * 已在扫描时直接返回（isScanning 只用于 UI 展示，不作为唯一防线）。
      */
-    fun scan() = viewModelScope.launch {
+    fun scan() = viewModelScope.launch(ceh) {
         if (!scanMutex.tryLock()) return@launch
         try {
             isScanning.value = true
@@ -163,12 +192,12 @@ class LibraryViewModel @Inject constructor(
      * 它的初始值是 emptyList，「尚未加载」会被误判为空库，导致每次冷启动都全库重扫，
      * 既慢又会反复重写数据）且本次进程还没同步过时才扫（授权后首次进入即建库）。
      */
-    fun autoScanIfEmpty() = viewModelScope.launch {
+    fun autoScanIfEmpty() = viewModelScope.launch(ceh) {
         if (!isScanning.value && lastSync.value == null && repo.countSongs() == 0) scan()
     }
 
     /** 播放整张列表，从 index 开始 */
-    fun playSongs(songs: List<SongEntity>, index: Int) = viewModelScope.launch {
+    fun playSongs(songs: List<SongEntity>, index: Int) = viewModelScope.launch(ceh) {
         playback.setQueueAndPlay(songs, index)
     }
 
@@ -177,23 +206,23 @@ class LibraryViewModel @Inject constructor(
     fun enqueue(songs: List<SongEntity>) = playback.enqueue(songs)
 
     /** 任意歌曲的收藏开关（列表长按菜单用；Room 失效自动刷新列表） */
-    fun setFavorite(songId: Long, favorite: Boolean) = viewModelScope.launch {
+    fun setFavorite(songId: Long, favorite: Boolean) = viewModelScope.launch(ceh) {
         repo.setFavorite(songId, favorite)
     }
 
-    fun createPlaylist(name: String) = viewModelScope.launch {
+    fun createPlaylist(name: String) = viewModelScope.launch(ceh) {
         createPlaylistWithSongsUseCase(name)
     }
 
-    fun deletePlaylist(id: Long) = viewModelScope.launch { repo.deletePlaylist(id) }
+    fun deletePlaylist(id: Long) = viewModelScope.launch(ceh) { repo.deletePlaylist(id) }
 
     /** 把一批歌曲加入指定歌单（幂等，自动排到末尾） */
-    fun addToPlaylist(playlistId: Long, songIds: List<Long>) = viewModelScope.launch {
+    fun addToPlaylist(playlistId: Long, songIds: List<Long>) = viewModelScope.launch(ceh) {
         if (songIds.isNotEmpty()) repo.addToPlaylist(playlistId, songIds)
     }
 
     /** 新建歌单并立即把一批歌曲加入（"新建并加入"） */
-    fun createPlaylistAndAdd(name: String, songIds: List<Long>) = viewModelScope.launch {
+    fun createPlaylistAndAdd(name: String, songIds: List<Long>) = viewModelScope.launch(ceh) {
         createPlaylistWithSongsUseCase(name, songIds)
     }
 
@@ -208,12 +237,12 @@ class LibraryViewModel @Inject constructor(
      * 从 SAF 选中的 .m3u 文件导入：解析 → 与曲库匹配 → 新建歌单。
      * 匹配不到任何歌曲时仍给出明确提示，不静默失败。
      */
-    fun importM3u(uri: Uri) = viewModelScope.launch {
+    fun importM3u(uri: Uri) = viewModelScope.launch(ceh) {
         _m3uMessage.value = importM3uUseCase(uri)
     }
 
     /** 把歌单导出为 .m3u 到应用外部目录（免权限） */
-    fun exportPlaylist(playlistId: Long) = viewModelScope.launch {
+    fun exportPlaylist(playlistId: Long) = viewModelScope.launch(ceh) {
         _m3uMessage.value = exportPlaylistUseCase(playlistId)
     }
 }

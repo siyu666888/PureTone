@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import coil.Coil
 import coil.ImageLoader
+import com.puretone.player.BuildConfig
 import dagger.hilt.android.HiltAndroidApp
 import java.io.File
 import java.io.PrintWriter
@@ -26,6 +27,7 @@ class PureToneApplication : Application() {
     override fun onCreate() {
         // Hilt 在 super.onCreate() 之前完成 Application 的字段注入，此处可安全使用
         super.onCreate()
+        appInstance = this
         Coil.setImageLoader(imageLoader)
         installCrashLogger()
     }
@@ -42,25 +44,44 @@ class PureToneApplication : Application() {
     private fun installCrashLogger() {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            val path = runCatching {
-                val file = File(filesDir, CRASH_FILE)
-                PrintWriter(file).use { pw ->
-                    pw.println("time: " + SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
-                    pw.println("thread: " + thread.name)
-                    pw.println("version: " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
-                    pw.println()
-                    throwable.printStackTrace(pw)
-                }
-                file.absolutePath
-            }.getOrNull()
-
-            Log.e(CRASH_TAG, "Uncaught exception on " + thread.name + "; trace: " + path, throwable)
+            writeCrashInternal("uncaught", thread, throwable)
             previous?.uncaughtException(thread, throwable)
         }
+    }
+
+    /** 落盘实现（同时供协程/流异常处理器复用，确保「不闪退也能拿到栈」） */
+    private fun writeCrashInternal(tag: String, thread: Thread?, throwable: Throwable) {
+        val path = runCatching {
+            val file = File(filesDir, CRASH_FILE)
+            PrintWriter(file).use { pw ->
+                pw.println("time: " + SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
+                pw.println("thread: " + (thread?.name ?: Thread.currentThread().name))
+                pw.println("version: " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
+                pw.println("tag: " + tag)
+                pw.println()
+                throwable.printStackTrace(pw)
+            }
+            file.absolutePath
+        }.getOrNull()
+        Log.e(CRASH_TAG, "Exception [$tag] on " + (thread?.name ?: Thread.currentThread().name) +
+            "; trace: " + (path ?: "n/a"), throwable)
     }
 
     companion object {
         const val CRASH_TAG = "PureToneCrash"
         const val CRASH_FILE = "crash_last.txt"
+
+        @Volatile
+        private var appInstance: PureToneApplication? = null
+
+        /**
+         * 供协程异常处理器 / 流 catch 调用：把异常写入同一份 crash_last.txt，
+         * 并打 PureToneCrash 日志。调用方在捕获后**不**重新抛出，避免闪退，
+         * 但异常已被完整记录，真机可 pull 该文件定位根因。
+         */
+        fun writeCrash(tag: String, throwable: Throwable) {
+            appInstance?.writeCrashInternal(tag, null, throwable)
+                ?: Log.e(CRASH_TAG, "writeCrash before Application.onCreate ($tag)", throwable)
+        }
     }
 }

@@ -6,6 +6,7 @@ import android.util.Log
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.MusicRepository
 import com.puretone.player.data.settings.SettingsRepository
+import com.puretone.player.PureToneApplication
 import com.puretone.player.domain.usecase.LoadLyricsUseCase
 import com.puretone.player.domain.usecase.PlaySongInLibraryUseCase
 import com.puretone.player.domain.usecase.SaveSongInfoUseCase
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.File
@@ -118,9 +120,14 @@ class PlayerViewModel @Inject constructor(
     /** 恢复会话只尝试一次（避免配置变化/重复组合时反复恢复） */
     private var restoreAttempted = false
 
+    /** 协程异常统一处理器：捕获未处理异常并落盘，避免「打开应用即闪退」 */
+    private val ceh = CoroutineExceptionHandler { _, t ->
+        PureToneApplication.writeCrash("PlayerViewModel", t)
+    }
+
     init {
         // 只在当前歌曲变化时查库（uiState 每 500ms  tick 一次，必须去重）
-        viewModelScope.launch {
+        viewModelScope.launch(ceh) {
             playback.uiState
                 .map { it.currentSongId }
                 .distinctUntilChanged()
@@ -138,7 +145,7 @@ class PlayerViewModel @Inject constructor(
         // 真正的权威守卫在 PlaybackManager.restoreLastSession()（canRestoreSession：
         // 播放器已有内容/正在播放时拒绝恢复）。此处只做「本实例不重复调用」的廉价去重。
         // 各目的地统一复用根部实例见 PureToneApp 的 NavHost。
-        viewModelScope.launch {
+        viewModelScope.launch(ceh) {
             runCatching { repo.observeLibrary().first() }
             if (!restoreAttempted) {
                 restoreAttempted = true
@@ -203,7 +210,7 @@ class PlayerViewModel @Inject constructor(
      */
     fun toggleFavorite() {
         val id = state.value.currentSongId ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(ceh) {
             val current = runCatching { repo.isFavorite(id) }.getOrDefault(false)
             runCatching { repo.setFavorite(id, !current) }
         }
@@ -236,7 +243,7 @@ class PlayerViewModel @Inject constructor(
     /** 重新拉取当前歌曲实体（联网匹配应用后刷新用） */
     fun refreshCurrentSong() {
         val id = state.value.currentSongId ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(ceh) {
             _currentSong.value = runCatching { repo.getSong(id) }.getOrNull()
         }
     }
@@ -252,7 +259,7 @@ class PlayerViewModel @Inject constructor(
      * 在完整曲库上下文中播放指定歌曲（使上一首/下一首可用）。
      * 供统计页「最爱歌曲」跳转使用。
      */
-    fun playSongById(id: Long) = viewModelScope.launch { playSongInLibraryUseCase(id) }
+    fun playSongById(id: Long) = viewModelScope.launch(ceh) { playSongInLibraryUseCase(id) }
 
     /**
      * 加载歌词。查找顺序：
@@ -269,6 +276,6 @@ class PlayerViewModel @Inject constructor(
     fun loadLyrics(audioPath: String?) {
         loadLyricsJob?.cancel()
         _lyrics.value = null
-        loadLyricsJob = viewModelScope.launch { _lyrics.value = loadLyricsUseCase(audioPath) }
+        loadLyricsJob = viewModelScope.launch(ceh) { _lyrics.value = loadLyricsUseCase(audioPath) }
     }
 }

@@ -51,8 +51,8 @@ class PlaybackService : MediaSessionService() {
     private lateinit var session: MediaSession
 
     override fun onCreate() {
-        super.onCreate()
         try {
+            super.onCreate()
             // ReplayGain 音频处理器：两个播放器各持一个独立实例（增益按各自当前曲目实时刷新，
             // 交叉淡化期间两路同时发声，必须各自施加）。
             val rgProcessorA = ReplayGainAudioProcessor()
