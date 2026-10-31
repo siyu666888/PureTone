@@ -1,0 +1,143 @@
+PureTone v1.7.10 运行期验证报告
+================================================================
+时间：2026-10-31 20:4x
+版本：v1.7.10 / versionCode 34（commit 01c10ba，CI run 41200106447 success）
+设备：Android 模拟器 Pixel_API34（Android 14 / SDK 34 / x86_64 / 1080x2340 / density 2.625）
+包体：PureTone-v1.7.10-universal-release.apk（release，R8 混淆后，v2 签名）
+方法：adb 安装 + pm clear 首次启动 + uiautomator dump 节点树 + dumpsys 状态 + logcat + screencap
+
+----------------------------------------------------------------
+一、已验证项（本机运行期实测通过）
+----------------------------------------------------------------
+
+[1] 应用启动不闪退（对应 v1.7.4 修复：DataModule 漏注册 MIGRATION_6_7）
+    操作：pm clear → am start -W 冷启动
+    结果：Status=ok，LaunchState=COLD，TotalTime=999ms / 1070ms（两次）
+          进程存活 pid 正常；logcat -b crash 全程 0 条 FATAL / puretone 相关崩溃
+    判定：PASS
+
+[2] 播放出声（对应 v1.7.5 修复：ReplayGainAudioProcessor 增益=1.0 时旁路）
+    操作：点播 test_tone_120s.m4a（aac / 120s / faststart）
+    结果：PlaybackState{state=PLAYING(3)}，position 8748 → 11750（4s 内推进 3002ms）
+          dumpsys audio: AudioPlaybackConfiguration piid:95 type:android.media.AudioTrack
+                         u/pid:10142/<puretone pid> state:started
+                         usage=USAGE_MEDIA content=CONTENT_TYPE_MUSIC channelMask=0x3 sampleRate=44100
+          两个 ExoPlayerImpl Init 日志齐全（双实例架构正常）
+          requestAudioFocus 成功
+    判定：PASS（AudioTrack 处于 started 且有实际写入，非"假播放"）
+
+[3] ReplayGain 真实增益路径不静音（v1.7.5 修复的最关键风险点）
+    构造：ffmpeg 生成 test_rg.flac（FLAC + Vorbis comment：REPLAYGAIN_TRACK_GAIN=-6.00 dB，
+          REPLAYGAIN_TRACK_PEAK=0.500000），MediaStore 入库 is_music=1 duration=120001
+    操作：设置→实验室→开启「启用 ReplayGain」→ 搜索并播放 test_rg
+    结果：开关 checked=true 生效；播放时 AudioTrack u/pid:10142/<pid> state:started，
+          channelMask=0x3 sampleRate=44100；position 12017 → 15025（4s 推进 3008ms）；
+          logcat 无 AudioTrack/AudioSink 错误、无初始化失败
+    判定：PASS（增益≠1.0，自定义音频链激活状态下仍正常出声）
+
+[4] 智能歌单：图标前置 + 整屏等分 + 无横向截断（对应 v1.7.5 UI 调整）
+    操作：音乐页 uiautomator 取三张智能歌单卡片 bounds
+    结果：屏幕宽 1080
+          卡片1 x[44-352]  w=308    卡片2 x[385-694] w=309    卡片3 x[727-1036] w=309
+          左留白 44px / 右留白 44px（1080-1036），左右对称，总和正好铺满
+          文字 x 起点：188 / 529 / 871，比各自卡片左缘（44/385/727）后移约 143px
+          → 该 143px 即图标占位区，文字全部位于图标右侧
+    判定：PASS（图标在文字前方；三卡等分整屏；无溢出、无可横向滚动内容）
+
+[5] 实验室总开关 + 响度迁移 + 门控（对应 v1.7.6）
+    操作：设置页滚动到底部
+    结果：存在「实验室」分组，含常驻可见的「启用实验室功能」开关（checked=true）
+          其下紧跟「响度（ReplayGain）」分组，含：启用 ReplayGain / 模式（曲目·专辑）/ 补偿 (dB)
+          页脚显示 "PureTone · 纯净之音 / v1.7.10"
+    判定：PASS（响度已从独立分类迁入实验室）
+
+[6] 实验室门控生效：关闭后响度整组隐藏、开关保留
+    操作：关闭「启用实验室功能」开关
+    结果：dump 中「响度（ReplayGain）」出现次数 = 0（整组消失）
+          「实验室」分组与开关本身仍保留（可重新开启）
+    判定：PASS
+
+[7] 实验室开关持久化
+    操作：关闭后 am force-stop → 冷启动 → 进设置页
+    结果：开关仍 checked=false，「响度（ReplayGain）」仍不可见
+    判定：PASS（DataStore 持久化生效）
+
+[8] 实验室开关重开即恢复
+    操作：重新打开开关
+    结果：响度组立即回到页面（y=1864）
+    判定：PASS
+
+[9] 交叉淡化（Crossfade）设置往返 + 持久化（对应 v1.7.8）
+    操作：设置页点击交叉淡化 SeekBar（bounds [265,1358][947,1479]）
+    结果：值从「关」变为「4.0s」；杀进程冷启动后仍为「4.0s」；再点回左端恢复「关」
+    判定：PASS（写入、显示、持久化、清零全部正常）
+
+[10] 投屏 M1 入口与设备选择（对应 v1.7.7 / v1.7.9）
+    操作：播放页 → 点右上角投屏按钮
+    结果：播放页顶栏存在 contentDescription="投屏" 的按钮 bounds[970,191][1036,257]
+          点击后弹出「选择投屏设备」对话框，含空态提示
+          "未发现可投屏设备。请确认手机与电视/音箱在同一 Wi-Fi，且设备已开启 DLNA/投屏接收。"
+          以及「取消」「重新搜索」按钮
+    判定：PASS（UI 与空态处理正常；模拟器无 LAN 渲染器，空态为预期结果）
+
+[11] 全流程稳定性
+    结果：整轮操作（启动/扫描/播放/切页/开关切换/杀进程重启/投屏对话框）后
+          进程存活；logcat -b crash 无 FATAL；无 DLNA/cast 异常日志
+    判定：PASS
+
+----------------------------------------------------------------
+二、未验证项（本机无法完成，需真机 + 局域网环境）
+----------------------------------------------------------------
+
+[A] ReplayGain 听感（响度是否真的被拉平）
+    原因：模拟器以 -no-audio 启动，无实际声卡输出，只能证明"数据写入 AudioTrack"，
+          不能证明"听感响度差异"。
+    真机步骤：
+      1. 准备两首响度差异明显的 FLAC，写入 REPLAYGAIN_TRACK_GAIN（如 -12dB / 0dB）
+      2. 关闭 RG 播放 → 感受音量差；开启 RG 再播放 → 差异应明显收敛
+      3. 切换「模式：曲目/专辑」，专辑模式下同专辑曲目应更平
+
+[B] 交叉淡化听感（两首歌交界是否真的平滑过渡）
+    原因：同上，无音频输出。
+    真机步骤：
+      1. 设置交叉淡化 = 4.0s
+      2. 播放队列，在距曲尾 4s 处应听到下一首淡入、当前首淡出（真重叠，非硬切）
+      3. 观察有无爆音/断音/双声叠放
+
+[C] DLNA 投屏端到端（v1.7.9 的 M1 止血核心）
+    原因：沙箱无局域网 DLNA 渲染器。
+    真机步骤：
+      1. 手机与电视/音箱同一 Wi-Fi，电视端开启 DLNA 接收
+      2. 播放页点投屏 → 应能搜到设备 → 选择后电视出声
+      3. 【重点，v1.7.9 修复项】投屏中点"上一首/下一首"，电视应跟随切歌
+      4. 投屏中点暂停/进度拖动，电视端应同步
+      5. 点"停止投屏"，电视停止、手机恢复本地播放
+
+[D] 睡眠定时 / 桌面小部件等既有功能回归
+    原因：本轮改动未触及，未重复验证。
+
+----------------------------------------------------------------
+三、观察记录（非缺陷，供参考）
+----------------------------------------------------------------
+- 歌曲列表最后一项位于列表可视区底部时，会与底部 MiniPlayer 相邻显示；
+  经核对 PureToneApp 使用 Scaffold bottomBar + Modifier.padding(padding)，
+  NavHost 内容已正确避让，列表项未被遮挡，不存在点击盲区。
+- 模拟器合成手势对 Compose Slider 拖动响应不稳定，改用点击定位成功设定值；
+  此为 adb 合成事件特性，非应用问题。
+
+----------------------------------------------------------------
+四、截图清单（本目录）
+----------------------------------------------------------------
+01_music_home.png          音乐页：四页签 + 三张智能歌单卡片（图标前置 / 等分整屏）
+02_settings_lab_on.png     设置页：实验室开启，响度组可见
+03_settings_lab_off.png    设置页：实验室关闭，响度组整体消失
+04_settings_lab_reopen.png 重开实验室，响度组恢复
+05_crossfade_4s.png        交叉淡化设为 4.0s
+06_player_cast_btn.png     播放页右上角投屏按钮
+07_cast_picker_dialog.png  投屏设备选择对话框（空态 + 重新搜索）
+08_replaygain_on.png       ReplayGain 开关已开启
+09_replaygain_playing.png  播放带 -6dB RG 标签的 FLAC
+
+================================================================
+结论：模拟器可覆盖的行为项 11/11 全部 PASS；
+      听感类（RG/Crossfade）与 DLNA 端到端须真机确认，清单见第二节。

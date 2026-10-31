@@ -409,14 +409,14 @@ class PlaybackManager @Inject constructor(
         crossfadeOutgoing = p
         crossfadeNextIndex = nextIndex
         pendingCrossfadeRemaining = remainingItems.drop(1)
-        val rampMs = if (crossfadeMs.toLong() < remainMs.coerceAtLeast(1)) crossfadeMs.toLong() else remainMs.coerceAtLeast(1)
+        // 步进计划抽取到 CrossfadeRamp（纯函数，独立单测锁定端点/步长/时长钳制），行为不变
+        val rampMs = CrossfadeRamp.rampDurationMs(crossfadeMs, remainMs)
         crossfadeJob = scope.launch {
-            val steps = if (rampMs / 50 > 1) (rampMs / 50).toInt() else 1
-            val stepMs = rampMs / steps
+            val steps = CrossfadeRamp.steps(rampMs)
+            val stepMs = CrossfadeRamp.stepMs(rampMs)
             repeat(steps) { i ->
-                val t = (i + 1).toFloat() / steps
-                p.setVolume(1f - t)
-                sec.setVolume(t)
+                p.setVolume(CrossfadeRamp.outgoingVolume(i, steps))
+                sec.setVolume(CrossfadeRamp.incomingVolume(i, steps))
                 delay(stepMs)
             }
             p.setVolume(0f)
