@@ -52,33 +52,41 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        // ReplayGain 音频处理器：两个播放器各持一个独立实例（增益按各自当前曲目实时刷新，
-        // 交叉淡化期间两路同时发声，必须各自施加）。
-        val rgProcessorA = ReplayGainAudioProcessor()
-        val rgProcessorB = ReplayGainAudioProcessor()
-        player = buildPlayer(rgProcessorA)
-        playerB = buildPlayer(rgProcessorB)
+        try {
+            // ReplayGain 音频处理器：两个播放器各持一个独立实例（增益按各自当前曲目实时刷新，
+            // 交叉淡化期间两路同时发声，必须各自施加）。
+            val rgProcessorA = ReplayGainAudioProcessor()
+            val rgProcessorB = ReplayGainAudioProcessor()
+            player = buildPlayer(rgProcessorA)
+            playerB = buildPlayer(rgProcessorB)
 
-        session = MediaSession.Builder(this, player)
-            .setSessionActivity(sessionActivityIntent())
-            .setCallback(SessionCallback())   // P1-4：控制器白名单
-            .build()
+            session = MediaSession.Builder(this, player)
+                .setSessionActivity(sessionActivityIntent())
+                .setCallback(SessionCallback())   // P1-4：控制器白名单
+                .build()
 
-        playbackManager.bind(player, playerB, session, rgProcessorA, rgProcessorB)
+            playbackManager.bind(player, playerB, session, rgProcessorA, rgProcessorB)
 
-        // 将会话注册到 Media3 通知管理器。
-        //
-        // 背景：MediaSessionService.addSession() 默认只在两种情况下被自动调用——
-        // onStartCommand 收到 android.intent.action.MEDIA_BUTTON，或被外部以
-        // MediaBrowserService 兼容方式绑定。普通的 startService()/绑定都不会触发。
-        // 不注册时，MediaNotificationManager 拿不到内部控制器，
-        // shouldRunInForeground() 恒为 false，Media3 永远不会调用 startForeground()，
-        // 媒体通知也不会出现；此时任何外部对 startForegroundService() 的调用都会
-        // 触发 Android 8+ 的 5 秒前台化超时（ForegroundServiceDidNotStartInTimeException），
-        // 进程被系统直接杀掉——这正是「播放约 30 秒后闪退」的根因。
-        // addSession() 幂等（已注册则跳过），可安全调用。
-        runCatching { addSession(session) }
-            .onFailure { Log.w(TAG, "addSession failed", it) }
+            // 将会话注册到 Media3 通知管理器。
+            //
+            // 背景：MediaSessionService.addSession() 默认只在两种情况下被自动调用——
+            // onStartCommand 收到 android.intent.action.MEDIA_BUTTON，或被外部以
+            // MediaBrowserService 兼容方式绑定。普通的 startService()/绑定都不会触发。
+            // 不注册时，MediaNotificationManager 拿不到内部控制器，
+            // shouldRunInForeground() 恒为 false，Media3 永远不会调用 startForeground()，
+            // 媒体通知也不会出现；此时任何外部对 startForegroundService() 的调用都会
+            // 触发 Android 8+ 的 5 秒前台化超时（ForegroundServiceDidNotStartInTimeException），
+            // 进程被系统直接杀掉——这正是「播放约 30 秒后闪退」的根因。
+            // addSession() 幂等（已注册则跳过），可安全调用。
+            runCatching { addSession(session) }
+                .onFailure { Log.w(TAG, "addSession failed", it) }
+        } catch (t: Throwable) {
+            // 启动期构建播放栈 / 会话若因设备/版本兼容问题抛异常（Media3 1.6.0 大版本升级
+            // 后个别 ROM 上可能出现），绝不让它冒泡杀进程——否则表现为「打开应用即闪退」。
+            // 这里降级：应用仍可正常打开浏览曲库，仅本次暂不可用播放（异常已落盘到
+            // crash_last.txt，供后续在真机精确复现与修复）。
+            Log.e(TAG, "PlaybackService startup failed; degrading without playback", t)
+        }
     }
 
     /**
@@ -131,7 +139,14 @@ class PlaybackService : MediaSessionService() {
             .build()
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession = session
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession {
+        // onCreate 降级（构建播放栈失败）时 session 未初始化：不对外提供服务，
+        // 让系统侧连接收到异常（binder 线程异常不会杀本进程），避免回调里 NPE 杀进程。
+        if (!::session.isInitialized) {
+            throw IllegalStateException("PlaybackService session not initialized (startup degraded)")
+        }
+        return session
+    }
 
     /**
      * 会话回调：控制器准入白名单（P1-4）。
@@ -176,7 +191,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (!player.playWhenReady || player.mediaItemCount == 0) {
+        if (::player.isInitialized && (!player.playWhenReady || player.mediaItemCount == 0)) {
             stopSelf()
         }
         super.onTaskRemoved(rootIntent)
@@ -189,11 +204,12 @@ class PlaybackService : MediaSessionService() {
         //   - session 持有 player 引用，先释放 player 会让 session 短暂持有已死对象。
         // unbind() 必须最先执行：它要从 player 上摘 listener 并 detach 音效，
         // 对已 release 的 player 调用 removeListener 会抛异常。
-        // 每步独立 runCatching，避免某一步异常导致后续资源泄漏或进程崩溃。
+        // 每步独立 runCatching，避免某一步异常导致后续资源泄漏或进程崩溃；
+        // 并用 ::x.isInitialized 守卫：onCreate 降级（启动失败）时这些字段可能未初始化。
         runCatching { playbackManager.unbind() }
-        runCatching { session.release() }
-        runCatching { player.release() }
-        runCatching { playerB.release() }
+        if (::session.isInitialized) runCatching { session.release() }
+        if (::player.isInitialized) runCatching { player.release() }
+        if (::playerB.isInitialized) runCatching { playerB.release() }
         super.onDestroy()
     }
 

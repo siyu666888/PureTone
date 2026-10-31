@@ -33,6 +33,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -150,7 +151,21 @@ class PlaybackManager @Inject constructor(
     private val _uiState = MutableStateFlow(PlaybackUiState())
     val uiState: StateFlow<PlaybackUiState> = _uiState.asStateFlow()
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /**
+     * 进程级协程作用域。
+     *
+     * 刻意挂一个 [CoroutineExceptionHandler]：本管理器大量逻辑跑在此作用域的
+     * launch 里（设置流 applySettings、续播 restoreLastSession、ticker、保存会话等）。
+     * 任一处若抛出未捕获异常，默认会冒泡到 Android 的默认未捕获处理器并直接杀进程——
+     * 这正是「打开应用即闪退」在协程路径上的成因。这里改为「记录到崩溃日志后吞掉」，
+     * 保证单点异常不会拖垮整个进程（UI 仍可正常打开，仅该次操作失败）。
+     */
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main.immediate +
+            CoroutineExceptionHandler { _, t ->
+                Log.e(TAG, "uncaught exception in PlaybackManager scope (swallowed to avoid crash)", t)
+            }
+    )
 
     private var sleepTimerJob: Job? = null
     private var settingsJob: Job? = null

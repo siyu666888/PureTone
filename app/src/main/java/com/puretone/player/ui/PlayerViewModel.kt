@@ -2,6 +2,7 @@ package com.puretone.player.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.util.Log
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.MusicRepository
 import com.puretone.player.data.settings.SettingsRepository
@@ -142,7 +143,10 @@ class PlayerViewModel @Inject constructor(
             if (!restoreAttempted) {
                 restoreAttempted = true
                 if (settings.settings.first().resumeOnStart) {
-                    playback.restoreLastSession()
+                    // 续播路径会启动播放服务并构建播放栈；任一环节异常都包住，
+                    // 避免「打开应用即闪退」（异常已落盘到 crash_last.txt 供后续精确定位）。
+                    runCatching { playback.restoreLastSession() }
+                        .onFailure { Log.w("PlayerViewModel", "restoreLastSession failed", it) }
                 }
             }
         }

@@ -19,9 +19,12 @@
 -dontwarn com.arthenica.**
 
 # ---------- Media3 ----------
-# MediaSessionService 等组件经 Manifest 引用，默认保留；
-# 这里显式保留回调接口，防止 R8 误删反射调用入口
--keep class androidx.media3.session.** { *; }
+# 显式保留整个 media3 包（session / exoplayer / common 等）。
+# 虽然 media3 AAR 自带 consumer proguard 规则，但升级到 1.6.0 后播放栈（双 ExoPlayer +
+# 自定义 DefaultAudioSink / DefaultRenderersFactory + AudioProcessor 链）在 release 包里若被
+# R8 误删内部类，会在 MediaSessionService 启动期抛 NoClassDefFoundError / VerifyError 直接闪退。
+# 一次性全量 keep，彻底排除「版本升级引入的 R8 剥离」这一类兼容性冲突。
+-keep class androidx.media3.** { *; }
 -dontwarn androidx.media3.**
 
 # ---------- Room ----------
