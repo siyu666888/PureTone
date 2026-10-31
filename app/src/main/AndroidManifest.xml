@@ -25,13 +25,11 @@
     <!-- P2-15：本地播放器没有账号/令牌，但 Room 库里是完整的播放历史与歌单，
          DataStore 里是听歌偏好。默认 allowBackup=true 会让这些数据被 adb 备份或
          云备份整体抽走；这里按「隐私最小化」关闭（用户数据随 App 卸载清理即可）。 -->
-    <!-- P0-4 明文流量审计：公网请求（iTunes Search / LRCLIB）均为 HTTPS，零明文；
-         唯一的明文是 DLNA 投屏向局域网渲染设备发 SOAP 控制指令。
-         NSC 的 <domain-config> 只认主机名、不支持 CIDR 网段，无法写成「仅局域网放行」，
-         故 base-config 保留明文能力，但通过 network_security_config.xml 显式声明 + 审计说明，
-         把原来的隐性默认变成可审计的明确决策。
-         注意：android:usesCleartextTraffic 必须与 networkSecurityConfig 并存——
-         实测移除它会让 AAPT2 在链接期丢失 material/media3 资源并误报 theme 错误。 -->
+    <!-- P0-4 明文流量审计：公网请求（iTunes Search / LRCLIB）均走 HTTPS，零明文；
+         唯一的明文是 DLNA 投屏——向局域网渲染设备的 LAN IP 发 SOAP 控制指令。
+         NSC 的 domain-config 只认主机名、不支持 CIDR 网段，无法写成「仅局域网放行」，
+         故 base-config 保留明文能力，但改用显式 NSC 声明 + 审计说明，
+         把原来的隐性默认变成可审计的明确决策（行为与原 usesCleartextTraffic 等价）。 -->
     <application
         android:name=".PureToneApplication"
         android:allowBackup="false"
@@ -40,8 +38,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style.Theme.PureTone"
-        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.PureTone"
         android:networkSecurityConfig="@xml/network_security_config">
 
         <activity
