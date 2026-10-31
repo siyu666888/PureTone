@@ -240,25 +240,42 @@ fun PlayerScreen(
                 textAlign = TextAlign.Center
             )
 
-            // M1：投屏中提示条——显示当前投屏设备名并支持一键停止；设备名/错误随 castState 实时刷新
-            if (castState.isCasting) {
+            // M1/M2：投屏状态条——投屏中显示当前设备名并支持一键停止；设备名/错误随 castState 实时刷新。
+            // M2 补充：APE 等需转码的格式在真正投出去之前有一段时间 isCasting 仍为 false
+            // （isPreparing=true），此阶段同样要显示状态条，否则用户会以为点了没反应。
+            if (castState.isCasting || castState.isPreparing) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Icon(
-                            Icons.Filled.CastConnected,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                        if (castState.isPreparing) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(
+                                Icons.Filled.CastConnected,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                "正在投屏到 ${castState.deviceName ?: "设备"}",
+                                if (castState.isPreparing) {
+                                    "正在为投屏转码…"
+                                } else {
+                                    "正在投屏到 ${castState.deviceName ?: "设备"}"
+                                },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
+                            if (castState.isPreparing) {
+                                Text(
+                                    "该格式需转码后投送到 ${castState.deviceName ?: "设备"}，首次可能需要几十秒",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                             if (castState.error != null) {
                                 Text(
                                     castState.error ?: "",
@@ -267,7 +284,9 @@ fun PlayerScreen(
                                 )
                             }
                         }
-                        TextButton(onClick = vm::stopCast) { Text("停止投屏") }
+                        TextButton(onClick = vm::stopCast) {
+                            Text(if (castState.isPreparing) "取消" else "停止投屏")
+                        }
                     }
                 }
             }

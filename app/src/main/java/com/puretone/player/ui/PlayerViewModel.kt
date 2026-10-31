@@ -218,7 +218,7 @@ class PlayerViewModel @Inject constructor(
             playback.seekTo(positionMs)
         }
     }
-    // ---------- 投屏（M1） ----------
+    // ---------- 投屏（M1 直投 / M2 APE 转码投送） ----------
     /** 扫描局域网内 DLNA 渲染器 */
     suspend fun searchCastDevices(timeoutMs: Long = 5000): List<CastDevice> =
         dlnaCast.searchDevices(timeoutMs)
@@ -227,13 +227,18 @@ class PlayerViewModel @Inject constructor(
      * 开始投屏当前歌曲到指定设备。
      *
      * 路由语义：先暂停本地 ExoPlayer（避免本机与电视同时出声），再由 DLNA 渲染器接管。
-     * 投屏失败（设备拒绝/网络异常）时保持本地播放暂停态并回写 error，由 UI 提示。
+     * 投屏失败（设备拒绝/网络异常/APE 转码失败）时**恢复本地播放**——否则用户点了投屏
+     * 却两头都没声音，且看不出发生了什么，只能重启 App。若非投屏已在进行/正在准备
+     * （说明是并发/过期场景，由另一次投送接管），则不抢回本地播放。
      */
     fun startCast(device: CastDevice, song: SongEntity) {
         viewModelScope.launch(ceh) {
             if (state.value.isPlaying) playback.pause()
             dlnaCast.selectDevice(device)
-            dlnaCast.castSong(song)
+            val cast = dlnaCast.castSong(song)
+            if (!cast && !dlnaCast.state.value.isCasting && !dlnaCast.state.value.isPreparing) {
+                playback.play()
+            }
         }
     }
 
