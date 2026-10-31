@@ -11,8 +11,8 @@ plugins {
  * 同时用于 versionName 与产物文件名（archivesName），避免二者漂移。
  * 发版时只改这里（版本号按语义化版本递增）。
  */
-val appVersionName = "1.7.9"
-val appVersionCode = 33
+val appVersionName = "1.7.10"
+val appVersionCode = 34
 
 /**
  * 产物文件名包含完整版本号。
@@ -111,17 +111,22 @@ android {
 
     packaging {
         resources {
-            excludes += setOf(
-                "/META-INF/{AL2.0,LGPL2.1}",
-                "META-INF/DEPENDENCIES",
+            // P0-3 / LGPL 合规：ffmpeg-kit 等 LGPL 库的许可证文件必须随 APK 分发，
+            // 不能 exclude 掉。改用 pickFirsts 在多个依赖出现重复条目时保留首个，
+            // 既满足合规又避免「duplicate entry」构建冲突。
+            pickFirsts += setOf(
                 "META-INF/LICENSE",
                 "META-INF/LICENSE.txt",
                 "META-INF/license.txt",
                 "META-INF/NOTICE",
                 "META-INF/NOTICE.txt",
                 "META-INF/notice.txt",
-                "META-INF/*.kotlin_module"
+                "META-INF/DEPENDENCIES",
+                "META-INF/AL2.0",
+                "META-INF/LGPL2.1"
             )
+            // kotlin_module 仅是 Gradle 模块元数据，非许可证，排除无害。
+            excludes += setOf("META-INF/*.kotlin_module")
         }
     }
 

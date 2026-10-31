@@ -1,0 +1,20 @@
+PureTone
+Copyright (C) 2024-2026 PureTone contributors
+https://github.com/siyu666888/PureTone
+
+This product includes third-party software distributed under open-source licenses,
+including the following:
+
+FFmpeg (https://ffmpeg.org) and ffmpeg-kit (https://github.com/arthenica/ffmpeg-kit)
+are licensed under the GNU Lesser General Public License (LGPL) version 2.1 and/or 3.0.
+
+The complete corresponding source code for the LGPL components bundled in this
+application (ffmpeg-kit release tags, which build FFmpeg from source) is available at:
+  https://github.com/arthenica/ffmpeg-kit
+
+Other open-source libraries used (AndroidX, Kotlin, Jetpack Compose, Media3 / ExoPlayer,
+Hilt, Room, DataStore, Glide/Coil, UPnPCast, etc.) are distributed under the Apache
+License 2.0 or their respective permissive licenses.
+
+This NOTICE is provided in accordance with the terms of the LGPL and other applicable
+open-source licenses.
