@@ -15,3 +15,5 @@ app/release/
 .dsh-acl-recovery/
 # Office 临时锁文件（打开 docx/xlsx 时宿主生成，非项目资产）
 ~$*
+# 模拟器调试输出（P2-1 采集排障时产生，非项目资产）
+.emu-*.log
