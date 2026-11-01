@@ -108,7 +108,7 @@ class PlaybackManager @Inject constructor(
     private val widgetUpdater: WidgetUpdater,
     private val dlnaCast: DlnaCastManager,
     private val serviceLauncher: PlaybackServiceLauncher
-) : CastCommandSink, PlaybackEventSink {
+) : CastCommandSink, PlaybackEventSink, PlaybackControlSink {
 
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
@@ -242,6 +242,26 @@ class PlaybackManager @Inject constructor(
      * 「清空队列后自己冒回来」「bind 后旧会话盖掉新点歌」三类缺陷。详见其类注释。
      */
     private val gate = PlaybackCommandGate()
+
+    /**
+     * 播放控制编排（P1-1 拆分第七刀）。
+     *
+     * 公开命令方法（togglePlayPause/play/pause/stop/next/previous/seekTo/setRepeatMode/
+     * setShuffle/setSpeed/setSleepTimer 系列/dismissError）在 [PlaybackManager] 上保留一行转发，
+     * 逻辑全部下沉到 [PlaybackController]，避免 god class 继续膨胀。
+     */
+    private val controller = PlaybackController(
+        playerProvider = { player },
+        uiState = _uiState,
+        crossfade = crossfade,
+        gate = gate,
+        dlnaCast = dlnaCast,
+        settings = settings,
+        sessionStore = sessionStore,
+        serviceLauncher = serviceLauncher,
+        scope = scope,
+        sink = this
+    )
 
     /**
      * 播放事件处理（P1-1 拆分第六刀）。
@@ -831,198 +851,21 @@ class PlaybackManager @Inject constructor(
 
     // ---------- 播放控制 ----------
 
-    fun togglePlayPause() {
-        cancelCrossfade()
-        // 投屏态：必须按**渲染器**的状态取反。本地 ExoPlayer 恒为暂停，
-        // 若按它判断，投屏中按暂停会走成「播放」，用户永远停不下来。
-        if (dlnaCast.state.value.isCasting) {
-            if (dlnaCast.state.value.isPlaying) pause() else play()
-            return
-        }
-        val p = player
-        if (p == null) {
-            gate.pendRestore()
-            serviceLauncher.ensureStarted()
-            return
-        }
-        if (p.isPlaying) pause() else play()
-    }
+    // ---------- 播放控制（逻辑下沉至 PlaybackController，此处仅转发） ----------
 
-    fun play() {
-        cancelCrossfade()
-        // 投屏态：命令属于渲染器。本地若也起播，手机与电视会同时出声。
-        if (dlnaCast.state.value.isCasting) {
-            scope.launch { dlnaCast.play() }
-            _uiState.update { it.copy(isPlaying = true) }
-            return
-        }
-        val p = player
-        if (p == null) {
-            gate.pendRestore()
-            serviceLauncher.ensureStarted()
-            return
-        }
-        if (p.mediaItemCount == 0) {
-            scope.launch { restoreLastSession() }
-            return
-        }
-        p.play()
-    }
-
-    fun pause() {
-        cancelCrossfade()
-        // 投屏态：暂停的是渲染器。本地本就是暂停的，这里不能再去 pause 本地
-        // （否则 stopCast 后恢复本地播放时，位置/状态会被二次重置）。
-        if (dlnaCast.state.value.isCasting) {
-            scope.launch { dlnaCast.pause() }
-            _uiState.update { it.copy(isPlaying = false) }
-            saveSessionNow()
-            return
-        }
-        player?.pause()
-        // 同步刷新播放态：onIsPlayingChanged 监听是异步的，投屏 startCast 暂停本地后
-        // 若不立即置 false，UI 会短暂显示「播放中」与投屏中提示条冲突（P0-2-③）。
-        _uiState.update { it.copy(isPlaying = false) }
-        saveSessionNow()
-    }
-
-    fun stop() {
-        cancelCrossfade()
-        player?.stop()
-        player?.clearMediaItems()
-        // P3-21：旧实现整包重置 uiState，把 repeatMode / shuffle / speed 一并打回默认，
-        // 而播放器实例上的这些属性并未被重置 → UI 与真实状态不符。
-        // 与 clearQueue 对齐：只清「瞬时」字段，保留用户偏好。
-        _uiState.update { state ->
-            state.copy(
-                queue = emptyList(),
-                queueIndex = -1,
-                currentSongId = null,
-                positionMs = 0L,
-                durationMs = 0L,
-                isTranscoding = false,
-                isBuffering = false,
-                error = null
-            )
-        }
-        // 让仍在途的旧队列任务失效（例如 APE 转码挂起中），并作废 APE 重试标记
-        // （P2-14：否则新队列同索引的 APE 首次出错会被误判「已重试过」，跳过转码卡 IDLE）
-        gate.onQueueStructureChanged()
-        // P3-16：作废全部挂起的播放请求——否则服务重启（bind 重放 pendingPlay）
-        // 会把这次已停止的队列又播出来，与用户「显式停止」意图相反。
-        gate.clearPending()
-        // 显式停止即放弃续播：清会话，否则下次冷启动会把已停的队列又恢复出来
-        sessionStore.clear()
-        stopServiceIfIdle()
-    }
-
-    fun next() {
-        cancelCrossfade()
-        val p = player ?: return
-        // 同步计算下一首索引（尊重 repeat/shuffle；INDEX_UNSET = 无下一首）。
-        // 用 Timeline.getNextWindowIndex 与下方 seek 语义一致（顺序/随机/循环三态统一），
-        // 但能立即拿到目标索引，用于同步刷新 UI 镜像——投屏态下 ViewModel 需马上读
-        // currentSongId 决定投屏哪一首，仅靠异步 onMediaItemTransition 会有竞态。
-        val target = p.currentTimeline.getNextWindowIndex(p.currentMediaItemIndex, p.repeatMode, p.shuffleModeEnabled)
-        if (p.hasNextMediaItem()) p.seekToNextMediaItem()
-        else if (_uiState.value.repeatMode == RepeatMode.ALL && p.mediaItemCount > 0) {
-            // P3-15：循环到末尾回绕时，须回到「当前播放顺序」的首位，而非 timeline 的
-            // 首位——开启随机时 seekTo(0) 会跳到随机序列之外的第一首，打乱随机体验。
-            // 这里改用 Timeline.getFirstWindowIndex(shuffleModeEnabled)——它正是
-            // Media3 自身在 REPEAT_ALL 回绕时使用的索引，与播放器内部语义完全一致。
-            val first = p.currentTimeline.getFirstWindowIndex(p.shuffleModeEnabled)
-            p.seekTo(if (first >= 0) first else 0, 0L)
-        }
-        if (target != C.INDEX_UNSET) {
-            val id = runCatching { p.getMediaItemAt(target)?.mediaId?.toLongOrNull() }.getOrNull()
-            _uiState.update { it.copy(currentSongId = id, queueIndex = target, positionMs = 0L, durationMs = 0L) }
-        }
-        recastCurrentIfCasting()
-    }
-
-    fun previous() {
-        cancelCrossfade()
-        val p = player ?: return
-        // 同步计算上一首索引（尊重 repeat/shuffle；INDEX_UNSET = 无上一首→回到当前曲开头）。
-        val target = p.currentTimeline.getPreviousWindowIndex(p.currentMediaItemIndex, p.repeatMode, p.shuffleModeEnabled)
-        if (p.hasPreviousMediaItem()) p.seekToPreviousMediaItem() else p.seekTo(0L)
-        if (target != C.INDEX_UNSET) {
-            val id = runCatching { p.getMediaItemAt(target)?.mediaId?.toLongOrNull() }.getOrNull()
-            _uiState.update { it.copy(currentSongId = id, queueIndex = target, positionMs = 0L, durationMs = 0L) }
-        } else {
-            // 无上一首：回到当前曲开头（与原 else 分支 p.seekTo(0L) 一致）
-            _uiState.update { it.copy(positionMs = 0L) }
-        }
-        recastCurrentIfCasting()
-    }
-
-    fun seekTo(positionMs: Long) {
-        cancelCrossfade()
-        val ms = positionMs.coerceAtLeast(0L)
-        // 投屏态：进度条拖的是渲染器上的位置，本地进度由投屏轮询同步
-        if (dlnaCast.state.value.isCasting) {
-            scope.launch { dlnaCast.seek(ms) }
-            _uiState.update { it.copy(positionMs = ms) }
-            return
-        }
-        val p = player ?: return
-        p.seekTo(ms)
-        _uiState.update { it.copy(positionMs = ms) }
-    }
-
-    /**
-     * 循环模式：本地即时生效 + 写回 DataStore。
-     * 冷启动后由 [applyPlayOrder] 从设置恢复，不再重置为 OFF（P0-3）。
-     */
-    fun setRepeatMode(mode: RepeatMode) {
-        val p = player ?: return
-        p.repeatMode = when (mode) {
-            RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-            RepeatMode.ALL -> Player.REPEAT_MODE_ALL
-            RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-        }
-        _uiState.update { it.copy(repeatMode = mode) }
-        scope.launch {
-            settings.setRepeatMode(
-                when (mode) {
-                    RepeatMode.ALL -> PureToneSettings.REPEAT_ALL
-                    RepeatMode.ONE -> PureToneSettings.REPEAT_ONE
-                    RepeatMode.OFF -> PureToneSettings.REPEAT_OFF
-                }
-            )
-        }
-    }
-
-    /** 随机播放：本地即时生效 + 写回 DataStore（P0-3） */
-    fun setShuffle(enabled: Boolean) {
-        player?.shuffleModeEnabled = enabled
-        _uiState.update { it.copy(shuffle = enabled) }
-        scope.launch { settings.setShuffle(enabled) }
-    }
-
-    fun setSpeed(speed: Float) {
-        val p = player ?: return
-        p.setPlaybackSpeed(speed.coerceIn(0.25f, 3.0f))
-        _uiState.update { it.copy(speed = p.playbackParameters.speed) }
-    }
-
-    /**
-     * 睡眠定时：只写 DataStore（分钟数 + 到期时刻）。
-     * 真正的倒计时由设置流触发 [applySleepTimer] 建立/取消 job，
-     * 保证「UI 设的定时」与「播放器实际定时」同源，不会出现两套计时器。
-     */
-    fun setSleepTimer(minutes: Int) {
-        scope.launch {
-            if (minutes > 0) settings.setSleepTimerMinutes(minutes) else settings.clearSleepTimer()
-        }
-    }
-
-    /** 「播完本曲停止」：当前这首自然播完就暂停（不限时长） */
-    fun setSleepTimerEndOfTrack() {
-        scope.launch { settings.setSleepTimerEndOfTrack() }
-    }
-
-    fun dismissError() = _uiState.update { it.copy(error = null) }
+    fun togglePlayPause() = controller.togglePlayPause()
+    fun play() = controller.play()
+    fun pause() = controller.pause()
+    fun stop() = controller.stop()
+    fun next() = controller.next()
+    fun previous() = controller.previous()
+    fun seekTo(positionMs: Long) = controller.seekTo(positionMs)
+    fun setRepeatMode(mode: RepeatMode) = controller.setRepeatMode(mode)
+    fun setShuffle(enabled: Boolean) = controller.setShuffle(enabled)
+    fun setSpeed(speed: Float) = controller.setSpeed(speed)
+    fun setSleepTimer(minutes: Int) = controller.setSleepTimer(minutes)
+    fun setSleepTimerEndOfTrack() = controller.setSleepTimerEndOfTrack()
+    fun dismissError() = controller.dismissError()
 
     // ---------- 续播 ----------
 
@@ -1038,7 +881,7 @@ class PlaybackManager @Inject constructor(
      *
      * 因此：播放器已有媒体项或正在播放时，一律原样返回 false。
      */
-    suspend fun restoreLastSession(): Boolean {
+    override suspend fun restoreLastSession(): Boolean {
         val p = player
         if (!canRestoreSession(playerItemCount = p?.mediaItemCount ?: 0, isPlaying = p?.isPlaying == true)) {
             return false
@@ -1084,7 +927,7 @@ class PlaybackManager @Inject constructor(
         sessionStore.saveDebounced { sessionSnapshot() }
     }
 
-    private fun saveSessionNow() {
+    override fun saveSessionNow() {
         val snapshot = sessionSnapshot() ?: return
         sessionStore.saveNow(snapshot)
     }
@@ -1239,7 +1082,7 @@ class PlaybackManager @Inject constructor(
     }
 
     /** 空闲时停止服务（空闲判定需要读播放器，故留在此处；停服务本身下沉到 launcher） */
-    private fun stopServiceIfIdle() {
+    override fun stopServiceIfIdle() {
         if ((player?.isPlaying != true) && (player?.mediaItemCount ?: 0) == 0) {
             serviceLauncher.stopService()
         }
@@ -1308,7 +1151,7 @@ class PlaybackManager @Inject constructor(
      * DLNA push 是一次性的：手机队列怎么变渲染器都不知道，不会自动跟着切。
      * 不重投的话，电视会继续播旧的那首，而通知栏显示的是另一首。
      */
-    private fun recastCurrentIfCasting() {
+    override fun recastCurrentIfCasting() {
         if (!dlnaCast.state.value.isCasting) return
         val entry = _uiState.value.currentEntry ?: return
         scope.launch { dlnaCast.castSong(entry.songId, entry.title, entry.filePath) }
