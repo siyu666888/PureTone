@@ -321,7 +321,7 @@ fun PlayerScreen(
                     icon = Icons.Outlined.Equalizer,
                     contentDescription = "均衡器",
                     onClick = { navController.navigate(Routes.EQ) },
-                    buttonSize = 40.dp,
+                    buttonSize = 48.dp,
                     iconSize = 22.dp
                 )
                 // P2-4：歌词入口原为「点封面翻转」的隐藏手势，新用户很难发现。
@@ -329,7 +329,7 @@ fun PlayerScreen(
                 FilledTonalButton(
                     onClick = { coverFlipped = !coverFlipped },
                     contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp),
-                    modifier = Modifier.height(36.dp)
+                    modifier = Modifier.height(48.dp)
                 ) {
                     Text(
                         if (coverFlipped) "封面" else "歌词",
@@ -919,7 +919,7 @@ private fun LyricsFace(
                 icon = Icons.Rounded.RemoveCircleOutline,
                 contentDescription = "缩小字号",
                 onClick = { onFontSize((fontSizeSp - 2).coerceAtLeast(12)) },
-                buttonSize = 36.dp,
+                buttonSize = 48.dp,
                 iconSize = 18.dp
             )
             Text("歌词", style = MaterialTheme.typography.titleMedium)
@@ -927,7 +927,7 @@ private fun LyricsFace(
                 icon = Icons.Rounded.AddCircleOutline,
                 contentDescription = "放大字号",
                 onClick = { onFontSize((fontSizeSp + 2).coerceAtMost(30)) },
-                buttonSize = 36.dp,
+                buttonSize = 48.dp,
                 iconSize = 18.dp
             )
         }

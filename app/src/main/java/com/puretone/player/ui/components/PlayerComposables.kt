@@ -60,6 +60,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -307,7 +313,10 @@ fun ControlIconButton(
                 interactionSource = interactionSource,
                 indication = ripple(),
                 onClick = onClick
-            ),
+            )
+            // 无障碍：自定义 Box+clickable 不会自动带 Button role，TalkBack 无法识别为按钮。
+            // 显式声明 role，使其与 IconButton 等价的语义（可被「双击激活」读出）。
+            .semantics { role = Role.Button },
         contentAlignment = Alignment.Center
     ) {
         AnimatedContent(
@@ -412,7 +421,18 @@ fun PlayerProgressBar(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .height(40.dp)
+            // 触控目标：整体至少 48dp（Google 无障碍规范最小触控尺寸）。
+            // 原 40dp 中真正可点的热区仅 24dp，TalkBack/大手指难操作。
+            .height(48.dp)
+            // 无障碍：把当前进度暴露给 TalkBack（读出百分比），并提供无障碍进度调节动作，
+            // 弥补纯 pointerInput 手势无法被屏幕阅读器用户拖动的问题。
+            .semantics {
+                progressBarRangeInfo = ProgressBarRangeInfo(display, 0f..1f)
+                setProgress {
+                    onSeek((it * safeDuration).toLong())
+                    true
+                }
+            }
     ) {
         val maxWidthPx = constraints.maxWidth.toFloat()
         val density = LocalDensity.current
@@ -457,12 +477,13 @@ fun PlayerProgressBar(
             }
         }
 
-        // 轨道 + 滑块 + 手势热区
+        // 轨道 + 滑块 + 手势热区：热区高度提到 48dp（覆盖整条组件），
+        // 内部轨道/滑块仍定位在底部 24dp，恢复原始视觉（轨道贴底、上方留足可点空间）。
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(24.dp)
+                .height(48.dp)
                 .pointerInput(safeDuration) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -489,39 +510,47 @@ fun PlayerProgressBar(
                 },
             contentAlignment = Alignment.Center
         ) {
-            // 轨道（底 + 已播）
+            // 内层：轨道 + 滑块定位在热区底部 24dp，保持原始视觉
             Box(
                 Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(CircleShape)
-                    .background(scheme.surfaceContainerHighest)
+                    .height(24.dp)
             ) {
+                // 轨道（底 + 已播）
                 Box(
                     Modifier
-                        .fillMaxWidth(display)
+                        .fillMaxWidth()
                         .height(6.dp)
                         .clip(CircleShape)
-                        .background(scheme.primary)
+                        .background(scheme.surfaceContainerHighest)
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(display)
+                            .height(6.dp)
+                            .clip(CircleShape)
+                            .background(scheme.primary)
+                    )
+                }
+                // 滑块
+                Box(
+                    Modifier
+                        .align(Alignment.CenterStart)
+                        .offset {
+                            IntOffset(
+                                ((display * maxWidthPx) - thumbPx / 2f)
+                                    .roundToInt()
+                                    .coerceIn(0, (maxWidthPx - thumbPx).roundToInt().coerceAtLeast(0)),
+                                0
+                            )
+                        }
+                        .size(18.dp)
+                        .shadow(3.dp, CircleShape)
+                        .clip(CircleShape)
+                        .background(Color.White)
                 )
             }
-            // 滑块
-            Box(
-                Modifier
-                    .align(Alignment.CenterStart)
-                    .offset {
-                        IntOffset(
-                            ((display * maxWidthPx) - thumbPx / 2f)
-                                .roundToInt()
-                                .coerceIn(0, (maxWidthPx - thumbPx).roundToInt().coerceAtLeast(0)),
-                            0
-                        )
-                    }
-                    .size(18.dp)
-                    .shadow(3.dp, CircleShape)
-                    .clip(CircleShape)
-                    .background(Color.White)
-            )
         }
     }
 }
@@ -574,10 +603,13 @@ fun MiniPlayer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .combinedClickable(
-                        onClick = onOpen,
-                        onLongClick = { showRemaining = !showRemaining }
-                    )
+                .combinedClickable(
+                    onClick = onOpen,
+                    // 无障碍：长按切换「剩余/总时长」是隐藏交互，给可见的 longClick 标签，
+                    // 让 TalkBack 用户能在「长按」动作中读到用途，而非无提示的隐藏手势。
+                    onLongClickLabel = "切换显示剩余时长或总时长",
+                    onLongClick = { showRemaining = !showRemaining }
+                )
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -644,21 +676,21 @@ fun MiniPlayer(
                     icon = ControlIcons.SkipPrevious,
                     contentDescription = "上一首",
                     onClick = onPrev,
-                    buttonSize = 42.dp,
+                    buttonSize = 48.dp,
                     iconSize = 24.dp
                 )
                 ControlIconButton(
                     icon = if (state.isPlaying) ControlIcons.Pause else ControlIcons.Play,
                     contentDescription = "播放/暂停",
                     onClick = onToggle,
-                    buttonSize = 42.dp,
+                    buttonSize = 48.dp,
                     iconSize = 24.dp
                 )
                 ControlIconButton(
                     icon = ControlIcons.SkipNext,
                     contentDescription = "下一首",
                     onClick = onNext,
-                    buttonSize = 42.dp,
+                    buttonSize = 48.dp,
                     iconSize = 24.dp
                 )
             }
