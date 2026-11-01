@@ -67,6 +67,18 @@ updates:
     #    → androidx 组需整体等 compileSdk / AGP 升级专案。
     # ④ com.google.devtools.ksp：版本号与 Kotlin 严格对应（2.0.21-1.0.28 ↔ Kotlin 2.0.21），
     #    不能脱离 Kotlin 单独升级。
+    # ⑤ AGP 8.6.0 → 8.13.2：实测失败——
+    #    "Minimum supported Gradle version is 8.13. Current version is 8.7."
+    #    → **AGP 与 Gradle wrapper 是耦合的**：AGP 的 minor 升级会抬高 Gradle 版本下限，
+    #      而 Gradle 大版本升级按既定策略属人工专案。故 AGP 的 minor 一律挡掉，
+    #      只保留 patch（patch 不改 Gradle 版本下限）。
+    # ⑥ gradle-wrapper 8.7 → 9.8.2：实测（CI）全绿——Gradle 9.8.2 + AGP 8.6.0
+    #    的单测 / Debug / Release / lint / detekt 全部通过，仅有
+    #    "Deprecated Gradle features were used in this build, making it
+    #    incompatible with Gradle 10" 警告。
+    #    但 Gradle 9 是**大版本**，且真正的工具链升级（AGP 9 / Kotlin 2.4 /
+    #    compileSdk 37）属 P0-1 分发渠道决策的前置，不应在决策前抢先开工。
+    #    → 挡掉 wrapper 的 major，留给工具链升级专案一并处理。
     #
     # 结论：当前工具链（AGP 8.6.0 / Gradle 8.7 / Kotlin 2.0.21 / compileSdk 35）
     # 已接近这些库的新版要求上限，**常规巡检范围内几乎没有可自动升的库**。
@@ -85,12 +97,20 @@ updates:
       - dependency-name: "androidx.*"
       # ④ KSP：须与 Kotlin 同版本
       - dependency-name: "com.google.devtools.ksp"
+      # ⑤ AGP：minor 会抬高 Gradle 版本下限，须与工具链升级专案一起做
+      - dependency-name: "com.android.application"
+        update-types: ["version-update:semver-minor"]
+      - dependency-name: "com.android.tools.build"
+        update-types: ["version-update:semver-minor"]
       # Kotlin / AGP 自身的大版本
       - dependency-name: "org.jetbrains.kotlin"
         update-types: ["version-update:semver-major"]
       - dependency-name: "com.android.tools.build"
         update-types: ["version-update:semver-major"]
       - dependency-name: "com.android.application"
+        update-types: ["version-update:semver-major"]
+      # ⑥ gradle-wrapper：大版本属人工专案
+      - dependency-name: "gradle-wrapper"
         update-types: ["version-update:semver-major"]
 
   # GitHub Actions 自身的版本
