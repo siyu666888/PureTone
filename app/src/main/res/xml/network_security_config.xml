@@ -19,8 +19,16 @@
      因此明文能力在 base-config 中保留，但严格限定于 DLNA 局域网场景——
      App 不会向任何公网主机发明文（已代码核实）。
 
-  说明：自分发（不上 Google Play）+ targetSdk 34，不触发 Android 15+ 的 16KB 页对齐要求。
-  若未来升级 targetSdk>=35，需重新评估 ffmpeg-kit（.so 仅 4KB 对齐）与 DLNA 明文策略。
+  说明：自分发（不上 Google Play），不受 Google Play 的 16KB 页对齐**政策**约束。
+  但这里要区分两件常被混为一谈的事：
+   · 政策层——Play 要求面向 Android 15+（targetSdk 35+）的应用支持 16KB 页。
+     我们不上 Play，故不受该政策约束。
+   · 技术层——在 16KB 页**设备**上，4KB 页编译的 .so 仍会加载失败。
+     这是**设备兼容性**问题，与是否上架、targetSdk 多少都无关。
+     ffmpeg-kit 当前就是 4KB 页（实测 p_align=4096，44/52 个 .so 不合规），
+     故 APE 转码与 ReplayGain 在这类设备上会失败，作为**已知问题**保留，
+     待换成 16KB 构建的 ffmpeg-kit 解决（实测数据见 dist/v1.7.24 交付文档）。
+  本配置的 cleartext 放行与 targetSdk 无关——DLNA 局域网场景无论如何都需要明文。
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">

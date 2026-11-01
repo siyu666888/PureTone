@@ -52,7 +52,26 @@ android {
     defaultConfig {
         applicationId = "com.puretone.player"
         minSdk = 26
-        targetSdk = 34
+        // targetSdk 35（2026-11-01 自 34 升级，自分发路线）。
+        //
+        // 路线图 P0-1 已拍板「**自分发，不上 Google Play**」，对应路线图第 1 步的轻量版：
+        // targetSdk 升到 35 即可显著改善 Android 15/16 设备上的行为兼容，工具链代价小
+        // （compileSdk 35 与 AGP 8.6.1 均已就位，本次仅改此一行）。
+        //
+        // 升 targetSdk 35 的四类主要风险点已逐项核查（代码证据见
+        // dist/v1.7.25_targetSdk35_2026-11-01.md）：
+        //   ① 强制 edge-to-edge —— **早已预埋**：MainActivity 调 enableEdgeToEdge()，
+        //      外层 Scaffold 用 Material3 默认 systemBars insets、内层 Tab 用 WindowInsets(0)
+        //      （P1-7「不重复叠加」设计），故系统强制化不引入新的 UI 变化；
+        //   ② Safer intents —— 全部为显式 Intent，无隐式启动 Activity；
+        //   ③ 前台服务类型 —— mediaPlayback 已声明且权限齐备；
+        //   ④ PendingIntent —— 已带 FLAG_IMMUTABLE。
+        //
+        // ⚠️ 已知遗留（不阻塞自分发）：ffmpeg-kit 的 .so 仍为 4KB 页对齐，
+        //    在 **16KB 页设备**上 APE 转码与 ReplayGain 会加载失败。
+        //    注意这是**设备层面的兼容性**问题，与是否上 Play 无关——
+        //    Play 的 16KB 政策只是额外加码。详见 dist/v1.7.24 的实测数据。
+        targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
