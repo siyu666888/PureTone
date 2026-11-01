@@ -24,6 +24,9 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_DIR="$ROOT/app/src/main/java"
+# P2-1：benchmark 模块（Baseline Profile 采集器）也纳入扫描——
+# 它是生产构建链路的一部分（新模块若失控，同样是债务）。
+BENCH_SRC_DIR="$ROOT/benchmark/src/main/java"
 LIMIT=1200
 REPORT_ONLY=0
 [ "${1:-}" = "--report" ] && REPORT_ONLY=1
@@ -73,8 +76,24 @@ while IFS= read -r file; do
 done < <(find "$SRC_DIR" -name "*.kt" -type f)
 
 TOTAL=$(find "$SRC_DIR" -name "*.kt" -type f | wc -l | tr -d ' ')
+
+# P2-1：benchmark 模块（采集器）一并扫描
+if [ -d "$BENCH_SRC_DIR" ]; then
+  while IFS= read -r file; do
+    rel="benchmark/${file#"$BENCH_SRC_DIR"/}"
+    rel="${rel//\\//}"
+    lines="$(wc -l < "$file" | tr -d ' ')"
+    [ "$lines" -le "$LIMIT" ] && continue
+    echo "::error file=$rel::行数 $lines 超过上限 $LIMIT"
+    OVERFLOW+=("$rel ($lines)")
+    FAILED=1
+  done < <(find "$BENCH_SRC_DIR" -name "*.kt" -type f)
+  BENCH_TOTAL=$(find "$BENCH_SRC_DIR" -name "*.kt" -type f | wc -l | tr -d ' ')
+  TOTAL=$((TOTAL + BENCH_TOTAL))
+fi
+
 echo ""
-echo "文件行数门禁：共扫描 $TOTAL 个主源文件，上限 $LIMIT 行"
+echo "文件行数门禁：共扫描 $TOTAL 个主源文件（app + benchmark），上限 $LIMIT 行"
 if [ ${#OVERFLOW[@]} -gt 0 ]; then
   echo "超标文件："
   for o in "${OVERFLOW[@]}"; do echo "  - $o"; done

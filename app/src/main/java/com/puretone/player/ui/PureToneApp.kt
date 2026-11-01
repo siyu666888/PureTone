@@ -64,9 +64,16 @@ object Routes {
         "group/$type/${Uri.encode(key)}"
 }
 
-/** 应用根：主题 + 底部导航 + 迷你播放条 + 导航宿主 */
+/**
+ * 应用根：主题 + 底部导航 + 迷你播放条 + 导航宿主。
+ *
+ * @param initialRoute P2-1：Baseline Profile 采集用的初始路由（null = 走默认的曲库页）。
+ *   采集时需要一条**不依赖曲库数据**的确定路径——靠 UI 点击进播放页要求设备上
+ *   恰好有可点的歌曲，采集环境不可控时会 flaky 或根本走不到最重的播放页路径。
+ *   正常启动不传该参数，行为与从前完全一致。
+ */
 @Composable
-fun PureToneApp() {
+fun PureToneApp(initialRoute: String? = null) {
     val playerVm: PlayerViewModel = hiltViewModel()
     val settingsVm: SettingsViewModel = hiltViewModel()
 
@@ -135,7 +142,11 @@ fun PureToneApp() {
         ) { padding ->
             NavHost(
                 navController = nav,
-                startDestination = Routes.BROWSE,
+                // P2-1：采集时按传入的初始路由起步（当前只支持播放页）。
+                // 注意 Routes.PLAYER 需要「有当前歌曲」才有意义，
+                // 采集环境下曲库可能为空——此时播放页仍会渲染（UI 层），
+                // 采集到的是 Compose 树构建与导航路径，这正是我们要的启动热路径。
+                startDestination = if (initialRoute == Routes.PLAYER) Routes.PLAYER else Routes.BROWSE,
                 modifier = Modifier.fillMaxSize().padding(padding)
             ) {
                 // playerVm 由根部（Activity 作用域）统一创建并下发：

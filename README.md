@@ -76,7 +76,7 @@
 | 构建 | AGP 8.6.0 · Gradle 8.7 · JDK 17 · compileSdk 35 / targetSdk 34 · minSdk 26 |
 | 测试 | Robolectric 4.12.2 · Turbine 1.1.0（**344 用例 / 39 类全绿**） |
 | 静态检查 | Android Lint（`warningsAsErrors` + baseline 冻结存量）· detekt 1.23.7（baseline 冻结 1 条）· 文件行数门禁 ≤ 1200 行 |
-| CI | GitHub Actions（单测 / Debug+Release 构建 / apksigner 验签 / Baseline Profile 打包断言 / lint / detekt / 文件行数）+ Dependabot 依赖升级 + 每周依赖漂移巡检 |
+| CI | GitHub Actions（单测 / Debug+Release 构建 / apksigner 验签 / Baseline Profile 打包断言 **+ 规则有效性校验** / lint / detekt / 文件行数）+ Dependabot 依赖升级 + 每周依赖漂移巡检 |
 
 ---
 
@@ -168,6 +168,26 @@ bash scripts/check-file-size.sh # 文件行数上限 1200 行（detekt 的 Large
 
 **清理存量告警的纪律**（务必遵守）：从 baseline 里**删掉对应条目再修代码**，
 不要整体删除 baseline 文件重新生成——那会一次性把既有问题全部重新冻结，等于闸门失效。
+
+### Baseline Profile（性能）
+
+App 附带 Baseline Profile，安装时随包下发，dex2oat 直接 AOT 预编译热路径，
+减少冷启动时的 JIT 解释执行开销。
+
+```bash
+# 校验：规则里的类是否真的存在于 dex（防止「打包了但不生效」）
+bash scripts/verify-baseline-profile.sh
+
+# 真机采集（替换手写占位版，需物理 Android 设备）
+scripts/collect-baseline-profile.sh <device-serial>
+```
+
+> **采集必须物理设备**：androidx.benchmark 的 Macrobenchmark 明确拒绝模拟器
+> （设备指纹含 `generic`、无 `cpufreq`、ART 的类加载时机与真机不同）。
+> 在模拟器上采出的 profile 装到真机上**没有收益甚至有害**。
+>
+> 当前 `baseline-prof.txt` 是**手写占位版**（309 条类级规则，100% 命中 dex），
+> 采集链路已就绪，待有真机时执行采集替换。
 
 ---
 

@@ -141,6 +141,22 @@ jobs:
             && echo "baseline.prof OK" \
             || { echo "::error::assets/dexopt/baseline.prof 缺失"; exit 1; }
 
+      # Baseline Profile 有效性校验（P2-1）：
+      # 「打包了」不等于「生效」——规则里若写了 dex 中不存在的类，AGP 会静默丢弃，
+      # profile 看着存在、实际不生效。这里断言每条类级规则都能在 dex 中找到。
+      - name: 校验 Baseline Profile 规则有效性
+        run: |
+          set -e
+          ./gradlew :app:assembleDebug --no-daemon
+          bash scripts/verify-baseline-profile.sh
+
+      # P2-1：benchmark 模块（Baseline Profile 采集器）必须能编译，
+      # 否则采集链路会腐化——而它腐化时不会有任何告警（CI 不跑采集）。
+      # 这里只保证「代码能编译」，采集本身需真机，在 CI 之外由
+      # scripts/collect-baseline-profile.sh 执行。
+      - name: 构建 Baseline Profile 采集模块
+        run: ./gradlew :benchmark:assembleBenchmark --no-daemon
+
       # lint 现在是真门禁：存量告警已冻结在 app/lint-baseline.xml（入库，本地与 CI 共用），
       # 只有新增告警才会让这一步失败。已用一个临时探针（故意 Toast 不 show）验证过
       # 闸门确实会拦，不是形同虚设。
@@ -150,8 +166,9 @@ jobs:
       # detekt 门禁：管 Kotlin 侧的**结构与复杂度**（lint 管 Android 特有正确性）。
       # 存量冻结在 app/detekt-baseline.xml，配置见 config/detekt/detekt.yml。
       # 探针实测：加一个未使用导入 → detekt 失败（Analysis failed with 1 weighted issues）。
+      # 同时扫 benchmark 模块（P2-1 的采集器代码也在门禁范围内）。
       - name: 静态检查 (detekt，新增问题即失败)
-        run: ./gradlew :app:detekt --no-daemon
+        run: ./gradlew :app:detekt :benchmark:detekt --no-daemon
 
       - name: 上传 APK 产物
         if: always()

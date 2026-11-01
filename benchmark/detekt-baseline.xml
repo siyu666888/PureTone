@@ -1,0 +1,14 @@
+<?xml version="1.0" ?>
+<!--
+  benchmark 模块的 detekt 存量冻结文件（P2-2 配套）。
+
+  纪律与 app/detekt-baseline.xml 完全一致：
+  清理存量时**从本文件删掉对应条目再修代码**，不要整体删除本文件重新生成。
+
+  当前存量为空——benchmark 模块（Baseline Profile 采集器）零告警。
+-->
+<SmellBaseline>
+  <ManuallySuppressedIssues></ManuallySuppressedIssues>
+  <CurrentIssues>
+  </CurrentIssues>
+</SmellBaseline>

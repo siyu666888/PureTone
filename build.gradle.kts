@@ -9,4 +9,8 @@ plugins {
     // detekt 在 app 模块应用（见 app/build.gradle.kts）——它对 Android 项目有原生支持，
     // 且能自动把 detekt task 挂到 check 生命周期。
     alias(libs.plugins.benManesVersions)
+    // P2-1/P2-2：detekt 插件在根项目 apply（不作用到子模块），
+    // 使 app 与 benchmark 两个模块都能用 alias 引用同一版本，
+    // 避免「哪个模块先 apply、另一个就报 already on the classpath」的版本冲突。
+    alias(libs.plugins.detekt) apply false
 }

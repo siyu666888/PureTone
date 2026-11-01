@@ -6,7 +6,9 @@ plugins {
     alias(libs.plugins.hilt)
     // P2-2：detekt 静态分析门禁。配置见 config/detekt/detekt.yml，
     // 存量冻结在 app/detekt-baseline.xml。详细设计说明见该配置文件顶部注释。
-    alias(libs.plugins.detekt)
+    // 插件在根项目已 apply（apply false），这里**不能带 version**
+    // （否则报 "already on the classpath"）。
+    id("io.gitlab.arturbosch.detekt")
 }
 
 /**
@@ -80,6 +82,26 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
             isMinifyEnabled = false
+        }
+        /**
+         * P2-1：Baseline Profile 采集专用构建类型。
+         *
+         * 与 release 的区别只有两处，且都是采集的硬性要求：
+         * 1. `isProfileable = true` —— ART 只对 profileable 应用做 AOT 预编译，
+         *    这是 Baseline Profile 能生效的前提（release 包因安全策略默认不可 profile）。
+         * 2. **不加 applicationIdSuffix** —— 采集工具按包名定位被测应用，
+         *    带 `.debug` 后缀会让「启动哪个包」变得不确定；不带后缀则与正式包同名，
+         *    采集脚本无需为不同构建类型维护两份包名。
+         *
+         * 其余保持 release 语义（R8 开启）：**必须在混淆后的代码上采集**，
+         * 否则 profile 里的类名与实际安装包的 dex 对不上，等于白采。
+         */
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("release")
+            isProfileable = true
+            matchingFallbacks += listOf("release")
+            // applicationId 不加后缀（刻意不写 applicationIdSuffix）
         }
         release {
             signingConfig = signingConfigs.getByName("release")

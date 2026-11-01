@@ -27,3 +27,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "PureTone"
 include(":app")
+// P2-1：Baseline Profile 真机采集模块（benchmark-macro-junit4）。
+include(":benchmark")
