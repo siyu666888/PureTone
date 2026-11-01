@@ -20,6 +20,10 @@ import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.effect.AudioEffectController
 import com.puretone.player.MainActivity
 import com.puretone.player.playback.cast.CastDevice
+import com.puretone.player.playback.cast.CastQueueCoordinator
+import com.puretone.player.playback.cast.CastQueueInfo
+import com.puretone.player.playback.cast.CastQueueSink
+import com.puretone.player.playback.cast.CastResult
 import com.puretone.player.playback.cast.CastState
 import com.puretone.player.playback.cast.DlnaCastManager
 import com.puretone.player.widget.WidgetUpdater
@@ -107,7 +111,7 @@ class PlaybackManager @Inject constructor(
     private val widgetUpdater: WidgetUpdater,
     private val dlnaCast: DlnaCastManager,
     private val serviceLauncher: PlaybackServiceLauncher
-) : CastCommandSink, PlaybackEventSink, PlaybackControlSink, PlaybackQueueSink {
+) : CastCommandSink, PlaybackEventSink, PlaybackControlSink, PlaybackQueueSink, CastQueueSink {
 
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
@@ -283,6 +287,33 @@ class PlaybackManager @Inject constructor(
     )
 
     /**
+     * 投屏队列协调器（M3）。
+     *
+     * DLNA 是一次性 push，渲染器不会自动接着播下一首；而投屏态下本地播放器是暂停的
+     * （避免手机与电视同时出声），于是「一首播完」后没有任何东西推进队列——投屏只能
+     * 听一首就停住。本协调器在渲染器播完后推进队列并重新投送下一首；投屏连接失效时
+     * 回调宿主把播放回退到本地。
+     *
+     * 判定与状态机都在协调器内部（可用纯 JVM 单测逐条锁定），主类只提供
+     * 「队列快照」与「落地动作」两件事。
+     */
+    private val castQueueCoordinator = CastQueueCoordinator(
+        scope = scope,
+        castState = dlnaCast.state,
+        queueInfo = {
+            val state = _uiState.value
+            val index = state.queueIndex
+            val queue = state.queue
+            CastQueueInfo(
+                // 末曲不推进：投完这一首就停，回绕交给本地播放模式（循环/随机）
+                hasNext = index >= 0 && index < queue.lastIndex,
+                currentDurationMs = queue.getOrNull(index)?.durationMs ?: 0L
+            )
+        },
+        sink = this
+    )
+
+    /**
      * 播放事件处理（P1-1 拆分第六刀）。
      *
      * 收听主/备播放器回调、做事件分类与完成去重，再通过 [PlaybackEventSink] 回传副作用。
@@ -423,6 +454,10 @@ class PlaybackManager @Inject constructor(
                 routeSessionToCast(st.isCasting)
             }
         }
+        // 投屏队列推进（M3）：渲染器播完自动投下一首 / 投屏失联回退本地。
+        // 与 castRoutingJob 是两件事——那个只管 UI 镜像与 MediaSession 切换，
+        // 这个管「队列要不要继续往前走」，两者各自独立订阅同一份状态流。
+        castQueueCoordinator.start()
         // 执行挂起请求：一次性取走全部（重放期间新来的命令会留在槽里，不被这次重放吞掉）
         val pending = gate.drain()
         val playReq = pending.play
@@ -467,6 +502,8 @@ class PlaybackManager @Inject constructor(
         castRoutingJob = null
         castPlayer = null
         routedToCast = false
+        // 投屏队列协调器同样停掉：它回调宿主推进队列，而队列已随播放器一起释放
+        castQueueCoordinator.stop()
     }
 
     /**
@@ -891,10 +928,16 @@ class PlaybackManager @Inject constructor(
         scope.launch {
             if (_uiState.value.isPlaying) pause()
             dlnaCast.selectDevice(device)
-            val ok = dlnaCast.castSong(song)
-            if (!ok) {
-                val st = dlnaCast.state.value
-                if (!st.isCasting && !st.isPreparing) play()
+            when (val result = dlnaCast.castSong(song)) {
+                is CastResult.Success -> Unit
+                // 首投失败 → 恢复本地播放，否则用户点了投屏却两头都没声音。
+                // 「已过期」不恢复：那是期间用户自己停了投屏或改了目标，
+                // 本地播放已由那条路径恢复，这里再拉一次会把新一轮投送也打断。
+                is CastResult.Failed -> {
+                    val st = dlnaCast.state.value
+                    if (!st.isCasting && !st.isPreparing) play()
+                }
+                is CastResult.Superseded -> Unit
             }
         }
     }
@@ -919,11 +962,64 @@ class PlaybackManager @Inject constructor(
      *
      * DLNA push 是一次性的：手机队列怎么变渲染器都不知道，不会自动跟着切。
      * 不重投的话，电视会继续播旧的那首，而通知栏显示的是另一首。
+     *
+     * M3：重投失败必须回退本地。重投是一次「换曲」，失败意味着**渲染器上仍是旧曲**
+     * 而手机端已经换到新曲——继续投屏就是状态撕裂（电视播 A、手机显示 B）。
+     * 此时宁可退回本地播放（A 从手机放），也不能让两个声音/两个画面各说各话。
      */
     override fun recastCurrentIfCasting() {
         if (!dlnaCast.state.value.isCasting) return
         val entry = _uiState.value.currentEntry ?: return
-        scope.launch { dlnaCast.castSong(entry.songId, entry.title, entry.filePath) }
+        scope.launch {
+            val result = dlnaCast.castSong(entry.songId, entry.title, entry.filePath)
+            if (result is CastResult.Failed) {
+                fallbackToLocalPlayback("投屏中断，已切回本地播放")
+            }
+        }
+    }
+
+    // ---------- CastQueueSink：投屏队列推进（M3） ----------
+
+    /**
+     * 渲染器自然播完当前这一首 → 推进队列并重新投送下一首。
+     *
+     * 走 [next] 而非自己推进索引，是为了**复用本地播放模式**（循环/随机）——
+     * 投屏的队列推进与本地切歌必须是同一套语义，否则会出现「本地按顺序、
+     * 投屏按另一套」的分叉。
+     *
+     * [next] 内部已带重投（本地推进后调 [recastCurrentIfCasting]），故这里
+     * 不再单独投送。
+     */
+    override fun onCastTrackEnded() {
+        next()
+    }
+
+    /**
+     * 投屏连接失效（设备离线 / 流错误）→ 停止投屏并把播放回退到本地。
+     *
+     * 与用户主动「停止投屏」走同一条路径：停渲染器 → MediaSession 切回本地 →
+     * 本地续播。区别只在于多给一条提示——用户是**被动**失去投屏的，
+     * 不提示就会以为手机静音了。
+     */
+    override fun onCastConnectionLost(reason: String) {
+        scope.launch { fallbackToLocalPlayback(reason) }
+    }
+
+    /**
+     * 投屏不可用时的统一回退：停投屏 → 本地续播 → 给出提示。
+     *
+     * 顺序不能颠倒：[dlnaCast.stopCast] 会把 [CastState] 整体重置（isCasting 归 false），
+     * 只有在它之后调 [play]，本地播放才会真的起播——否则 [play] 会按「仍在投屏」
+     * 分支去命令渲染器播放，而渲染器已经不可用了。
+     */
+    private suspend fun fallbackToLocalPlayback(reason: String) {
+        try {
+            dlnaCast.stopCast()
+        } catch (e: Exception) {
+            Log.w(TAG, "stopCast during fallback failed", e)
+        }
+        _uiState.update { it.copy(error = reason) }
+        play()
     }
 
     // ---------- CastCommandSink：门面回调 ----------

@@ -60,11 +60,58 @@ data class CastState(
      * 与 [isCasting] 是两段：本字段为 true 时还没 cast 成功，UI 应显示「转码中」；
      * 转码结束（成功或失败）即置回 false。
      */
-    val isPreparing: Boolean = false
+    val isPreparing: Boolean = false,
+    /**
+     * 投送代次（M3）。
+     *
+     * 每次 [DlnaCastManager.castSong] **开始投送时**（转码之前）自增。
+     *
+     * 用途：区分「渲染器自然播完这一首」与「用户手动切歌把旧曲换掉了」——
+     * 后者同样会让渲染器短暂上报停止态，若不靠代次区分就会多跳一首。
+     * 代次在转码**之前**自增是刻意的：APE 转码可能耗时数十秒，若等投送成功才自增，
+     * 这期间渲染器早已上报停止态，判定会失准。
+     */
+    val pushGeneration: Long = 0L,
+    /**
+     * 投屏是否因设备失联而中断（M3 断网回退）。
+     *
+     * 与 [error] 的区别：[error] 是「上一次操作失败」（可能已自行恢复）；
+     * 本字段表示「连接已不可用」，上层据此停止投屏并把播放回退到本地。
+     */
+    val isConnectionLost: Boolean = false,
+    /**
+     * 渲染器是否提供了进度信息（M3）。
+     *
+     * [DLNACast.getProgress] 拿不到时返回 null，此时 [progressMs]/[durationMs] 均为 0。
+     * 这与「进度真的是 0」是两回事——判定「播完」时必须区分，否则会把
+     * 「进度未知」误判成「渲染器播完后把进度复位为 0」。
+     */
+    val hasProgressInfo: Boolean = false
 )
 
 /**
- * DLNA 投屏管理器（M1 直投 / M2 转码投送）。
+ * 投送结果（M3）。
+ *
+ * 为什么要区分「失败」与「已过期」：断网回退只在**失败**时触发。
+ * - 失败 = 渲染器上仍是旧曲（或压根没投出去），而手机端已经换曲了 →
+ *   继续投屏就会出现「电视播旧歌、手机显示新歌」的状态撕裂，必须回退本地；
+ * - 已过期 = 期间用户主动停了投屏或改了目标，此时本地播放已由上层恢复，
+ *   再回退一次就是重复动作（甚至会在新一轮投送途中把本地也拉起来，
+ *   导致手机与电视同时出声）。
+ */
+sealed interface CastResult {
+    /** 投送成功 */
+    data object Success : CastResult
+
+    /** 投送失败（设备不可达 / 转码失败 / 渲染器拒绝） */
+    data class Failed(val reason: String) : CastResult
+
+    /** 投送已过期：期间用户停止投屏或改了目标，本次整段放弃 */
+    data object Superseded : CastResult
+}
+
+/**
+ * DLNA 投屏管理器（M1 直投 / M2 转码投送 / M3 队列续播与断网回退）。
  *
  * 封装 UPnPCast 单例门面 [DLNACast]：SSDP 设备发现、本地文件直投（库内置 HTTP 服务
  * 经 NanoHTTPD 按绝对路径伺服）、播放控制与状态轮询。对外只暴露协程安全的
@@ -168,7 +215,7 @@ class DlnaCastManager @Inject constructor(
      * 失败（设备拒绝/网络异常/转码失败）只回写 [CastState.error] 并返回 false，
      * 绝不抛异常。
      */
-    suspend fun castSong(song: SongEntity): Boolean = castSong(song.id, song.title, song.path)
+    suspend fun castSong(song: SongEntity): CastResult = castSong(song.id, song.title, song.path)
 
     /**
      * 投屏一首歌（按 id / 标题 / 源文件路径三要素）。
@@ -178,11 +225,13 @@ class DlnaCastManager @Inject constructor(
      * - [songId] 用于查 [ApeTranscoder] 转码缓存；
      * - [path] 是转码输入 / 直投的绝对文件路径；
      * - [title] 只是渲染器上显示的曲名。
+     *
+     * @return [CastResult]：成功 / 失败（含原因）/ 已过期
      */
-    suspend fun castSong(songId: Long, title: String, path: String): Boolean {
+    suspend fun castSong(songId: Long, title: String, path: String): CastResult {
         val device = currentDevice ?: run {
             _state.update { it.copy(error = "未选择投屏设备") }
-            return false
+            return CastResult.Failed("未选择投屏设备")
         }
         val epoch = castEpoch.incrementAndGet()
         val needsTranscode = CastSourcePolicy.requiresTranscode(path)
@@ -195,11 +244,15 @@ class DlnaCastManager @Inject constructor(
                     isPreparing = true,
                     error = null,
                     deviceName = device.name,
-                    deviceAddress = device.address
+                    deviceAddress = device.address,
+                    // M3：投送代次在**转码之前**自增——APE 转码可能耗时数十秒，
+                    // 期间渲染器随时可能上报旧曲的停止态，此时必须已经知道
+                    // 「换了一首」，否则会把「手动切歌」误判成「自然播完」而多跳一首。
+                    pushGeneration = epoch
                 )
             }
         } else {
-            _state.update { it.copy(error = null) }
+            _state.update { it.copy(error = null, pushGeneration = epoch) }
         }
 
         val prepared = try {
@@ -212,13 +265,13 @@ class DlnaCastManager @Inject constructor(
 
         if (epoch != castEpoch.get()) {
             Log.d(TAG, "castSong 已过期（期间停止投屏或换了目标），放弃投送")
-            return false
+            return CastResult.Superseded
         }
 
         val target = when (prepared) {
             is CastFilePreparer.Result.Failed -> {
                 _state.update { it.copy(error = prepared.reason) }
-                return false
+                return CastResult.Failed(prepared.reason)
             }
             is CastFilePreparer.Result.Ready -> prepared.file
         }
@@ -234,15 +287,17 @@ class DlnaCastManager @Inject constructor(
                     isPreparing = false,
                     deviceName = device.name,
                     deviceAddress = device.address,
-                    error = null
+                    error = null,
+                    isConnectionLost = false
                 )
             }
             startPolling()
-            true
+            CastResult.Success
         } catch (e: Exception) {
             Log.e(TAG, "castLocalFile failed: ${target.absolutePath}", e)
-            _state.update { it.copy(error = e.message ?: e.javaClass.simpleName) }
-            false
+            val reason = e.message ?: e.javaClass.simpleName
+            _state.update { it.copy(error = reason) }
+            CastResult.Failed(reason)
         }
     }
 
@@ -278,24 +333,62 @@ class DlnaCastManager @Inject constructor(
     private fun startPolling() {
         stopPolling()
         pollJob = scope.launch {
+            var consecutiveFailures = 0
             while (isActive) {
                 try {
                     val st = DLNACast.getPlaybackState()
-                    val (cur, total) = DLNACast.getProgress() ?: (0L to 0L)
+                    val progress = DLNACast.getProgress()
+                    consecutiveFailures = 0
                     _state.update {
                         it.copy(
                             isPlaying = st == DLNACast.PlaybackState.PLAYING,
                             playbackState = st.name,
-                            progressMs = cur,
-                            durationMs = total
+                            progressMs = progress?.first ?: 0L,
+                            durationMs = progress?.second ?: 0L,
+                            // M3：进度拿不到（getProgress 返回 null）与「进度真的是 0」
+                            // 必须分开记，否则「渲染器播完后把进度复位为 0」这一常见行为
+                            // 会与「进度未知」混淆，判定「播完」时就会误判。
+                            hasProgressInfo = progress != null
                         )
                     }
+                    // 渲染器上报流错误：投屏已不可用，交由上层回退本地播放
+                    if (st == DLNACast.PlaybackState.ERROR) {
+                        markConnectionLost("投屏设备播放异常")
+                        return@launch
+                    }
                 } catch (e: Exception) {
-                    Log.w(TAG, "cast polling failed", e)
+                    consecutiveFailures++
+                    Log.w(TAG, "cast polling failed ($consecutiveFailures)", e)
+                    // M3：连续多次取不到状态 → 设备大概率已离线（断网/关机/离开 Wi-Fi）。
+                    // 单次失败可能是渲染器正忙，不足以判定失联。
+                    if (consecutiveFailures >= CastQueuePolicy.MAX_CONSECUTIVE_POLL_FAILURES) {
+                        markConnectionLost("投屏设备已断开")
+                        return@launch
+                    }
                 }
                 delay(1_000)
             }
         }
+    }
+
+    /**
+     * 判定投屏连接已不可用（M3）。
+     *
+     * 置 [CastState.isConnectionLost] 是给上层的**唯一信号**：由它决定停投屏、
+     * 切回本地播放并提示用户。此处不直接动本地播放器——投屏是附加能力，
+     * 播放链路的归属权始终在 [com.puretone.player.playback.PlaybackManager] 手上。
+     */
+    private fun markConnectionLost(reason: String) {
+        Log.w(TAG, "投屏连接失效：$reason")
+        _state.update {
+            it.copy(
+                isCasting = false,
+                isPlaying = false,
+                isConnectionLost = true,
+                error = reason
+            )
+        }
+        stopPolling()
     }
 
     private fun stopPolling() {
