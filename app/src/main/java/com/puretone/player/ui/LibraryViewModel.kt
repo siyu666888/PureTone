@@ -3,6 +3,7 @@ package com.puretone.player.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.puretone.player.data.local.entity.SongEntity
+import com.puretone.player.data.local.dao.PlaylistWithSongs
 import com.puretone.player.data.repository.MusicRepository
 import com.puretone.player.data.repository.SongSortOrder
 import com.puretone.player.data.repository.SyncResult
@@ -217,6 +218,30 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun deletePlaylist(id: Long) = viewModelScope.launch(ceh) { repo.deletePlaylist(id) }
+
+    // ---------- 歌单详情页（P3-3）----------
+
+    /** 单个歌单及其歌曲流（按 position 排序），详情页头部/列表订阅 */
+    fun observePlaylist(playlistId: Long): Flow<PlaylistWithSongs?> =
+        repo.observePlaylist(playlistId)
+
+    /** 重命名歌单（trim 后写入，与 createPlaylist 口径一致） */
+    fun renamePlaylist(playlistId: Long, name: String) = viewModelScope.launch(ceh) {
+        repo.renamePlaylist(playlistId, name)
+    }
+
+    /** 从歌单移除单曲（DAO 内已 refresh updated_at） */
+    fun removeFromPlaylist(playlistId: Long, songId: Long) = viewModelScope.launch(ceh) {
+        repo.removeFromPlaylist(playlistId, songId)
+    }
+
+    /**
+     * 提交歌单内重排结果（拖动松手时调用）。orderedSongIds 为最终顺序，
+     * DAO 覆盖式重写 position 并 touch。
+     */
+    fun reorderPlaylist(playlistId: Long, orderedSongIds: List<Long>) = viewModelScope.launch(ceh) {
+        repo.reorderPlaylist(playlistId, orderedSongIds)
+    }
 
     /** 把一批歌曲加入指定歌单（幂等，自动排到末尾） */
     fun addToPlaylist(playlistId: Long, songIds: List<Long>) = viewModelScope.launch(ceh) {

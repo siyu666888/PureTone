@@ -184,7 +184,12 @@ fun MeScreen(
                     // 占满整屏（一屏只见一张）；固定宽度实现横向多卡预览。
                     Card(
                         modifier = Modifier.width(160.dp),
-                        onClick = { playerVm.playSongs(pw.songs, 0) }
+                        // P3-3：卡片点击进入歌单详情页（保留卡片内播放/导出/删除按钮）
+                        onClick = {
+                            navController.navigate(Routes.playlistDetail(pw.playlist.id)) {
+                                launchSingleTop = true
+                            }
+                        }
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(pw.playlist.name, style = MaterialTheme.typography.titleMedium)

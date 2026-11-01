@@ -276,6 +276,7 @@ scripts/collect-baseline-profile.sh <device-serial>
 | **v1.8.0** | **聚合发布**（原计划 v1.7.18~v1.7.25 各档工作合并为一次发版）：投屏 M3（队列自动续播 + 断网回退）/ 遗留审查对账（债务=0）/ 静态检查门禁（detekt + 文件行数 + 依赖漂移）/ 交付记录纪律 / Baseline Profile 采集链路 / P0-3 16KB 对齐实测（`tools/check_16kb_alignment.py`）+ LGPL 合规闭环 / **targetSdk 34→35（自分发路线，不上 Google Play）**。详见 `dist/v1.8.0_发布说明_2026-11-01.md` |
 | v1.8.1 | 用户反馈修复 + P3 启动：智能歌单卡片重设计为竖向大图标（修复图标显示不全）、移除底部歌曲数量文字、卡片最小高度与间距协调、列表末项底部留白；**P3-1 崩溃诊断导出**（设置页「诊断」分组 + 经 FileProvider 系统分享面板导出崩溃堆栈/设备信息/FFmpeg 最近命令输出，无需存储权限、不接入崩溃上报 SDK）。详见 `dist/v1.8.1_智能歌单UI修复与P3-1诊断导出_2026-11-01.md` |
 | v1.8.2 | **P3-2 无障碍与触控目标**：`ControlIconButton` 补 `Role.Button` 语义；`PlayerProgressBar` 加 `progressBarRangeInfo`+`setProgress`（TalkBack 可读/调进度）且触控热区 24→48dp；`MiniPlayer` 长按加 `onLongClickLabel`；播放页均衡器/歌词切换/歌词字号按钮及 MiniPlayer 三按钮触控目标补到 48dp。详见 `dist/v1.8.2_无障碍与触控目标_P3-2_2026-11-01.md` |
+| v1.8.3 | **P3-3 歌单 UI 补完**：新增歌单详情页（头部播放全部 + 溢出菜单重命名/导出 M3U/删除 + 歌曲列表点按播放、拖动排序、移除单曲）；`MeScreen` 歌单卡片点击由「直接播放」改为进入详情页；数据层补 `PlaylistDao.reorder`/`updatePosition` + repo/ViewModel 包装。详见 `dist/v1.8.3_歌单UI补完_P3-3_2026-11-01.md` |
 
 ---
 

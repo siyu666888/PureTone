@@ -32,6 +32,7 @@ import com.puretone.player.ui.screens.BrowseScreen
 import com.puretone.player.ui.screens.EqScreen
 import com.puretone.player.ui.screens.GroupDetailScreen
 import com.puretone.player.ui.screens.MeScreen
+import com.puretone.player.ui.screens.PlaylistDetailScreen
 import com.puretone.player.ui.screens.PlayerScreen
 import com.puretone.player.ui.screens.SettingsScreen
 import com.puretone.player.ui.screens.StatsScreen
@@ -47,6 +48,7 @@ object Routes {
     const val EQ = "eq"
     const val STATS = "stats"
     const val GROUP_DETAIL = "group/{type}/{key}"
+    const val PLAYLIST_DETAIL = "playlist/{id}"
 
     /**
      * 分组二级详情页路由（type ∈ {album, artist, folder}，key 经 URI 编码）。
@@ -62,6 +64,9 @@ object Routes {
      */
     fun groupDetail(type: String, key: String): String =
         "group/$type/${Uri.encode(key)}"
+
+    /** 歌单详情页路由（P3-3）：id 为歌单主键，无需编码（纯数字） */
+    fun playlistDetail(id: Long): String = "playlist/$id"
 }
 
 /**
@@ -172,6 +177,13 @@ fun PureToneApp(initialRoute: String? = null) {
                     // 绝不能再用 URLDecoder 二次解码（见 Routes.groupDetail 注释）
                     val gKey = backStackEntry.arguments?.getString("key") ?: ""
                     GroupDetailScreen(navController = nav, type = gType, key = gKey, playerVm = playerVm)
+                }
+                composable(
+                    route = Routes.PLAYLIST_DETAIL,
+                    arguments = listOf(navArgument("id") { type = NavType.LongType })
+                ) { backStackEntry ->
+                    val pId = backStackEntry.arguments?.getLong("id") ?: 0L
+                    PlaylistDetailScreen(navController = nav, playlistId = pId, playerVm = playerVm)
                 }
             }
         }

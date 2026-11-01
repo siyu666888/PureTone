@@ -449,6 +449,13 @@ class MusicRepository @Inject constructor(
     suspend fun removeFromPlaylist(playlistId: Long, songId: Long) =
         playlistDao.removeSongAndTouch(playlistId, songId)
 
+    /**
+     * 歌单内重排持久化（P3-3）。拖动排序的最终顺序由 UI 在松手时一次性提交，
+     * 这里直接转交 DAO 的覆盖式写入 + touch。
+     */
+    suspend fun reorderPlaylist(playlistId: Long, orderedSongIds: List<Long>) =
+        playlistDao.reorder(playlistId, orderedSongIds)
+
     // ---------- 续播会话 ----------
 
     /** 读取上次播放会话快照（可能为 null） */

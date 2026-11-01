@@ -186,6 +186,31 @@ interface PlaylistDao {
         touch(playlistId)
     }
 
+    /**
+     * 歌单内重排：按传入的有序 songId 列表重写 position，并刷新 updated_at。
+     *
+     * P3-3（歌单 UI 补完）：详情页长按拖动排序的持久化入口。拖动过程中只在内存
+     * 列表里移动（见 PlaylistDetailScreen），松手时把最终顺序一次性提交到这里，
+     * 避免每个中间帧都写库；@Transaction 保证「重写 position + touch」原子，
+     * 不让其他观察者看到 position 短暂错乱的中间态。
+     *
+     * 只认列表里出现的 songId；列表外的（理论上不会传入）不动。position 直接
+     * 用列表下标，覆盖式写入，无需关心旧值。
+     */
+    @Transaction
+    suspend fun reorder(playlistId: Long, orderedSongIds: List<Long>) {
+        orderedSongIds.forEachIndexed { index, songId ->
+            updatePosition(playlistId, songId, index)
+        }
+        touch(playlistId)
+    }
+
+    @Query(
+        "UPDATE playlist_songs SET position = :position " +
+            "WHERE playlist_id = :playlistId AND song_id = :songId"
+    )
+    suspend fun updatePosition(playlistId: Long, songId: Long, position: Int)
+
     /** 清空歌单并刷新更新时间 */
     @Transaction
     suspend fun clearSongsAndTouch(playlistId: Long) {
