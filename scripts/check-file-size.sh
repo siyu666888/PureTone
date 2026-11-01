@@ -34,7 +34,7 @@ REPORT_ONLY=0
 # 存量豁免：文件路径（相对 SRC_DIR）| 行数 | 豁免理由
 # 新增豁免时必须写清理由——这行字就是未来的拆分 TODO。
 WHITELIST=(
-  "ui/screens/PlayerScreen.kt|1209|播放页主屏：封面翻转 + 歌词面板 + 进度条 + 队列预览；拆分计划见 P3 段「歌单功能补完」后的 UI 重构"
+  "ui/screens/PlayerScreen.kt|1212|播放页主屏：封面翻转 + 歌词面板 + 进度条 + 队列预览；拆分计划见 P3 段「歌单功能补完」后的 UI 重构。P3-4 字符串资源化新增 R/stringResource 导入与 detekt 换行，使行数 1209→1212，属资源化必然增量；UI 重构后会回落"
 )
 
 FAILED=0
