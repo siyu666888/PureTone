@@ -354,8 +354,8 @@
     <string name="pt_settings_015" formatted="false">隐私</string>
     <!-- 联网补全元数据与歌词 -->
     <string name="pt_settings_016" formatted="false">联网补全元数据与歌词</string>
-    <!-- 开启时会向 iTunes 与 LRCLIB 发送歌名、歌手用于匹配元数据与歌词 -->
-    <string name="pt_settings_017" formatted="false">开启时会向 iTunes 与 LRCLIB 发送歌名、歌手用于匹配元数据与歌词</string>
+    <!-- 已开启：向iTunes与LRCLIB发送信息匹配歌词与元数据 -->
+    <string name="pt_settings_017" formatted="false">已开启：向iTunes与LRCLIB发送信息匹配歌词与元数据</string>
     <!-- 已关闭：不会向任何服务器发送曲目信息 -->
     <string name="pt_settings_018" formatted="false">已关闭：不会向任何服务器发送曲目信息</string>
     <!-- 诊断 -->

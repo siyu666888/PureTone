@@ -188,7 +188,8 @@ fun SettingsScreen(
                     stringResource(R.string.pt_settings_018)
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
             )
         }
 
