@@ -1,7 +1,7 @@
 package com.puretone.player.ui.components
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -28,13 +28,13 @@ import kotlin.math.sin
 enum class SmartPlaylistKind { RECENTLY_ADDED, MY_FAVORITES, RECENTLY_PLAYED }
 
 @Composable
-fun SmartPlaylistGlyph(kind: SmartPlaylistKind, modifier: Modifier = Modifier.size(28.dp)) {
+fun SmartPlaylistGlyph(kind: SmartPlaylistKind, modifier: Modifier = Modifier) {
     val tint = when (kind) {
         SmartPlaylistKind.RECENTLY_ADDED -> MaterialTheme.colorScheme.primary
         SmartPlaylistKind.MY_FAVORITES -> FavoriteRed
         SmartPlaylistKind.RECENTLY_PLAYED -> MaterialTheme.colorScheme.tertiary
     }
-    Canvas(modifier) {
+    Canvas(modifier.defaultMinSize(28.dp, 28.dp)) {
         val scale = size.minDimension / 24f
         withTransform({ scale(scale, scale) }) {
             when (kind) {
