@@ -40,7 +40,6 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
-import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.effect.AudioEffectController
 import com.puretone.player.effect.EffectAvailability
 import com.puretone.player.effect.EffectStatus
@@ -162,7 +161,8 @@ fun EqScreen(
                                     dragging = false
                                     vm.setBandLevel(index, localLevel.toInt())
                                 },
-                                valueRange = AudioEffectController.MIN_LEVEL_MB.toFloat()..AudioEffectController.MAX_LEVEL_MB.toFloat(),
+                                valueRange = AudioEffectController.MIN_LEVEL_MB.toFloat()..
+                                    AudioEffectController.MAX_LEVEL_MB.toFloat(),
                                 steps = ((AudioEffectController.MAX_LEVEL_MB - AudioEffectController.MIN_LEVEL_MB) / 100) - 1,
                                 enabled = state.enabled
                             )

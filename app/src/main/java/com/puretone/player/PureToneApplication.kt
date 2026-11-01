@@ -4,7 +4,6 @@ import android.app.Application
 import android.util.Log
 import coil.Coil
 import coil.ImageLoader
-import com.puretone.player.BuildConfig
 import com.puretone.player.playback.cast.DlnaCastManager
 import dagger.hilt.android.HiltAndroidApp
 import java.io.File

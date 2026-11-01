@@ -48,6 +48,13 @@ jobs:
       - name: 赋予 gradlew 执行权限
         run: chmod +x gradlew
 
+      # 文件行数门禁：卡住「下一个 1000+ 行文件」。
+      # 放在最前面，因为它是纯文本检查、毫秒级完成——让结构性问题
+      # 在跑完整个 Gradle 构建之前就暴露出来，不浪费 CI 分钟数。
+      # 详细设计见 scripts/check-file-size.sh 顶部注释。
+      - name: 文件行数门禁 (上限 1200 行)
+        run: bash scripts/check-file-size.sh
+
       - name: 缓存 Gradle 依赖
         uses: actions/cache@v4
         with:
@@ -139,6 +146,12 @@ jobs:
       # 闸门确实会拦，不是形同虚设。
       - name: 静态检查 (lint，新增告警即失败)
         run: ./gradlew lintDebug --no-daemon
+
+      # detekt 门禁：管 Kotlin 侧的**结构与复杂度**（lint 管 Android 特有正确性）。
+      # 存量冻结在 app/detekt-baseline.xml，配置见 config/detekt/detekt.yml。
+      # 探针实测：加一个未使用导入 → detekt 失败（Analysis failed with 1 weighted issues）。
+      - name: 静态检查 (detekt，新增问题即失败)
+        run: ./gradlew :app:detekt --no-daemon
 
       - name: 上传 APK 产物
         if: always()

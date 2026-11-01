@@ -3,7 +3,6 @@ package com.puretone.player.ui.screens
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -38,7 +36,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -48,7 +45,6 @@ import com.puretone.player.ui.PlayerViewModel
 import kotlinx.coroutines.launch
 import com.puretone.player.ui.Routes
 import com.puretone.player.ui.StatsViewModel
-import com.puretone.player.ui.components.formatTime
 
 /**
  * 听歌统计看板（Item 6）：总览卡片 + 每日听歌柱状图 + 时段分布 + 最爱歌曲/歌手 + 趣味标签。
@@ -120,7 +116,11 @@ fun StatsScreen(
                 .maxByOrNull { it.value.listenMs }?.index ?: -1
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("每日听歌（近 ${trend.size} 天）", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        "每日听歌（近 ${trend.size} 天）",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                     Spacer(Modifier.height(12.dp))
                     if (trend.all { it.listenMs == 0L }) {
                         Text("近 ${trend.size} 天还没有听歌记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -133,8 +133,16 @@ fun StatsScreen(
                         )
                         Spacer(Modifier.height(6.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(trend.first().dayKey.takeLast(5), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(trend.last().dayKey.takeLast(5), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                trend.first().dayKey.takeLast(5),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                trend.last().dayKey.takeLast(5),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
@@ -154,7 +162,11 @@ fun StatsScreen(
                     Spacer(Modifier.height(6.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         listOf(0, 6, 12, 18, 23).forEach { h ->
-                            Text("${h}时", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                "${h}时",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
@@ -174,7 +186,12 @@ fun StatsScreen(
                                     .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("${i + 1}. ${a.name}", modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    "${i + 1}. ${a.name}",
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                                 Text("${a.playCount} 次", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(" ›", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
@@ -201,8 +218,17 @@ fun StatsScreen(
                                     .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("${i + 1}. ${t.title}", modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${t.artist} · ${t.playCount} 次", color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                Text(
+                                    "${i + 1}. ${t.title}",
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    "${t.artist} · ${t.playCount} 次",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
                                 Text(" ›", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }

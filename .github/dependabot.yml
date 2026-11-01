@@ -1,0 +1,68 @@
+# Dependabot 依赖升级配置
+#
+# 与 .github/workflows/dependency-drift.yml 是**互补**关系：
+# - Dependabot：能自动升的直接开 PR，GitHub 主动通知（有通知才有人管）；
+# - 巡检 workflow：把完整漂移清单写进 CI 页面，覆盖 Dependabot 不管的场景
+#   （跨大版本升级、需要人工判断的库、被 version catalog 管理但未锁定的插件）。
+#
+# 分组策略：把同生态的依赖放进一组，一次 PR 只升一个生态——
+# 避免「一次 PR 升 20 个库」，出了回归根本定位不到是哪个引起的。
+
+version: 2
+
+updates:
+  # Gradle 依赖与插件（version catalog 中的条目 + settings.gradle.kts 的仓库配置）
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    # 同一组里把 patch/minor 级的更新合并到一个 PR，major 单独开——
+    # 大版本往往有 API 变更，混在一起看不出来。
+    groups:
+      androidx:
+        patterns:
+          - "androidx.*"
+        update-types:
+          - "minor"
+          - "patch"
+      compose:
+        patterns:
+          - "androidx.compose.*"
+        update-types:
+          - "minor"
+          - "patch"
+      media3:
+        patterns:
+          - "androidx.media3.*"
+        update-types:
+          - "minor"
+          - "patch"
+      kotlin:
+        patterns:
+          - "org.jetbrains.kotlin*"
+        update-types:
+          - "patch"
+    # 只接受 minor/patch，major 必须人工发起 PR 并跑完整验证。
+    # 本项目的 Kotlin / AGP / Compose 大版本升级涉及 API 变更
+    # （如 Compose PathBuilder、Kotlin 可见性规则），不能自动合入。
+    ignore:
+      - dependency-name: "org.jetbrains.kotlin"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "com.android.tools.build"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "com.android.application"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions 自身的版本
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      actions:
+        patterns:
+          - "*"

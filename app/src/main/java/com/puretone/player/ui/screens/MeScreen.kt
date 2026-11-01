@@ -1,7 +1,6 @@
 package com.puretone.player.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -46,7 +45,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.puretone.player.data.local.dao.PlaylistWithSongs
-import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.ui.LibraryViewModel
 import com.puretone.player.ui.PlayerViewModel
 import com.puretone.player.ui.Routes
@@ -74,7 +72,13 @@ fun MeScreen(
         if (uri == null) return@rememberLauncherForActivityResult
         val isM3u = runCatching {
             val name = context.contentResolver.query(uri, null, null, null, null)
-                ?.use { c -> if (c.moveToFirst()) c.getString(c.getColumnIndexOrThrow(android.provider.OpenableColumns.DISPLAY_NAME)) else "" } ?: ""
+                ?.use { c ->
+                    if (c.moveToFirst()) {
+                        c.getString(c.getColumnIndexOrThrow(android.provider.OpenableColumns.DISPLAY_NAME))
+                    } else {
+                        ""
+                    }
+                } ?: ""
             name.endsWith(".m3u", ignoreCase = true) || name.endsWith(".m3u8", ignoreCase = true)
         }.getOrDefault(false)
         if (!isM3u) {

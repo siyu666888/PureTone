@@ -122,15 +122,15 @@ private fun DrawScope.drawLoopArrows(color: Color) {
 private fun DrawScope.drawCircularArrow(
     center: Offset, radius: Float, startDeg: Float, sweepDeg: Float, color: Color
 ) {
-    val R = radius + 0.9f
-    val r = radius - 0.9f
-    val outer = Rect(center.x - R, center.y - R, center.x + R, center.y + R)
-    val inner = Rect(center.x - r, center.y - r, center.x + r, center.y + r)
+    val outerR = radius + 0.9f
+    val innerR = radius - 0.9f
+    val outer = Rect(center.x - outerR, center.y - outerR, center.x + outerR, center.y + outerR)
+    val inner = Rect(center.x - innerR, center.y - innerR, center.x + innerR, center.y + innerR)
     val sR = startDeg * PI.toFloat() / 180f
     val eR = (startDeg + sweepDeg) * PI.toFloat() / 180f
-    val oS = Offset(center.x + R * cos(sR), center.y + R * sin(sR))
-    val oE = Offset(center.x + R * cos(eR), center.y + R * sin(eR))
-    val iE = Offset(center.x + r * cos(eR), center.y + r * sin(eR))
+    val oS = Offset(center.x + outerR * cos(sR), center.y + outerR * sin(sR))
+    val oE = Offset(center.x + outerR * cos(eR), center.y + outerR * sin(eR))
+    val iE = Offset(center.x + innerR * cos(eR), center.y + innerR * sin(eR))
     val seg = Path().apply {
         moveTo(oS.x, oS.y)
         arcTo(outer, startDeg, sweepDeg, false)

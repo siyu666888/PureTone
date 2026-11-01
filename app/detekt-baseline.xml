@@ -1,0 +1,25 @@
+<?xml version="1.0" ?>
+<!--
+  detekt 存量冻结文件（P2-2）。
+
+  纪律（与 app/lint-baseline.xml 完全一致，务必遵守）：
+  - 清理存量时**从本文件删掉对应条目再修代码**，不要整体删除本文件重新生成——
+    那会一次性把既有问题全部重新冻结，等于闸门失效；
+  - 本文件必须入库，本地与 CI 共用同一份，避免「同一个问题只在 CI 上才算」；
+  - 新增代码若触发新规则，会因不在本文件中而让 CI 变红——这正是门禁的目的。
+
+  当前存量仅 1 条：
+  - TooManyFunctions:MusicRepository —— 42 个函数（曲库查询 / 统计 / 歌单 /
+    播放历史 / 会话存档 5 类职责混在一起）。这是**下一个该拆分的类**，
+    拆完后本条可从 baseline 删除、规则自动恢复全量生效。
+    刻意不调高阈值掩盖它——阈值一调，这条信号就消失了。
+
+  门禁有效性实测：临时往某个文件加一个未用导入 / 超长行 / 超长方法，
+  detekt 必须失败（已验证）。
+-->
+<SmellBaseline>
+  <ManuallySuppressedIssues></ManuallySuppressedIssues>
+  <CurrentIssues>
+    <ID>TooManyFunctions:MusicRepository.kt$MusicRepository</ID>
+  </CurrentIssues>
+</SmellBaseline>

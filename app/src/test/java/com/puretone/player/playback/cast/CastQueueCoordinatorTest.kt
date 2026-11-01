@@ -83,7 +83,14 @@ class CastQueueCoordinatorTest {
         // 第二轮：新曲在播
         c.onState(state(pushGeneration = 1L, isPlaying = true, progressMs = 0L))
         // 第三轮：播完了
-        c.onState(state(pushGeneration = 1L, isPlaying = false, playbackState = CastQueuePolicy.STATE_STOPPED, progressMs = total))
+        c.onState(
+            state(
+                pushGeneration = 1L,
+                isPlaying = false,
+                playbackState = CastQueuePolicy.STATE_STOPPED,
+                progressMs = total
+            )
+        )
         assertEquals(1, sink.endedCount)
     }
 
@@ -128,7 +135,14 @@ class CastQueueCoordinatorTest {
         // 用户手动切歌 → 新的投送代次；这一轮 isPlaying 仍是旧的（渲染器还没切换）
         c.onState(state(pushGeneration = 2L, isPlaying = true, progressMs = 120_000L))
         // 渲染器切换窗口：旧曲恰好播完，上报停止态 + 旧曲末尾进度
-        c.onState(state(pushGeneration = 2L, isPlaying = false, playbackState = CastQueuePolicy.STATE_STOPPED, progressMs = total))
+        c.onState(
+            state(
+                pushGeneration = 2L,
+                isPlaying = false,
+                playbackState = CastQueuePolicy.STATE_STOPPED,
+                progressMs = total
+            )
+        )
         assertEquals(0, sink.endedCount)
     }
 
@@ -139,7 +153,14 @@ class CastQueueCoordinatorTest {
         c.onState(state(pushGeneration = 1L, isPlaying = false))
         c.onState(state(pushGeneration = 1L, isPlaying = true, progressMs = 0L))
         // 暂停在曲中
-        c.onState(state(pushGeneration = 1L, isPlaying = false, playbackState = CastQueuePolicy.STATE_PAUSED, progressMs = 30_000L))
+        c.onState(
+            state(
+                pushGeneration = 1L,
+                isPlaying = false,
+                playbackState = CastQueuePolicy.STATE_PAUSED,
+                progressMs = 30_000L
+            )
+        )
         assertEquals(0, sink.endedCount)
     }
 

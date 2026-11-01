@@ -1,7 +1,6 @@
 package com.puretone.player.di
 
 import android.content.Context
-import androidx.room.Room
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
@@ -35,7 +34,7 @@ import java.io.File
  * 只要生产 builder 漏注册任何一个版本区间，这里就会抛 IllegalStateException 而失败。
  *
  * **维护约定**：每当 @Database(version) 自 N 升到 N+1 并新增 MIGRATION_(N)_(N+1)
- * 时，把下方 START_VERSION 改为 N，并把建库 INSERT 改成 N 版对应的列集合
+ * 时，把下方 startVersion 改为 N，并把建库 INSERT 改成 N 版对应的列集合
  * （参照 app/schemas 下 (N).json 的 createSql）。
  */
 @RunWith(RobolectricTestRunner::class)
@@ -45,7 +44,7 @@ class DatabaseMigrationWiringTest {
     private lateinit var context: Context
 
     /** 升级起点版本：当前 @Database(version=7)，起点取 7-1=6 */
-    private val START_VERSION = 6
+    private val startVersion = 6
 
     @Before
     fun setUp() {
@@ -62,7 +61,7 @@ class DatabaseMigrationWiringTest {
     @Test
     fun `production builder migrates from previous schema without missing-migration crash`() = runTest {
         val dbFile = context.getDatabasePath(PureToneDatabase.DATABASE_NAME)
-        createPreviousVersionDatabase(dbFile, START_VERSION)
+        createPreviousVersionDatabase(dbFile, startVersion)
 
         // 关键：走生产 builder（DataModule 的真实接线），而非测试自带的迁移列表。
         val db = DataModule.provideDatabase(context)
@@ -86,7 +85,7 @@ class DatabaseMigrationWiringTest {
         db.close()
     }
 
-    /** 按导出的 (START_VERSION).json 造一个"真实旧版本库"，并灌入一条数据 */
+    /** 按导出的 (startVersion).json 造一个"真实旧版本库"，并灌入一条数据 */
     private fun createPreviousVersionDatabase(dbFile: File, version: Int) {
         val schema = readSchema(version)
         val helper = FrameworkSQLiteOpenHelperFactory().create(

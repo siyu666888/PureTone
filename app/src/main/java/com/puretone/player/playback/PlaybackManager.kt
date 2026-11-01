@@ -1,12 +1,9 @@
 package com.puretone.player.playback
 
-import android.app.PendingIntent
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.OptIn
-import androidx.media3.common.AudioAttributes
-import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -18,7 +15,6 @@ import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.data.settings.SleepTimerMode
 import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.effect.AudioEffectController
-import com.puretone.player.MainActivity
 import com.puretone.player.playback.cast.CastDevice
 import com.puretone.player.playback.cast.CastQueueCoordinator
 import com.puretone.player.playback.cast.CastQueueInfo
@@ -39,8 +35,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 

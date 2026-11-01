@@ -1,7 +1,6 @@
 package com.puretone.player.lyrics
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 class M3uCodecTest {

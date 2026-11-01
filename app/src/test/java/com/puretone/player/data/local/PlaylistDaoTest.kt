@@ -6,7 +6,6 @@ import androidx.test.core.app.ApplicationProvider
 import com.puretone.player.data.local.dao.PlaylistWithSongs
 import com.puretone.player.data.local.entity.PlayHistoryEntity
 import com.puretone.player.data.local.entity.PlaylistEntity
-import com.puretone.player.data.local.entity.PlaylistSongEntity
 import com.puretone.player.data.local.entity.SongEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest

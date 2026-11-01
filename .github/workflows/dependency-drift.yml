@@ -1,0 +1,83 @@
+name: 依赖漂移巡检
+
+# 定期检查依赖是否有新版本（每周一早上 8 点 UTC）。
+#
+# 为什么是「巡检」而不是「门禁」：
+# 「有新版本发布」与「本次代码改动是否正确」完全无关。若把它做成阻塞门禁，
+# 任何第三方库发个新版都会让 CI 变红——这正是 lint 里禁用
+# NewerVersionAvailable / GradleDependency / AndroidGradlePluginVersion 的同一理由：
+# 随时间变化的信号放进阻塞门禁，只会制造随机红，掩盖真正的代码问题。
+#
+# 但「无人提醒」正是本项要解决的痛点（Compose BOM 落后约一年、Media3 落后 5 个
+# 小版本，长期无人察觉）。所以做法是：
+#   ① 本 workflow 定期把漂移清单写进 CI 页面（job summary），人工可查；
+#   ② .github/dependabot.yml 自动开升级 PR，有更新时 GitHub 会主动通知。
+#
+# 两者互补：Dependabot 管「能自动升的」，本 workflow 管「能升但需要人工判断的」
+# （如 Kotlin 2.0.21 → 2.5.0-Beta2 这类跨大版本）。
+
+on:
+  schedule:
+    # 每周一 08:00 UTC。cron 避开整点，减少 GitHub 调度拥塞导致的延迟。
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+jobs:
+  drift:
+    name: 列出可升级依赖
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: 赋予 gradlew 执行权限
+        run: chmod +x gradlew
+
+      - name: 缓存 Gradle 依赖
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      # dependencyUpdates 来自 com.github.ben-manes.versions 插件（根项目已 apply），
+      # 它会解析所有声明的依赖并比对 Maven Central / Gradle Plugin Portal 的最新版。
+      # 该任务不会修改任何文件，只产出报告。
+      - name: 生成依赖漂移报告
+        run: ./gradlew dependencyUpdates --no-daemon
+
+      - name: 写入 CI 摘要
+        run: |
+          set -e
+          REPORT="build/dependencyUpdates/report.txt"
+          if [ ! -f "$REPORT" ]; then
+            echo "::error::未生成依赖漂移报告"
+            exit 1
+          fi
+          {
+            echo "## 📦 依赖漂移巡检结果"
+            echo ""
+            echo "有可用新版本的依赖如下（**不代表需要立即升级**，请按兼容性评估）："
+            echo ""
+            echo '```'
+            cat "$REPORT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "已写入 job summary"
+
+      - name: 上传漂移报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-drift-report
+          path: build/dependencyUpdates/
+          if-no-files-found: error

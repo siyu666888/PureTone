@@ -23,6 +23,8 @@ robolectric = "4.12.2"
 turbine = "1.1.0"
 androidxTestCore = "1.6.1"
 androidxTestJunit = "1.2.1"
+detekt = "1.23.7"
+benManesVersions = "0.51.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -75,3 +77,9 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
+# detekt：静态分析门禁（P2-2）。复杂度阈值可直接卡住「下一个 1000+ 行文件」的出现，
+# 对 P1-1 拆分后防复发尤其有用。默认规则集 + 项目定制配置见 config/detekt/detekt.yml。
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+# dependencyUpdates：依赖漂移跟踪（P2-2）。Compose BOM / Media3 等落后时主动提醒，
+# 不再靠人工发现。
+benManesVersions = { id = "com.github.ben-manes.versions", version.ref = "benManesVersions" }

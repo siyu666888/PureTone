@@ -1,0 +1,230 @@
+# PureTone detekt 配置（P2-2：静态分析入 CI 门禁）
+#
+# 与 lint 门禁的分工：
+# - lint（Android Lint）管 Android 特有的正确性问题（生命周期、权限、资源、API 级别）；
+# - detekt 管 Kotlin 侧的**结构与复杂度**——正是「下一个 1000+ 行文件」的克星。
+#
+# 阈值策略：宁可宽松也不要误报。门禁的价值在于「稳定拦真问题」，
+# 一旦出现随机红，团队就会开始习惯性忽略它，门禁随即失效。
+# 因此本配置**刻意不启用**若干对 Compose / Android 代码高频误报的规则，
+# 并把存量问题冻结进 detekt-baseline.xml（只拦新增）。
+#
+# 想收紧某条规则时：先从 baseline 里删掉对应条目再修代码，
+# 不要整体重生成 baseline（那等于把既有问题全部重新冻结，等于闸门失效）。
+# 这一点与 lint-baseline.xml 的纪律完全一致。
+
+build:
+  # 报告问题总数上限；门禁场景下由 baseline 控制，此处不额外限制
+  maxIssues: 0
+
+config:
+  validation: true
+  warningsAsErrors: false
+
+complexity:
+  active: true
+  # ------------------------------------------------------------------
+  # 关键判断：LongMethod / CognitiveComplexMethod / CyclomaticComplexMethod
+  # **对 Compose 顶层函数是系统性误报**，必须排除 ui 包。
+  #
+  # 原因：Compose 是声明式 UI，一个 `@Composable fun PlayerScreen()` 天然包含
+  # 整棵 UI 子树（布局 + 状态 + 事件回调），行数与「逻辑复杂度」无关。
+  # 实测：11 条 LongMethod + 7 条 Cognitive + 3 条 Cyclomatic **全部**落在 ui 包，
+  # 而 data / domain / playback / effect 等业务代码**零告警**——业务层结构是健康的。
+  # 换句话说，这些告警不指向真实缺陷，只反映「UI 声明式代码天然长」这一事实。
+  #
+  # 排除后，复杂度规则专注盯业务逻辑代码——那才是真正会失控的地方。
+  # ------------------------------------------------------------------
+  CognitiveComplexMethod:
+    active: true
+    # 业务代码的复杂度阈值。现有业务代码最高也在此之下（实测零告警），
+    # 阈值取 30 意味着「新增一个分支爆炸的方法」会被拦下。
+    threshold: 30
+    excludes: ["**/ui/**"]
+  ComplexMethod:
+    active: false
+  CyclomaticComplexMethod:
+    active: true
+    threshold: 25
+    excludes: ["**/ui/**"]
+  LargeClass:
+    active: true
+    # 现状：PlayerScreen 1209 行、PlaybackManager 1078 行、BrowseScreen 979 行、
+    # PlayerComposables 701 行。阈值取 700 —— 现存这 4 个大文件会被 baseline
+    # 冻结为存量，但**新增**第 5 个 700+ 行的文件会直接让 CI 变红。
+    # 这正是 P1-1 拆分后想要的防复发效果。
+    threshold: 700
+  LongMethod:
+    active: true
+    # 业务代码方法长度阈值 100 行，只拦「一个函数塞进整个业务逻辑」这种真失控。
+    # ui 包排除理由见上方 CognitiveComplexMethod 的说明。
+    threshold: 100
+    excludes: ["**/ui/**"]
+  LongParameterList:
+    # Compose Composable 的参数天然多（且大量有默认值），开启后误报率极高。
+    active: false
+  TooManyFunctions:
+    active: true
+    # DAO 接口天然方法多（SongDao 32 个、PlaylistDao 19 个），Room 的 @Query
+    # 一条一个方法，没有合理的上限——这类接口不该被此规则管。
+    # 阈值定 40：现存唯一超标者是 MusicRepository（42 个函数），它已作为存量
+    # 冻结进 baseline。这是有意为之——它是**下一个该拆分的类**（曲库查询 /
+    # 统计 / 歌单 / 播放历史 / 会话存档 5 类职责混在一起），拆完后本规则会
+    # 自动重新生效。把阈值调到 45+ 只会让这条信号消失，债务反而被掩盖。
+    thresholdInFiles: 40
+    thresholdInClasses: 40
+    thresholdInObjects: 40
+    thresholdInInterfaces: 40
+    thresholdInEnums: 15
+    ignorePrivate: true
+    ignoreOverridden: true
+    ignoreDeprecated: true
+  NestedBlockDepth:
+    active: true
+    threshold: 6
+  LabeledExpression:
+    # Compose 里 return@TextButton / return@forEach 极其常见，
+    # detekt 默认的「标签表达式」规则会把它们全部报出来。
+    active: false
+  NestedScopeFunctions:
+    active: false
+  StringLiteralDuplication:
+    active: false
+  ReplaceSafeCallChainWithRun:
+    active: false
+
+style:
+  active: true
+  MagicNumber:
+    # Compose 里尺寸/透明度魔法值是常态（dp、sp、alpha），
+    # 且这些常量分散在 DrawScope 中，抽到常量对象的收益低于噪音成本。
+    active: false
+  ReturnCount:
+    # 关闭原因：detekt 无法区分「守卫式提前返回」与「多出口混乱」。
+    # 守卫式返回（if (guard) return X）是**正确且推荐**的写法——把异常/边界
+    # 情形尽早处理掉，主流程保持在同一缩进层级，可读性远好于层层嵌套的 else。
+    # 本项目实测的 3 处告警（AutoFillMetadataUseCase.invoke、
+    # CastQueueCoordinator.onState、CastQueuePolicy.shouldAutoAdvance）
+    # **全部**是守卫式返回，没有一处是出口混乱。
+    # 若强行把 max 提到能容纳它们（如 8），规则就失去了区分能力，
+    # 只会放过真正需要重构的多出口函数。
+    active: false
+  MaxLineLength:
+    active: true
+    # 阈值 130：现有代码最长 129 字符（真实代码行，非注释），全部通过。
+    # 定 120 会让 39 处存量全部报警——但那些行只是轻微超限，
+    # 逐个手工换行的改动面大、回归风险高，而门禁价值并未增加。
+    # 130 仍能拦住「一行写几百字符」这种真正失控的情况。
+    maxLineLength: 130
+    excludeCommentStatements: true
+    # T2S_PAIRS 是繁简映射表的**数据**（单行 8000+ 字符的字面量，
+    # 含 631 个 CJK 扩展 B 字符）。它是数据不是代码，换行会破坏「偶数下标=繁体、
+    # 奇数下标=简体」的按码点成对约定，得不偿失。
+    #
+    # 关键设计：映射表已从 ChineseText.kt **拆到独立文件** ChineseTextTable.kt，
+    # 因此排除的是这个纯数据文件，而不是包含逻辑代码的原文件。
+    # 若按文件排除 ChineseText.kt，那个文件里的其他代码行就彻底失去行长约束了
+    # （实测探针：往该文件加超长行，detekt 不报错）。
+    # 注：detekt 1.23 没有 excludePattern（按行内容匹配）这个属性，
+    # 只能按文件排除——所以「拆文件」是唯一能精确豁免的方案。
+    excludes: ["**/util/ChineseTextTable.kt"]
+  UnusedImports:
+    active: true
+  WildcardImport:
+    active: true
+  ForbiddenComment:
+    # TODO/FIXME 注释在本项目是**有意的路线图标记**（如 "P2-14：TODO"），
+    # 不是待办垃圾。关闭该规则。
+    active: false
+  ThrowsCount:
+    active: false
+  UnusedPrivateMember:
+    active: true
+  UseCheckOrError:
+    active: false
+  MandatoryBracesLoops:
+    active: false
+  BracesOnIfStatements:
+    active: false
+  MultilineLambdaItParameter:
+    active: false
+  TrailingWhitespace:
+    active: true
+  NewLineAtEndOfFile:
+    active: true
+  ExpressionBodySyntax:
+    active: false
+  UnnecessaryAbstractClass:
+    active: false
+  UseDataClass:
+    active: false
+
+naming:
+  active: true
+  FunctionNaming:
+    # Compose 的 Composable 函数用大驼峰是官方约定，detekt 的驼峰规则会误报。
+    active: false
+  TopLevelPropertyNaming:
+    active: true
+    constantPattern: "[A-Z][_A-Za-z0-9]*"
+  ObjectPropertyNaming:
+    active: true
+    constantPattern: "[A-Za-z][_A-Za-z0-9]*"
+  VariableNaming:
+    active: true
+  MatchingDeclarationName:
+    # 单文件内放多个顶层类（小型数据类/工具类）在本项目是常态。
+    active: false
+  ClassNaming:
+    active: true
+
+exceptions:
+  active: true
+  TooGenericExceptionCaught:
+    active: false
+  SwallowedException:
+    active: false
+  InstanceOfCheckForException:
+    active: false
+  NotImplementedDeclaration:
+    # 「未实现」的 TODO 声明是路线图的一部分（如尚未实现的投屏能力）。
+    active: false
+
+performance:
+  active: true
+  SpreadOperator:
+    active: false
+  UnnecessaryTemporaryInstantiation:
+    active: true
+
+potential-bugs:
+  active: true
+  UnsafeCallOnNullableType:
+    active: false
+  ImplicitDefaultLocale:
+    active: false
+  CastToNullableType:
+    active: false
+  UnreachableCode:
+    active: true
+  HasPlatformType:
+    active: false
+  UnusedUnaryOperator:
+    active: false
+  UnnecessaryNotNullOperator:
+    active: false
+  ExplicitGarbageCollectionCall:
+    active: false
+
+coroutines:
+  active: true
+  GlobalCoroutineUsage:
+    active: false
+  InjectDispatcher:
+    active: false
+  SleepInsteadOfDelay:
+    active: true
+  RedundantSuspendModifier:
+    active: true
+  SuspendFunWithFlowReturnType:
+    active: true

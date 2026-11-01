@@ -20,7 +20,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -28,7 +27,6 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.NavType
 import com.puretone.player.data.settings.PureToneSettings
-import com.puretone.player.playback.toPlayMode
 import com.puretone.player.ui.components.MiniPlayer
 import com.puretone.player.ui.screens.BrowseScreen
 import com.puretone.player.ui.screens.EqScreen

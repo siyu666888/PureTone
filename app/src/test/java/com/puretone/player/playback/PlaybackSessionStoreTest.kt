@@ -219,5 +219,8 @@ class PlaybackSessionStoreTest {
 
     // positionToSave 是纯函数，不需要协程环境；这里只为拿到一个实例
     private fun runTestStore(): PlaybackSessionStore =
-        PlaybackSessionStore(archive = FakeArchive(), scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()))
+        PlaybackSessionStore(
+            archive = FakeArchive(),
+            scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
+        )
 }

@@ -62,8 +62,11 @@ class ChineseTextTest {
 
     @Test
     fun `mapping table has no duplicate keys with conflicting values`() {
-        // 独立复核：映射表按码点成对解读后不应出现「同键不同值」
-        val cps = ChineseText.T2S_PAIRS.codePoints().toArray()
+        // 独立复核：映射表按码点成对解读后不应出现「同键不同值」。
+        // T2S_PAIRS 是顶层 internal 常量（与本测试同包，故无需 import）；
+        // 它被拆到 ChineseTextTable.kt 是为了把「数据」与「转换逻辑」分开，
+        // 使行长度检查能精确豁免数据文件而不放过逻辑代码。
+        val cps = T2S_PAIRS.codePoints().toArray()
         assertTrue("table length must be even (code points): ${cps.size}", cps.size % 2 == 0)
         val seen = HashMap<Int, Int>()
         var i = 0

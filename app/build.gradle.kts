@@ -4,6 +4,9 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+    // P2-2：detekt 静态分析门禁。配置见 config/detekt/detekt.yml，
+    // 存量冻结在 app/detekt-baseline.xml。详细设计说明见该配置文件顶部注释。
+    alias(libs.plugins.detekt)
 }
 
 /**
@@ -164,6 +167,36 @@ kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
+}
+
+/**
+ * detekt 门禁（P2-2）。
+ *
+ * 目标：**卡住「下一个 1000+ 行文件」的出现**。P1-1 把 PlaybackManager 从
+ * ~1400 行拆成 8 个协作类后，若无机械约束，下一个巨类迟早会长回来。
+ *
+ * 三条设计原则（与既有 lint 门禁保持一致）：
+ * 1. **baseline 冻结存量**：detekt-baseline.xml 入库，本地与 CI 共用一份，
+ *    避免「同一个问题只在 CI 上才算」的偏差；
+ * 2. **阈值有节制**：配置见 config/detekt/detekt.yml，对 Compose 高频误报的规则
+ *    刻意关闭（详见该文件注释）——门禁一旦随机红，团队就会习惯性忽略它；
+ * 3. **清理存量要逐条删**：从 baseline 删条目再修，不要整体重生成 baseline，
+ *    那等于把既有问题全部重新冻结，闸门等于失效。
+ *
+ * `buildUponDefaultConfig = false`：本项目以 detekt.yml 作为**完整配置**
+ *（其中已显式声明各规则 active 状态），不叠加 detekt 默认配置，
+ * 避免默认规则里对 Compose 高频误报的项被悄悄启用。
+ *
+ * 跑法：
+ *   ./gradlew detekt          # 校验（有新增问题即失败 = 门禁生效）
+ *   ./gradlew detektBaseline  # 重新生成 baseline（谨慎使用）
+ */
+detekt {
+    config.setFrom(files("$rootDir/config/detekt/detekt.yml"))
+    baseline = file("detekt-baseline.xml")
+    buildUponDefaultConfig = false
+    ignoreFailures = false
+    parallel = true
 }
 
 dependencies {

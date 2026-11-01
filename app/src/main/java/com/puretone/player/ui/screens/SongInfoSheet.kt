@@ -148,12 +148,21 @@ fun SongInfoSheet(
                             contentScale = ContentScale.Crop
                         )
                     } else {
-                        Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(
+                            Icons.Rounded.MusicNote,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
                 Spacer(Modifier.size(12.dp))
                 Column {
-                    Text(title.ifBlank { "未知歌曲" }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        title.ifBlank { "未知歌曲" },
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text(
                         "${artist.ifBlank { "未知艺术家" }} · ${formatTime(song.duration)}",
                         style = MaterialTheme.typography.bodyMedium,
@@ -170,9 +179,30 @@ fun SongInfoSheet(
             }
 
             // 编辑字段
-            OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("歌名") }, singleLine = true, shape = fieldShape, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = artist, onValueChange = { artist = it }, label = { Text("歌手") }, singleLine = true, shape = fieldShape, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = album, onValueChange = { album = it }, label = { Text("专辑") }, singleLine = true, shape = fieldShape, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                label = { Text("歌名") },
+                singleLine = true,
+                shape = fieldShape,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = artist,
+                onValueChange = { artist = it },
+                label = { Text("歌手") },
+                singleLine = true,
+                shape = fieldShape,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = album,
+                onValueChange = { album = it },
+                label = { Text("专辑") },
+                singleLine = true,
+                shape = fieldShape,
+                modifier = Modifier.fillMaxWidth()
+            )
             Button(
                 onClick = {
                     // P0-1：传「弹窗里这首歌」的 id，保存成功才关闭；
@@ -282,7 +312,12 @@ fun SongInfoSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(c.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                c.title,
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                             Text(
                                 "${c.artist} · ${c.album}".ifBlank { "未知专辑" },
                                 style = MaterialTheme.typography.bodySmall,
