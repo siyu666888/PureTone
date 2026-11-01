@@ -596,4 +596,30 @@
     <string name="pt_diag_019" formatted="false">(读取失败)</string>
     <!-- 导出诊断日志（系统分享面板标题） -->
     <string name="pt_diag_020" formatted="false">导出诊断日志</string>
+
+    <!-- ===== P3-4 收尾：ViewModel 消息流资源化（MetadataViewModel / LibraryViewModel.m3uMessage） ===== -->
+    <!-- 元数据匹配：搜索前未输入 -->
+    <string name="pt_meta_001" formatted="false">请输入歌手或歌名</string>
+    <!-- 联网补全开关已关闭（搜索与下载歌词共用） -->
+    <string name="pt_meta_002" formatted="false">已关闭联网补全元数据与歌词（设置页「隐私」）</string>
+    <!-- 搜索无结果，%1$s 为数据源名 -->
+    <string name="pt_meta_003" formatted="true">未找到匹配（%1$s），可检查网络或更换关键词</string>
+    <!-- 自动填充无高置信匹配 -->
+    <string name="pt_meta_004" formatted="false">未找到高置信匹配，请从候选中选择或手动修改</string>
+    <!-- 撤销自动填充成功 -->
+    <string name="pt_meta_005" formatted="false">已撤销自动填充</string>
+    <!-- 下载歌词：无法定位文件 -->
+    <string name="pt_meta_006" formatted="false">无法定位歌曲文件</string>
+    <!-- 下载歌词：未填歌名 / 歌手 -->
+    <string name="pt_meta_007" formatted="false">请先填写歌名或歌手</string>
+    <!-- 歌词下载并保存成功 -->
+    <string name="pt_meta_008" formatted="false">歌词已下载并保存</string>
+    <!-- 未找到歌词，%1$s 为歌词源名 -->
+    <string name="pt_meta_009" formatted="true">未找到歌词（%1$s）</string>
+    <!-- 歌词保存失败 -->
+    <string name="pt_meta_010" formatted="false">歌词保存失败</string>
+    <!-- 封面补全：无待补全歌曲 -->
+    <string name="pt_meta_011" formatted="false">没有需要补全封面的歌曲</string>
+    <!-- 封面补全完成，%1$d 已补全 / %2$d 总数 / %3$d 剩余 -->
+    <string name="pt_meta_012" formatted="true">封面补全完成：%1$d / %2$d 首（剩余 %3$d 首未补全）</string>
 </resources>

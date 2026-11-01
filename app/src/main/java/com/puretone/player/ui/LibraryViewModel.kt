@@ -255,9 +255,9 @@ class LibraryViewModel @Inject constructor(
 
     // ---------- M3U 导入 / 导出（P2：歌单 M3U 导入导出）----------
 
-    /** M3U 操作结果提示（导入/导出成功或失败），UI 消费后清空 */
-    private val _m3uMessage = MutableStateFlow<String?>(null)
-    val m3uMessage: StateFlow<String?> = _m3uMessage
+    /** M3U 操作结果提示（导入/导出成功或失败），UI 消费后清空。用 [UiMessage] 承载以统一资源化 */
+    private val _m3uMessage = MutableStateFlow<UiMessage?>(null)
+    val m3uMessage: StateFlow<UiMessage?> = _m3uMessage
     fun consumeM3uMessage() { _m3uMessage.value = null }
 
     /**
@@ -265,11 +265,11 @@ class LibraryViewModel @Inject constructor(
      * 匹配不到任何歌曲时仍给出明确提示，不静默失败。
      */
     fun importM3u(uri: Uri) = viewModelScope.launch(ceh) {
-        _m3uMessage.value = importM3uUseCase(uri)
+        _m3uMessage.value = UiMessage.Raw(importM3uUseCase(uri))
     }
 
     /** 把歌单导出为 .m3u 到应用外部目录（免权限） */
     fun exportPlaylist(playlistId: Long) = viewModelScope.launch(ceh) {
-        _m3uMessage.value = exportPlaylistUseCase(playlistId)
+        _m3uMessage.value = UiMessage.Raw(exportPlaylistUseCase(playlistId))
     }
 }

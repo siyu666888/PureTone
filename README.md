@@ -278,6 +278,7 @@ scripts/collect-baseline-profile.sh <device-serial>
 | v1.8.2 | **P3-2 无障碍与触控目标**：`ControlIconButton` 补 `Role.Button` 语义；`PlayerProgressBar` 加 `progressBarRangeInfo`+`setProgress`（TalkBack 可读/调进度）且触控热区 24→48dp；`MiniPlayer` 长按加 `onLongClickLabel`；播放页均衡器/歌词切换/歌词字号按钮及 MiniPlayer 三按钮触控目标补到 48dp。详见 `dist/v1.8.2_无障碍与触控目标_P3-2_2026-11-01.md` |
 | v1.8.3 | **P3-3 歌单 UI 补完**：新增歌单详情页（头部播放全部 + 溢出菜单重命名/导出 M3U/删除 + 歌曲列表点按播放、拖动排序、移除单曲）；`MeScreen` 歌单卡片点击由「直接播放」改为进入详情页；数据层补 `PlaylistDao.reorder`/`updatePosition` + repo/ViewModel 包装。详见 `dist/v1.8.3_歌单UI补完_P3-3_2026-11-01.md` |
 | v1.8.4 | **P3-4 字符串资源化**：将 UI 层 314 处硬编码中文字面量抽取到 `res/values/strings.xml`（新增 294 个 `pt_` 资源键），为国际化/合规做准备；采用「一次性脚本 `tools/string_extract.py` 批量抽取 composable 内文案 + 手工 Phase B 收尾非 composable/助手函数/诊断报告」策略；`strings.xml` 条目由 2 → 296。详见 `dist/v1.8.4_字符串资源化_P3-4_2026-11-01.md` |
+| v1.8.5 | **ViewModel 消息流资源化收尾 + 设置隐私文案单行化**：引入 `UiMessage` 密封类型（`Res` 资源模板 / `Raw` 动态文本），将 `MetadataViewModel._message` 与 `LibraryViewModel.m3uMessage` 全部改为发射 `UiMessage`（含 `pt_meta_001~012` 共 12 条资源）；M3U 导入/导出提示因含文件路径/歌单名等动态内容保持 `UiMessage.Raw`。设置页「联网补全元数据与歌词」开启提示改为单行文案「已开启：向iTunes与LRCLIB发送信息匹配歌词与元数据」。本地 `compile/lint/test/detekt` 全绿。详见 `dist/v1.8.5_ViewModel消息流资源化_2026-11-02.md` |
 
 ---
 

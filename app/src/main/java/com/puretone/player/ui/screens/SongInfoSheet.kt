@@ -1,4 +1,5 @@
 package com.puretone.player.ui.screens
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
 
@@ -308,7 +309,11 @@ fun SongInfoSheet(
             // 搜索结果 / 提示
             val msg = message
             if (msg != null) {
-                Text(msg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    text = msg.resolve(LocalContext.current),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
 
             if (results.isNotEmpty()) {

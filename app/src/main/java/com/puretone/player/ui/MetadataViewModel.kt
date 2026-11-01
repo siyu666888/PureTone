@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import com.puretone.player.R
 
 /**
  * 联网元数据匹配视图模型：搜索候选、应用到歌曲、自动填充、下载歌词、批量补全缺失封面。
@@ -63,9 +64,9 @@ class MetadataViewModel @Inject constructor(
     private val _lyricsDownloading = MutableStateFlow(false)
     val lyricsDownloading: StateFlow<Boolean> = _lyricsDownloading.asStateFlow()
 
-    /** 一次性提示（应用成功 / 网络失败等） */
-    private val _message = MutableStateFlow<String?>(null)
-    val message: StateFlow<String?> = _message.asStateFlow()
+    /** 一次性提示（应用成功 / 网络失败等），以 UiMessage 承载（资源模板或动态文本） */
+    private val _message = MutableStateFlow<UiMessage?>(null)
+    val message: StateFlow<UiMessage?> = _message.asStateFlow()
 
     /** 批量补全进度：已处理 / 总数（null 表示未在进行） */
     private val _backfill = MutableStateFlow<Pair<Int, Int>?>(null)
@@ -98,7 +99,7 @@ class MetadataViewModel @Inject constructor(
 
     fun search(term: String = _query.value) {
         if (term.isBlank()) {
-            _message.value = "请输入歌手或歌名"
+            _message.value = UiMessage.Res(R.string.pt_meta_001)
             return
         }
         // P2-16：先取消上一个在途搜索，连点时只保留最新结果、且不会提前清掉转圈
@@ -110,14 +111,14 @@ class MetadataViewModel @Inject constructor(
             if (!gate.isEnabled()) {
                 _searching.value = false
                 _results.value = emptyList()
-                _message.value = "已关闭联网补全元数据与歌词（设置页「隐私」）"
+                _message.value = UiMessage.Res(R.string.pt_meta_002)
                 return@launch
             }
             _searching.value = true
             val list = searchUseCase(term)
             _searching.value = false
             _results.value = list
-            if (list.isEmpty()) _message.value = "未找到匹配（${provider.sourceName}），可检查网络或更换关键词"
+            if (list.isEmpty()) _message.value = UiMessage.Res(R.string.pt_meta_003, listOf<Any>(provider.sourceName))
         }
     }
 
@@ -132,7 +133,8 @@ class MetadataViewModel @Inject constructor(
                 is AutoFillMetadataUseCase.AutoFillResult.Applied -> {
                     lastAutoFilled = r.original
                     _canUndoAutoFill.value = true
-                    _message.value = "已自动填充：「${r.candidate.title}」"
+                    // 候选标题为用户内容（可能含 % 等特殊字符），保持 Raw 避免 format 崩溃
+                    _message.value = UiMessage.Raw("已自动填充：「${r.candidate.title}」")
                     _results.value = emptyList()
                     _searching.value = false
                     onApplied(r.candidate)
@@ -140,12 +142,12 @@ class MetadataViewModel @Inject constructor(
                 is AutoFillMetadataUseCase.AutoFillResult.NoMatch -> {
                     _results.value = r.candidates
                     _searching.value = false
-                    _message.value = "未找到高置信匹配，请从候选中选择或手动修改"
+                    _message.value = UiMessage.Res(R.string.pt_meta_004)
                 }
                 is AutoFillMetadataUseCase.AutoFillResult.Failed -> {
                     _results.value = r.candidates
                     _searching.value = false
-                    _message.value = r.message
+                    _message.value = UiMessage.Raw(r.message)
                 }
             }
         }
@@ -172,10 +174,11 @@ class MetadataViewModel @Inject constructor(
             ).onSuccess {
                 lastAutoFilled = null
                 _canUndoAutoFill.value = false
-                _message.value = "已撤销自动填充"
+                _message.value = UiMessage.Res(R.string.pt_meta_005)
                 onUndone(original)
             }.onFailure {
-                _message.value = "撤销失败：${it.message}"
+                // 异常 message 为动态内容，保持 Raw
+                _message.value = UiMessage.Raw("撤销失败：${it.message}")
             }
         }
     }
@@ -185,12 +188,14 @@ class MetadataViewModel @Inject constructor(
         viewModelScope.launch {
             applyCandidateUseCase(songId, candidate)
                 .onSuccess {
-                    _message.value = "已更新为「${candidate.title}」"
+                    // 候选标题为用户内容，保持 Raw
+                    _message.value = UiMessage.Raw("已更新为「${candidate.title}」")
                     _results.value = emptyList()
                     onApplied(candidate)
                 }
                 .onFailure {
-                    _message.value = "更新失败：${it.message}"
+                    // 异常 message 为动态内容，保持 Raw
+                    _message.value = UiMessage.Raw("更新失败：${it.message}")
                 }
         }
     }
@@ -201,13 +206,13 @@ class MetadataViewModel @Inject constructor(
      */
     fun downloadLyrics(audioPath: String, artist: String, title: String, durationMs: Long, onDone: (Boolean) -> Unit = {}) {
         if (audioPath.isBlank()) {
-            _message.value = "无法定位歌曲文件"
+            _message.value = UiMessage.Res(R.string.pt_meta_006)
             onDone(false)
             return
         }
         val term = buildSearchTerm(artist, title)
         if (term.isBlank()) {
-            _message.value = "请先填写歌名或歌手"
+            _message.value = UiMessage.Res(R.string.pt_meta_007)
             onDone(false)
             return
         }
@@ -216,12 +221,13 @@ class MetadataViewModel @Inject constructor(
             val outcome = downloadLyricsUseCase(audioPath, artist, title, durationMs)
             _lyricsDownloading.value = false
             _message.value = when (outcome) {
-                DownloadLyricsUseCase.Outcome.SAVED -> "歌词已下载并保存"
-                DownloadLyricsUseCase.Outcome.NO_LYRICS -> "未找到歌词（${lyricsProvider.sourceName}）"
-                DownloadLyricsUseCase.Outcome.SAVE_FAILED -> "歌词保存失败"
+                DownloadLyricsUseCase.Outcome.SAVED -> UiMessage.Res(R.string.pt_meta_008)
+                DownloadLyricsUseCase.Outcome.NO_LYRICS ->
+                    UiMessage.Res(R.string.pt_meta_009, listOf<Any>(lyricsProvider.sourceName))
+                DownloadLyricsUseCase.Outcome.SAVE_FAILED -> UiMessage.Res(R.string.pt_meta_010)
                 // P2-4：联网总开关已关闭——明确告知是开关拦下的，
                 // 否则用户会误以为「这首歌就是没歌词」而去反复重试。
-                DownloadLyricsUseCase.Outcome.DISABLED -> "已关闭联网补全元数据与歌词（设置页「隐私」）"
+                DownloadLyricsUseCase.Outcome.DISABLED -> UiMessage.Res(R.string.pt_meta_002)
             }
             onDone(outcome == DownloadLyricsUseCase.Outcome.SAVED)
         }
@@ -239,10 +245,10 @@ class MetadataViewModel @Inject constructor(
                 val (done, total, remaining) = backfillCoversUseCase { i, t -> _backfill.value = i to t }
                 _backfill.value = null
                 if (total == 0) {
-                    _message.value = "没有需要补全封面的歌曲"
+                    _message.value = UiMessage.Res(R.string.pt_meta_011)
                     onDone(0)
                 } else {
-                    _message.value = "封面补全完成：$done / $total 首（剩余 $remaining 首未补全）"
+                    _message.value = UiMessage.Res(R.string.pt_meta_012, listOf<Any>(done, total, remaining))
                     onDone(done)
                 }
             } finally {

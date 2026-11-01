@@ -1,4 +1,5 @@
 package com.puretone.player.ui.screens
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
 
@@ -389,7 +390,11 @@ fun BrowseScreen(
         val msg = metaMessage
         if (bf != null || msg != null) {
             Text(
-                text = if (bf != null) stringResource(R.string.pt_browse_022, bf.first, bf.second) else msg.orEmpty(),
+                text = if (bf != null) {
+                    stringResource(R.string.pt_browse_022, bf.first, bf.second)
+                } else {
+                    msg?.resolve(LocalContext.current).orEmpty()
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)

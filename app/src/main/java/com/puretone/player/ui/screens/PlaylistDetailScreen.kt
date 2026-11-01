@@ -104,7 +104,7 @@ fun PlaylistDetailScreen(
     val m3uMessage by libVm.m3uMessage.collectAsStateWithLifecycle()
     LaunchedEffect(m3uMessage) {
         m3uMessage?.let {
-            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            Toast.makeText(context, it.resolve(context), Toast.LENGTH_LONG).show()
             libVm.consumeM3uMessage()
         }
     }
