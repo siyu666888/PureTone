@@ -37,7 +37,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -108,7 +107,7 @@ class PlaybackManager @Inject constructor(
     private val widgetUpdater: WidgetUpdater,
     private val dlnaCast: DlnaCastManager,
     private val serviceLauncher: PlaybackServiceLauncher
-) : CastCommandSink, PlaybackEventSink, PlaybackControlSink {
+) : CastCommandSink, PlaybackEventSink, PlaybackControlSink, PlaybackQueueSink {
 
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
@@ -264,6 +263,26 @@ class PlaybackManager @Inject constructor(
     )
 
     /**
+     * 队列编排（P1-1 拆分第八刀）。
+     *
+     * 公开队列命令方法（setQueueAndPlay/enqueue/playNext/playAtIndex/removeFromQueue/
+     * moveQueueItem/clearQueue）在 [PlaybackManager] 上保留一行转发，逻辑全部下沉到
+     * [QueueOrchestrator]，避免 god class 继续膨胀。
+     */
+    private val queueOrchestrator = QueueOrchestrator(
+        playerProvider = { player },
+        uiState = _uiState,
+        crossfade = crossfade,
+        gate = gate,
+        dlnaCast = dlnaCast,
+        serviceLauncher = serviceLauncher,
+        sessionStore = sessionStore,
+        apeResolver = apeResolver,
+        scope = scope,
+        sink = this
+    )
+
+    /**
      * 播放事件处理（P1-1 拆分第六刀）。
      *
      * 收听主/备播放器回调、做事件分类与完成去重，再通过 [PlaybackEventSink] 回传副作用。
@@ -283,10 +302,6 @@ class PlaybackManager @Inject constructor(
 
     // 服务拉起 / 兜底 controller 已下沉到 PlaybackServiceLauncher（P1-1 拆分第二刀）：
     // 那里装的是 Android 8+ 后台启动禁令的绕行逻辑，不属于播放编排。
-
-    /** 队列项唯一实例序号（拖拽重排需稳定 key，同一首歌可多次入队） */
-    private var queueEntrySeq: Long = 0L
-    private fun nextQueueKey(): Long = ++queueEntrySeq
 
     /** 当前无缝播放开关（来自设置，bind 时订阅） */
     private var gaplessEnabled: Boolean = true
@@ -332,7 +347,7 @@ class PlaybackManager @Inject constructor(
      * 取轨道或专辑增益取决于设置模式；关闭 ReplayGain 时增益恒为 1.0（透传）。
      * 处理器逐缓冲读取增益，曲目切换时实时更新无爆音。
      */
-    private fun applyReplayGainForCurrent() {
+    override fun applyReplayGainForCurrent() {
         val p = replayGainProcessor ?: return
         val s = lastSettings
         val entry = _uiState.value.currentEntry ?: return
@@ -364,11 +379,6 @@ class PlaybackManager @Inject constructor(
      */
     override fun finalizeCrossfadeIfOutgoing(player: ExoPlayer) {
         if (crossfade.isCrossfading && crossfade.isOutgoing(player)) crossfade.finalize()
-    }
-
-    /** 取消进行中的交叉淡化（用户手动切歌/拖动/换队列/停止等） */
-    private fun cancelCrossfade() {
-        crossfade.cancel()
     }
 
     /** 由 [PlaybackService] 在 onCreate 注入主/备播放器、媒体会话与各自的 ReplayGain 处理器 */
@@ -417,7 +427,7 @@ class PlaybackManager @Inject constructor(
         val pending = gate.drain()
         val playReq = pending.play
         if (playReq == null) {
-            if (pending.enqueue.isNotEmpty()) enqueue(pending.enqueue)
+            if (pending.enqueue.isNotEmpty()) queueOrchestrator.enqueue(pending.enqueue)
             if (pending.restore) scope.launch { restoreLastSession() }
             return
         }
@@ -427,12 +437,12 @@ class PlaybackManager @Inject constructor(
         // 救不了：恢复命令最后执行、代次最新，先执行的点歌反而被判过期丢弃）。
         // 该互斥现由 PlaybackCommandGate.pendPlay 内部强制，此处不再手动清标志。
         scope.launch {
-            doSetQueueAndPlay(playReq.songs, playReq.startIndex, playReq.startPositionMs, autoPlay = true)
+            queueOrchestrator.applyQueueAndPlay(playReq.songs, playReq.startIndex, playReq.startPositionMs, autoPlay = true)
             // 追加必须排在点歌「完成」之后：enqueue 会走 onQueueStructureChanged
             // 递增代次（作废在途的旧 setQueue）。若并发执行，首播曲是 APE 时
-            // doSetQueueAndPlay 正挂在转码上，会被同一批重放命令自己作废 ——
+            // applyQueueAndPlay 正挂在转码上，会被同一批次重放命令自己作废 ——
             // 表现为「冷启动点了 APE，却只播出了随后追加的歌」。
-            if (pending.enqueue.isNotEmpty()) enqueue(pending.enqueue)
+            if (pending.enqueue.isNotEmpty()) queueOrchestrator.enqueue(pending.enqueue)
         }
     }
 
@@ -603,251 +613,22 @@ class PlaybackManager @Inject constructor(
         scope.launch { settings.clearSleepTimer() }
     }
 
-    // ---------- 队列命令 ----------
+    // ---------- 队列命令（逻辑下沉至 QueueOrchestrator，此处仅转发） ----------
 
-    /** 设置队列并播放 */
-    fun setQueueAndPlay(songs: List<SongEntity>, startIndex: Int = 0, startPositionMs: Long = 0L) {
-        cancelCrossfade()
-        val p = player
-        if (p == null) {
-            // P1-3：显式点歌优先于挂起的续播（理由同 bind）——互斥由 gate 内部强制，
-            // 不再依赖此处手动清 pendingRestore。
-            gate.pendPlay(PendingPlay(songs, startIndex, startPositionMs))
-            serviceLauncher.ensureStarted()
-            return
-        }
-        scope.launch { doSetQueueAndPlay(songs, startIndex, startPositionMs, autoPlay = true) }
-    }
+    fun setQueueAndPlay(songs: List<SongEntity>, startIndex: Int = 0, startPositionMs: Long = 0L) =
+        queueOrchestrator.setQueueAndPlay(songs, startIndex, startPositionMs)
 
-    /**
-     * 真正设置队列。[autoPlay] 显式控制是否 play()：
-     * - 用户主动播放 / 续播恢复都走这里，恢复时传 false，避免「取决于队列里有没有 APE」
-     *   （APE 会在 ensureWav 挂起，pause() 先于 play() 执行 → 恢复后不自动播放，非 APE 又自动播放）。
-     */
-    private suspend fun doSetQueueAndPlay(
-        songs: List<SongEntity>,
-        startIndex: Int,
-        startPositionMs: Long,
-        autoPlay: Boolean
-    ) {
-        val p = player ?: return
-        if (songs.isEmpty()) return
-        // P1-3：本次「设置队列」命令的代次。下面 APE 转码会挂起（长曲可达数十秒），
-        // 期间用户完全可能又点了别的歌；本协程恢复后若发现代次已被后来的命令刷新，
-        // 就说明自己是过期任务，必须放弃——否则会用旧队列覆盖掉新队列
-        // （表现为「点了新歌，播的却是上一首/旧队列」）。
-        val generation = gate.nextGeneration()
-        val entries = songs.map { PlaybackMediaItems.toQueueEntry(it, nextQueueKey()) }
+    fun enqueue(songs: List<SongEntity>) = queueOrchestrator.enqueue(songs)
 
-        // 只转码「即将播放的这一首」：整队预转码会让 20 首 APE 的专辑等几十秒才出声。
-        // 其余 APE 在切歌/出错时按需转码（见 playAtIndex / handlePlayerError / warmUpFollowingApe）。
-        // P3-17：索引不再裸取——越界（调用方传错）时静默放弃，而不是抛 IndexOutOfBounds。
-        val startSong = songs.getOrNull(startIndex) ?: return
-        // 转码中标记与异常/取消语义统一由 apeResolver 负责（含 finally 复位）
-        val startUri = apeResolver.resolveUri(
-            songId = startSong.id,
-            path = startSong.path,
-            isApe = startSong.isApe,
-            mediaStoreUri = { PlaybackMediaItems.mediaStoreUri(startSong) }
-        )
-        if (startUri == null) {
-            _uiState.update { it.copy(error = "无法解析播放地址") }
-            return
-        }
+    fun playNext(songs: List<SongEntity>) = queueOrchestrator.playNext(songs)
 
-        // 其余项先按「非 APE 直连、APE 占位源路径」入库；切到它们时再按需转码替换 URI。
-        val mediaItems = songs.mapIndexed { index, song ->
-            if (index == startIndex) {
-                PlaybackMediaItems.toMediaItem(song, startUri)
-            } else if (song.isApe) {
-                PlaybackMediaItems.toMediaItem(song, PlaybackMediaItems.rawPathUri(song.path))
-            } else {
-                PlaybackMediaItems.toMediaItem(song, PlaybackMediaItems.mediaStoreUri(song))
-            }
-        }
+    fun playAtIndex(index: Int) = queueOrchestrator.playAtIndex(index)
 
-        // 挂起点（APE 转码）之后重新确认自己仍是「最新」的队列命令
-        if (!gate.isCurrent(generation)) return
+    fun removeFromQueue(index: Int) = queueOrchestrator.removeFromQueue(index)
 
-        // P2-14：新队列生效前复位 APE 重试标记——它是按「队列内索引」记的，
-        // 旧队列 index=2 的 APE 重试过一次，新队列同样 index=2 的 APE
-        // 首次出错就会被误判「已重试过」而跳过转码，直接卡在 IDLE。
-        // 用 resetApeRetry 而非 onQueueStructureChanged：后者会再递增代次，
-        // 把本协程刚取的号弄失效、导致下面全部写入被跳过。
-        gate.resetApeRetry()
+    fun moveQueueItem(from: Int, to: Int) = queueOrchestrator.moveQueueItem(from, to)
 
-        p.setMediaItems(mediaItems, startIndex, startPositionMs)
-        p.prepare()
-        // 投屏态不起播本地：这里只是重建「镜像队列」，出声的是随后重新投送的渲染器。
-        // 否则手机与电视同时出声，且电视仍停在旧曲上。
-        if (dlnaCast.state.value.isCasting) p.pause() else if (autoPlay) p.play() else p.pause()
-        _uiState.update {
-            it.copy(
-                queue = entries,
-                queueIndex = startIndex,
-                currentSongId = startSong.id,
-                durationMs = startSong.duration,
-                error = null
-            )
-        }
-        // 投屏中直接点了另一首：把新曲投给渲染器，否则电视继续播旧的那首
-        recastCurrentIfCasting()
-        saveSessionNow()
-        applyReplayGainForCurrent()
-        if (!autoPlay) warmUpFollowingApe()
-    }
-
-    /** 追加到队列末尾（不打断当前播放）；player 未就绪时挂起，bind 后执行 */
-    fun enqueue(songs: List<SongEntity>) {
-        cancelCrossfade()
-        val p = player
-        if (p == null) {
-            gate.pendEnqueue(songs)
-            serviceLauncher.ensureStarted()
-            return
-        }
-        if (songs.isEmpty()) return
-        // P2-13：先作废在途的 setQueueAndPlay（如 APE 首播挂起在 ensureWav）——它恢复后
-        // 检测到代次不符会放弃，避免用户的追加被旧队列覆盖。
-        // 连带复位 APE 重试标记：追加本身不改已有索引，但标记与代次同属「队列状态已变」，
-        // 由同一个入口维护可避免以后有人只改一半。
-        gate.onQueueStructureChanged()
-        val entries = songs.map { PlaybackMediaItems.toQueueEntry(it, nextQueueKey()) }
-        scope.launch {
-            p.addMediaItems(songs.map { PlaybackMediaItems.lazyMediaItem(it) })
-            _uiState.update { it.copy(queue = it.queue + entries) }
-        }
-    }
-
-    /**
-     * 插到当前曲目之后优先播放（不打断当前播放）。
-     *
-     * 队列为空或尚未起播时退化为 [setQueueAndPlay]，保证首次操作也能出声。
-     */
-    fun playNext(songs: List<SongEntity>) {
-        cancelCrossfade()
-        val p = player
-        if (p == null || _uiState.value.queue.isEmpty()) {
-            setQueueAndPlay(songs)
-            return
-        }
-        if (songs.isEmpty()) return
-        // P2-13：先作废在途 setQueueAndPlay，避免插播被旧队列覆盖。
-        // 插到当前曲之后会让后续项索引整体右移，APE 重试标记（按索引记）必须一并复位。
-        gate.onQueueStructureChanged()
-        val entries = songs.map { PlaybackMediaItems.toQueueEntry(it, nextQueueKey()) }
-        scope.launch {
-            val insertAt = (_uiState.value.queueIndex + 1).coerceIn(0, _uiState.value.queue.size)
-            p.addMediaItems(insertAt, songs.map { PlaybackMediaItems.lazyMediaItem(it) })
-            _uiState.update { state ->
-                val merged = state.queue.toMutableList().also { q -> q.addAll(insertAt, entries) }
-                state.copy(queue = merged)
-            }
-        }
-    }
-
-    /** 播放队列中指定索引（APE 按需转码后替换 URI） */
-    fun playAtIndex(index: Int) {
-        cancelCrossfade()
-        // P2-13：服务未就绪时旧实现写 PendingPlay(emptyList(), index, 0L)，
-        // bind 后 doSetQueueAndPlay 在 songs.isEmpty() 处直接 return → 点了队列项却无声。
-        // 改为标记「待恢复会话」，服务起来后由 bind() 真正恢复上次队列。
-        val p = player ?: run { gate.pendRestore(); serviceLauncher.ensureStarted(); return }
-        if (index !in _uiState.value.queue.indices) return
-        scope.launch {
-            val entry = _uiState.value.queue[index]
-            if (entry.isApe) {
-                apeResolver.transcodeToFile(entry.songId, entry.filePath)
-                    ?.let { replaceMediaItemUri(index, it) }
-            }
-            p.seekTo(index, 0L)
-            p.prepare()
-            if (dlnaCast.state.value.isCasting) {
-                // 投屏态不本地起播：只推进本地镜像（通知栏据此显示当前曲），
-                // 真正出声的是随后重新投送的渲染器。否则手机与电视同时出声。
-                p.pause()
-            } else {
-                p.play()
-            }
-            recastCurrentIfCasting()
-        }
-    }
-
-    /**
-     * 从队列移除指定索引。
-     * 必须同步修正 [PlaybackUiState.queueIndex]：删除当前曲之前的条目后
-     * player.currentMediaItemIndex 已左移，UI 若按旧索引取 currentEntry 会显示错歌。
-     */
-    fun removeFromQueue(index: Int) {
-        cancelCrossfade()
-        val p = player ?: return
-        if (index !in _uiState.value.queue.indices) return
-        // P2-13：先作废在途 setQueueAndPlay，避免删除被旧队列还原。
-        // 删除会让后续项索引左移——旧实现漏了复位 APE 重试标记，导致删掉前一首后，
-        // 另一个 APE 的下标被错认成「已重试过」而跳过转码，直接卡在 IDLE。
-        gate.onQueueStructureChanged()
-        val currentIndex = p.currentMediaItemIndex
-        p.removeMediaItem(index)
-        _uiState.update { state ->
-            val newQueue = state.queue.filterIndexed { i, _ -> i != index }
-            val newIndex = when {
-                index < currentIndex -> currentIndex - 1
-                index == currentIndex -> currentIndex.coerceAtMost(newQueue.lastIndex)
-                else -> currentIndex
-            }
-            state.copy(queue = newQueue, queueIndex = newIndex)
-        }
-    }
-
-    /**
-     * 队列内拖拽重排：把 [from] 移到 [to] 位置，并同步当前播放索引。
-     *
-     * [androidx.media3.common.Player.moveMediaItem] 会自动维护正在播放项的
-     * currentMediaItemIndex（当前曲被移动时索引跟随），故直接用真实索引对齐
-     * [PlaybackUiState.queueIndex]，比 [removeFromQueue] 的手动计算更稳。
-     * 同步清除 APE 重试标记（按索引记，重排后失效，理由同 [clearQueue]）。
-     */
-    fun moveQueueItem(from: Int, to: Int) {
-        cancelCrossfade()
-        val p = player ?: return
-        val queue = _uiState.value.queue
-        if (from !in queue.indices || to !in queue.indices || from == to) return
-        // P2-13：先作废在途 setQueueAndPlay，避免重排被旧队列覆盖。
-        // 重排会打乱索引映射，APE 重试标记由 onQueueStructureChanged 一并复位。
-        gate.onQueueStructureChanged()
-        p.moveMediaItem(from, to)
-        _uiState.update { state ->
-            val newQueue = state.queue.toMutableList().also { it.add(to, it.removeAt(from)) }
-            state.copy(queue = newQueue, queueIndex = p.currentMediaItemIndex)
-        }
-    }
-
-    /**
-     * 清空队列。只重置「瞬时」字段，保留用户偏好（播放顺序/随机/倍速），
-     * 否则 UI 显示的播放顺序会和播放器真实状态不一致（历史 bug）。
-     */
-    fun clearQueue() {
-        cancelCrossfade()
-        player?.clearMediaItems()
-        _uiState.update { state ->
-            state.copy(
-                queue = emptyList(),
-                queueIndex = -1,
-                currentSongId = null,
-                positionMs = 0L,
-                durationMs = 0L,
-                isTranscoding = false,
-                isBuffering = false,
-                error = null
-            )
-        }
-        // 清空同样属于「队列结构变化」：既作废 APE 重试标记（P2-14），也递增代次——
-        // 旧实现漏了后者，仍挂起在 APE 转码里的旧 setQueue 恢复后会把队列又写回来
-        // （历史现象：点了清空，队列隔一会儿自己冒回来）。
-        gate.onQueueStructureChanged()
-        sessionStore.clear()
-        stopServiceIfIdle()
-    }
+    fun clearQueue() = queueOrchestrator.clearQueue()
 
     // ---------- 播放控制 ----------
 
@@ -902,7 +683,7 @@ class PlaybackManager @Inject constructor(
         }
         // autoPlay=false：恢复后停在当前位置，是否播交给用户（旧实现先 setQueueAndPlay
         // 再 pause()，APE 队列会在 ensureWav 挂起导致 pause 先于 play 执行，行为不确定）。
-        doSetQueueAndPlay(
+        queueOrchestrator.applyQueueAndPlay(
             songs,
             restored.index,
             restored.positionMs,
@@ -963,7 +744,7 @@ class PlaybackManager @Inject constructor(
                 // 异常收敛为 null，取消原样抛出），此处只负责结果分支。
                 val wav = apeResolver.transcodeToFile(entry.songId, entry.filePath)
                 if (wav != null) {
-                    replaceMediaItemUri(index, wav)
+                    queueOrchestrator.replaceMediaItemUri(index, wav)
                     p.prepare()
                     p.play()
                 } else {
@@ -1094,19 +875,7 @@ class PlaybackManager @Inject constructor(
 
     // 媒体项 / URI / 队列项构造已抽到 PlaybackMediaItems（P1-1 拆分第一刀）：
     // 那一簇是纯映射，不需要播放器实例与 UI 状态，独立成文件后可单测。
-
-    private fun replaceMediaItemUri(index: Int, wavFile: File) {
-        val p = player ?: return
-        // P0-2：转码可挂起数十秒，期间用户可能 clearQueue() / removeFromQueue() / stop()
-        // 把 playlist 清空或缩短；协程恢复后若仍用旧 index 调 getMediaItemAt 会抛
-        // IndexOutOfBoundsException，而该异常发生在无 try/catch 的 scope.launch 里，
-        // 经 SupervisorJob 直达未捕获异常处理器 → 进程崩溃。此处做边界 + 异常双保险。
-        if (index !in 0 until p.mediaItemCount) return
-        runCatching {
-            val updated = p.getMediaItemAt(index).buildUpon().setUri(Uri.fromFile(wavFile)).build()
-            p.replaceMediaItem(index, updated)
-        }.onFailure { Log.w(TAG, "replaceMediaItemUri failed at index=$index", it) }
-    }
+    // 队列项的 URI 替换（APE 转码产物回写）已随队列编排下沉到 QueueOrchestrator（第八刀）。
 
     // ---------- 投屏（M1 收尾：MediaSession 切换 + 命令路由） ----------
 
@@ -1191,7 +960,7 @@ class PlaybackManager @Inject constructor(
      * 预热「下一首 APE」的转码（只一首：整队预转会拖慢切片切换、
      * 并无谓占满字节上限的缓存，见 P0-5）。其余 APE 切到它们时按需转码。
      */
-    private fun warmUpFollowingApe() {
+    override fun warmUpFollowingApe() {
         val state = _uiState.value
         val nextApe = state.queue.drop(state.queueIndex + 1).firstOrNull { it.isApe } ?: return
         scope.launch(Dispatchers.IO) {
