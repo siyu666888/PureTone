@@ -67,13 +67,16 @@
 | --- | --- |
 | 语言 | Kotlin 2.0.21 |
 | UI | Jetpack Compose (BOM 2024.09.00) · Material 3 |
-| 架构 | 单向数据流 · ViewModel + StateFlow · Hilt 依赖注入 |
-| 播放 | AndroidX Media3 (ExoPlayer 1.4.1) + media3-session |
-| 持久化 | Room 2.6.1 (KSP) · DataStore 1.1.1 |
+| 架构 | 单向数据流 · ViewModel + StateFlow · Hilt 2.51.1 依赖注入 |
+| 播放 | AndroidX Media3 (ExoPlayer 1.6.0) + media3-session |
+| 持久化 | Room 2.6.1 (KSP，schema v7) · DataStore 1.1.1 |
 | 图片 | Coil 2.7.0 |
-| 音频处理 | ffmpeg-kit-min 6.0 LTS（本地 AAR，无损转码） |
-| 构建 | AGP 8.5.2 · Gradle 8.7 · JDK 17 · compileSdk/targetSdk 34 · minSdk 26 |
-| 测试 | Robolectric 4.12.2 · Turbine 1.1.0（单元回归全绿） |
+| 音频处理 | ffmpeg-kit-min 6.0-2.LTS（本地 AAR，无损转码） |
+| 桌面小部件 | Glance AppWidget |
+| 构建 | AGP 8.6.0 · Gradle 8.7 · JDK 17 · compileSdk 35 / targetSdk 34 · minSdk 26 |
+| 测试 | Robolectric 4.12.2 · Turbine 1.1.0（**344 用例 / 39 类全绿**） |
+| 静态检查 | Android Lint（`warningsAsErrors` + baseline 冻结存量）· detekt 1.23.7（baseline 冻结 1 条）· 文件行数门禁 ≤ 1200 行 |
+| CI | GitHub Actions（单测 / Debug+Release 构建 / apksigner 验签 / Baseline Profile 打包断言 / lint / detekt / 文件行数）+ Dependabot 依赖升级 + 每周依赖漂移巡检 |
 
 ---
 
@@ -133,16 +136,38 @@ keyPassword=你的密钥口令
 
 ```bash
 ./gradlew assembleRelease
-# 产物：app/build/outputs/apk/release/PureTone-v1.5.0-universal-release.apk
-#       app/build/outputs/apk/release/PureTone-v1.5.0-arm64-v8a-release.apk
+# 产物：app/build/outputs/apk/release/PureTone-v1.7.17-universal-release.apk
+#       app/build/outputs/apk/release/PureTone-v1.7.17-arm64-v8a-release.apk
 ```
 
-> `dist/` 目录存放各版本已签名的发布包与交付证据（SHA-256 / apksigner 校验记录）。
+> 产物文件名带版本号（`archivesName` 与 `versionName` 同源，不会漂移）。
+> `dist/` 目录存放各版本的发布包、交付摘要与验收证据（验机报告 / 截图 / 签名校验记录）。
 
 ### 关于 ffmpeg-kit 依赖
 
 `app/libs/ffmpeg-kit-min-6.0-2.LTS.aar` 为本地 AAR（无公网 Maven 坐标），**已随仓库提交**，
 构建时由 `app/build.gradle.kts` 通过 `libs` 目录直接引用，无需联网下载。
+
+### 静态检查（本地同样会拦）
+
+三层门禁，都在本地下次提交前就能跑：
+
+```bash
+./gradlew lintDebug            # Android 特有正确性（生命周期 / 权限 / 资源 / API 级别）
+./gradlew :app:detekt          # Kotlin 结构与复杂度（未使用导入 / 行长 / 函数过多 / 过长方法）
+bash scripts/check-file-size.sh # 文件行数上限 1200 行（detekt 的 LargeClass 管不到 Compose 顶层函数）
+```
+
+**三层的分工**：
+
+| 门禁 | 管什么 | 存量 |
+| --- | --- | --- |
+| lint | Android 特有正确性 | `app/lint-baseline.xml` 冻结 17 条 |
+| detekt | Kotlin 结构与复杂度 | `app/detekt-baseline.xml` 冻结 1 条 |
+| 文件行数 | 文件规模 | `scripts/check-file-size.sh` 内白名单 1 个 |
+
+**清理存量告警的纪律**（务必遵守）：从 baseline 里**删掉对应条目再修代码**，
+不要整体删除 baseline 文件重新生成——那会一次性把既有问题全部重新冻结，等于闸门失效。
 
 ---
 
@@ -179,9 +204,73 @@ keyPassword=你的密钥口令
 | v1.4.1 | 歌词高亮居中悬浮；设置页子项高度统一；听歌数据页配色对齐 |
 | v1.5.0 | 第三轮复审按序修复：主题行高度统一、续播恢复竞态、APE 锁原子化、均衡器主开关语义、Room v5 索引迁移、封面占位 URI 清理等 |
 | v1.6.0 | 桌面小部件（Glance 播放控制条 + 一键添加到桌面 + 后台点击走 MediaSession 通道）；睡眠定时细粒度（播完本曲停止 + 自定义分钟 1~600m，四字段统一归一化）；统计与元数据逻辑下沉 `domain` 用例层 |
+| v1.7.0 | P1 收尾：ReplayGain 响度归一 + 交叉淡化（双 ExoPlayer 实例真重叠）+ 智能歌单 + 队列拖拽 |
+| v1.7.1 | 修复升级到 v1.7.0 后打开即闪退：协程异常兜底 + `PlaybackService.onCreate` 降级 + R8 keep 扩大到 `androidx.media3.**` |
+| v1.7.2 | 修复升级后闪退与曲库空白：Room 观察流全部 `.catch` + 统一异常落盘 + `syncLibrary` 防误删保险（被移除音乐占比 >50% 才拦截） |
+| v1.7.3 | 扫描异常落盘 `crash_last.txt`——兜底类改动必须同步给出诊断出口 |
+| v1.7.4 | **闪退真根因**：补注册 `MIGRATION_6_7`（Room 编译期不校验迁移注册，只在真机开库那一刻查），并新增 `DatabaseMigrationWiringTest` 直接跑生产 builder 做端到端校验 |
+| v1.7.5 | **无声真根因**：`ReplayGainAudioProcessor` 在增益 == 1.0 时旁路标准音频路径（常驻自定义 PCM 处理链在部分 ROM 上导致静音）；智能歌单图标前置 + 三卡均分整屏 |
+| v1.7.6 | 设置页新增「实验室」总开关，响度（ReplayGain）迁入其下并由总开关门控 |
+| v1.7.7 | DLNA 投屏 M1：SSDP 设备发现 + 本地文件直投 + 投射态路由（播放 / 暂停 / 上下首 / 进度）+ 投屏按钮与设备选择对话框；`DlnaCastManager` 全程 try/catch，投屏失败绝不引发闪退 |
+| v1.7.8 | 交叉淡化策略与设置项接线补单测（`CrossfadePolicy` 纯函数化 + `SettingsRepositoryCrossfadeTest`） |
+| v1.7.9 | 投屏 M1 止血：next/prev 投屏分流与同步镜像、交叉淡化投屏守卫、pause 同步播放态 |
+| v1.7.10 | 合规硬化：明文流量改显式 NSC（仅 DLNA 局域网）+ LGPL 许可证文件不再被剥离 + PURETONE_NOTICE 随包分发。**附模拟器运行期验机报告与 9 张截图**（`dist/v1.7.10_验机报告_2026-10-31.txt`、`dist/verify_1.7.10/`） |
+| v1.7.11 | 交叉淡化步进计划抽为 `CrossfadeRamp` 纯函数（+23 例单测） |
 | v1.7.12 | DLNA 投屏 M2：APE 等渲染器不支持的格式先转 WAV 再投（复用本地转码缓存），直投/转码按扩展名白名单分流，转码期 UI 显示进度，投屏失败自动恢复本地播放；交叉淡化步进计划抽为 `CrossfadeRamp` 纯函数 |
-| v1.7.15 | 投屏 M1 收尾：新增 `CastPlaybackPlayer` 门面，投屏期间把 MediaSession 切到门面，通知栏 / 锁屏 / 小部件的控制真正作用于渲染器（此前投屏中按通知栏操作的是已暂停的本地播放器）；播放态镜像与进度改跟渲染器；投屏路由统一收敛到 `PlaybackManager`（原先 ViewModel 与管理器各判断一次）。设置页「桌面」「存储」并入实验室 || v1.7.16 | P1-1 拆分 PlaybackManager 第四刀：交叉淡化状态机与备援播放器下沉到 `CrossfadeCoordinator`（备援引用、淡出方、淡入索引、剩余曲目、渐变协程五份状态一并移出），触发判定与步进计划仍分别委托 `CrossfadePolicy` / `CrossfadeRamp`；修复「角色收尾后备援播放器引用未换位」——连续两次交叉淡化时第二次会拿主播放器当备援，把队列清成单曲 |
+| v1.7.13 | P1-1 拆分第一刀：媒体项构造 / 服务拉起 / APE 转码入口三块下沉，`PlaybackManager` 1408 → 1304 行 |
+| v1.7.14 | P1-1 拆分第二刀：`queueGeneration` / `pendingXxx` / `apeRetryIndex` 收敛为 `PlaybackCommandGate`，同时修掉「删歌后 APE 不转码」「清空后队列冒回来」「bind 重放时追加作废点歌」三个缺陷 |
+| v1.7.15 | 投屏 M1 收尾：新增 `CastPlaybackPlayer` 门面，投屏期间把 MediaSession 切到门面，通知栏 / 锁屏 / 小部件的控制真正作用于渲染器（此前投屏中按通知栏操作的是已暂停的本地播放器）；播放态镜像与进度改跟渲染器；投屏路由统一收敛到 `PlaybackManager`（原先 ViewModel 与管理器各判断一次）。设置页「桌面」「存储」并入实验室 |
+| v1.7.16 | P1-1 拆分 PlaybackManager 第四刀：交叉淡化状态机与备援播放器下沉到 `CrossfadeCoordinator`（备援引用、淡出方、淡入索引、剩余曲目、渐变协程五份状态一并移出），触发判定与步进计划仍分别委托 `CrossfadePolicy` / `CrossfadeRamp`；修复「角色收尾后备援播放器引用未换位」——连续两次交叉淡化时第二次会拿主播放器当备援，把队列清成单曲 |
 | v1.7.17 | P1-1 拆分第五刀：播放会话存档下沉到 `PlaybackSessionStore`，把「保存位置钳到结尾前 500ms」与「恢复时按保存顺序重排（`IN(:ids)` 无序且去重）」两个已踩过的修复点抽出并补测；去抖保存改为写入时才取快照，避免切歌后存档滞后 |
+| v1.7.18 | 投屏 M3：队列自动续播（渲染器播完自动放下一首）+ 断网优雅回退本地播放，`CastQueuePolicy` / `CastQueueCoordinator` 可测 |
+| v1.7.19 | 遗留审查项对账表：对 R2 标注「未修」的 33 条逐条核实，**实测全部已修，遗留债务 = 0** |
+| v1.7.20 | 静态检查入 CI 门禁：detekt（管 Kotlin 结构）+ 文件行数上限 1200 行 + 依赖漂移双轨巡检；detekt 首次接入 115 条问题真修 114 条，baseline 只冻结 1 条 |
+
+---
+
+## 📋 交付纪律
+
+本项目的交付记录不只是「构建绿灯」。以下是约定，**每次发版都要遵守**：
+
+### 1. 每版必落 `dist/` 交付文档
+
+`dist/` 下每版一份 `v<版本号>_<主题>_<日期>.md`，至少包含：
+
+- **版本号 / versionCode / commit / 日期**；
+- **改了什么**（涉及哪些层、为什么这么改）；
+- **验证结论**——分三档如实写：
+  - ✅ 已做且通过（写清验证方式：单测 / 构建 / 真机 / 模拟器）；
+  - ⚠️ 部分验证（写清哪部分没验、为什么）；
+  - ❌ **未验证**（写清原因，通常是「沙箱无对应设备」）。
+
+> **「未验证」如实写，比「已验证」更有价值。**
+> v1.7.7 投屏版如实写「沙箱无 LAN 设备，无法功能验证」，
+> 直接催生了后续 v1.7.9 投屏止血与 v1.7.10 / v1.7.15 的模拟器验收。
+> 写成「已验证」，这条改进链就断了。
+
+### 2. 功能改动要带运行期证据
+
+纯「构建通过 + 单测全绿」**不能**证明功能可用。本项目的两个真实教训：
+
+| 症状 | 静态检查全绿却仍然存在 | 真根因 |
+| --- | --- | --- |
+| 升级后打开即闪退 | ✅ 单测通过、R8 构建通过 | Room 漏注册 `MIGRATION_6_7`——Room **编译期不校验**迁移注册，只在真机开库那一刻查 |
+| 放歌完全无声 | ✅ 单测通过、构建通过 | ReplayGain 处理器在增益 == 1.0 时仍常驻，自定义 PCM 处理链在部分 ROM 上静音 |
+
+两者都需要**运行期**验证才能发现。所以：**改了数据层迁移、音频通路、播放生命周期，
+就必须做运行期验证并把结论写进 `dist/`**。
+
+### 3. 编译期不检查的东西，用测试补上
+
+Room 迁移注册就是典型：debug 包 + 新装用户 + CI 单测，三重都测不出来。
+所以项目里有 `DatabaseMigrationWiringTest`——**直接跑生产 builder** 做端到端校验。
+遇到「编译期不校验、运行时才炸」的接线问题，都要补一个同类的接线测试。
+
+### 4. 兜底类改动必须同步给出诊断出口
+
+把崩溃改成静默降级会止住症状，但也让问题变得看不见。
+v1.7.1 / v1.7.2 加了兜底，v1.7.3 才补上 `crash_last.txt` 落盘。
+**顺序应该是：先能看见，再能降级。**
 
 ---
 
