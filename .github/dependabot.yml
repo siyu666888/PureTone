@@ -112,6 +112,14 @@ updates:
       # ⑥ gradle-wrapper：大版本属人工专案
       - dependency-name: "gradle-wrapper"
         update-types: ["version-update:semver-major"]
+      # ⑦ Robolectric：跨多版本的升级会绕过分组的 patch-only 限制
+      #    （实测 4.12.2 → 4.17 被开出，344 用例中 126 个失败，
+      #     全是 Room DAO 测试的 NoClassDefFoundError / ClassNotFoundException
+      #     at SandboxClassLoader——Robolectric 4.13+ 改用 native sqlite4java，
+      #     与本项目的 Room 测试组合不兼容）。
+      #    → 显式挡掉 minor，保留 patch；真要升需单独立项评估测试基建改动。
+      - dependency-name: "org.robolectric:robolectric"
+        update-types: ["version-update:semver-minor"]
 
   # GitHub Actions 自身的版本
   - package-ecosystem: "github-actions"
