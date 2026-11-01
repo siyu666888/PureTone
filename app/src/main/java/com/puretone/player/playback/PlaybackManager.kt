@@ -149,6 +149,18 @@ class PlaybackManager @Inject constructor(
     private var settingsJob: Job? = null
 
     /**
+     * 「曲间停顿」：关闭无缝播放时，自动切歌边界暂停一小会再继续。
+     * 逻辑本体见 [InterTrackGap]——那里记录了「只暂停不续播导致永久停住」的历史缺陷。
+     */
+    private val interTrackGap = InterTrackGap(
+        scope = scope,
+        playerProvider = { player?.let(::ExoGapPlayer) }
+    )
+
+    /** 连续「播放失败自动跳过」的计数（防止整条队列都是坏文件时无限空转） */
+    private var consecutiveErrorSkips: Int = 0
+
+    /**
      * 播放会话存档（P1-1 拆分第五刀）。
      *
      * 「保存位置钳到 duration-500」与「恢复时按保存顺序重排」两个已踩过的修复点都在这里，
@@ -600,6 +612,7 @@ class PlaybackManager @Inject constructor(
         clearSleepTimerJob()
         sleepTimerJob = scope.launch {
             delay(remaining)
+            PlaybackEventLog.record("sleep-timer", "MINUTES 倒计时到点 → 暂停（剩余 $remaining ms 已走完）")
             pause()
             // 关键：触发后清零，防止重启后再次倒计时
             scope.launch { settings.clearSleepTimer() }
@@ -639,6 +652,7 @@ class PlaybackManager @Inject constructor(
      */
     private fun finishEndOfTrackSleepTimer() {
         if (_uiState.value.sleepTimerMode != SleepTimerMode.END_OF_TRACK) return
+        PlaybackEventLog.record("sleep-timer", "END_OF_TRACK 到点 → 暂停")
         pause()
         _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.OFF, sleepRemainingMs = 0L) }
         scope.launch { settings.clearSleepTimer() }
@@ -767,6 +781,11 @@ class PlaybackManager @Inject constructor(
         val p = player ?: return
         val index = p.currentMediaItemIndex
         val entry = _uiState.value.queue.getOrNull(index)
+        PlaybackEventLog.record(
+            "player-error",
+            "code=${error.errorCodeName} idx=$index song=${entry?.songId ?: -1} isApe=${entry?.isApe} " +
+                "msg=${error.message}"
+        )
         // 按队列内索引记忆重试资格：同一索引只自动转码重试一次，防止
         // 「出错 → 转码 → 再出错 → 再转码」死循环。写法保持「判断 + 占位」原子完成。
         if (entry != null && entry.isApe && gate.tryAcquireApeRetry(index)) {
@@ -783,8 +802,52 @@ class PlaybackManager @Inject constructor(
                     if (p.hasNextMediaItem()) p.seekToNextMediaItem() else stop()
                 }
             }
-        } else {
-            _uiState.update { it.copy(error = error.errorCodeName + ": " + (error.message ?: "播放失败")) }
+            return
+        }
+        _uiState.update { it.copy(error = error.errorCodeName + ": " + (error.message ?: "播放失败")) }
+        // 关键修复：非 APE 错误（文件被删/移动、MediaStore URI 失效、编码不支持、
+        // 读盘瞬时 IO 失败…）原实现只写一条错误文案就结束，ExoPlayer 已落 IDLE，
+        // 整条队列就此停住——用户看到的就是「播着播着自动停了」，而且只在
+        // 恰好轮到那一首时出现，所以听起来像「一定概率」。
+        // 正确做法与主流播放器一致：坏一首跳一首，继续往下放。
+        skipAfterPlaybackError(p, entry)
+    }
+
+    /**
+     * 单曲播放失败后的自愈：跳过这一首继续放，而不是让整条队列停在这里。
+     *
+     * 防死循环：连续跳过超过 [MAX_CONSECUTIVE_ERROR_SKIPS] 首就判定「队列不可用」，
+     * 暂停但**保留队列**（用户还能手动挑别的歌），并在 UI 上留下错误文案。
+     * 计数由 [onIsPlayingChanged] 在真正播起来时归零。
+     */
+    private fun skipAfterPlaybackError(p: ExoPlayer, failed: QueueEntry?) {
+        consecutiveErrorSkips++
+        PlaybackEventLog.record(
+            "error-skip",
+            "consecutive=$consecutiveErrorSkips failedSong=${failed?.songId ?: -1} " +
+                "hasNext=${p.hasNextMediaItem()}"
+        )
+        if (consecutiveErrorSkips > MAX_CONSECUTIVE_ERROR_SKIPS) {
+            consecutiveErrorSkips = 0
+            PlaybackEventLog.record("error-give-up", "连续失败超过上限，暂停并保留队列")
+            p.pause()
+            return
+        }
+        when {
+            p.hasNextMediaItem() -> {
+                p.seekToNextMediaItem()
+                p.prepare()
+                p.play()
+            }
+            // 已到队列末尾：列表循环（ALL / ONE，ONE 时 hasNext 恒 true 走不到这里）
+            // 情况下回绕到第一首再试，否则正常结束。
+            p.mediaItemCount > 0 && _uiState.value.repeatMode != RepeatMode.OFF -> {
+                val first = p.currentTimeline.getFirstWindowIndex(p.shuffleModeEnabled)
+                p.seekTo(if (first >= 0) first else 0, 0L)
+                p.prepare()
+                p.play()
+            }
+            else -> p.pause()
         }
     }
 
@@ -805,10 +868,32 @@ class PlaybackManager @Inject constructor(
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         _uiState.update { it.copy(isPlaying = isPlaying) }
+        // 正常播起来了：连续失败计数归零（只有「一直在失败」才判定为坏队列）
+        if (isPlaying) consecutiveErrorSkips = 0
+        else logPauseWithQueueIfAny()
         // 桌面小部件同步（内部去抖，连续变化只推一次 IPC）
         widgetUpdater.requestUpdate()
         // 注意：此处绝不可调用 serviceLauncher.ensureStarted()（见 PlaybackEventListener 注释）。
         saveSessionDebounced()
+    }
+
+    /**
+     * 「队列还有歌，但已经不在播了」——自动停止的现场快照。
+     *
+     * 过滤掉 buffering 抖动（此时 playWhenReady 仍为 true）与出错/停止
+     * （playbackState 已落 IDLE，各自有专门日志），只保留真正可疑的
+     * 「READY/BUFFERING 且 playWhenReady=false」这一种。
+     * 有了它，诊断报告里就能把「自动停止」和它前面那条成因记录对起来。
+     */
+    private fun logPauseWithQueueIfAny() {
+        val p = player ?: return
+        if (p.playWhenReady) return
+        if (p.mediaItemCount == 0) return
+        if (p.playbackState == Player.STATE_IDLE) return
+        PlaybackEventLog.record(
+            "paused-with-queue",
+            "idx=${p.currentMediaItemIndex} state=${p.playbackState} song=${_uiState.value.currentSongId}"
+        )
     }
 
     override fun onBufferingChanged(isBuffering: Boolean) {
@@ -833,10 +918,12 @@ class PlaybackManager @Inject constructor(
         warmUpFollowingApe()
         // 曲目切换后立即刷新 ReplayGain 增益（取当前曲目标签 + 设置）
         applyReplayGainForCurrent()
-        // 无缝播放关闭：在自动切歌（非用户手动 next）的边界处暂停，形成「曲间停顿」；
-        // Media3 默认即无缝，故 ON 时不做处理。
+        // 无缝播放关闭：在自动切歌（非用户手动 next）的边界处停顿一小会再继续。
+        // 注意必须是「暂停 → 延时 → 继续」，只暂停不续播会让播放到此为止（历史缺陷）。
+        // 其余原因（用户手动切歌 / 换队列）不动在途的停顿：用户按 next 时播放器
+        // 正处于「被停顿暂停」的状态，若在这里取消续播意图，会变成「切了歌却停着」。
         if (!gaplessEnabled && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
-            player?.pause()
+            interTrackGap.start()
         }
         // 「播完本曲停止」到点：自然播完切下一首（AUTO）或单曲循环重头（REPEAT）。
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
@@ -848,6 +935,11 @@ class PlaybackManager @Inject constructor(
         widgetUpdater.requestUpdate()
     }
 
+    /** 作废在途的曲间停顿（不改变当前播放态，仅取消「稍后自动续播」的意图） */
+    override fun cancelInterTrackGap() {
+        interTrackGap.cancel()
+    }
+
     override fun recordCompletion(songId: Long) {
         scope.launch { musicRepository.recordCompletion(songId) }
     }
@@ -855,12 +947,14 @@ class PlaybackManager @Inject constructor(
     override fun onPlaybackEnded() {
         // 末首自然播完（无 AUTO/REPEAT 过渡）的收尾。完成去重已由事件层
         // [CompletionRecorder] 在触发处负责，此处只做：睡眠定时归零 + 立即存档 + 空闲停服。
+        PlaybackEventLog.record("playback-ended", "idx=${player?.currentMediaItemIndex}")
         finishEndOfTrackSleepTimer()
         saveSessionNow()
         if ((player?.mediaItemCount ?: 0) == 0) stopServiceIfIdle()
     }
 
     override fun onIdleCleared() {
+        PlaybackEventLog.record("idle-cleared", "队列已空，准备空闲停服")
         stopServiceIfIdle()
     }
 
@@ -902,6 +996,9 @@ class PlaybackManager @Inject constructor(
 
     private companion object {
         const val TAG = "PlaybackManager"
+
+        /** 连续失败跳过上限：超过就判定队列不可用，暂停但保留队列 */
+        const val MAX_CONSECUTIVE_ERROR_SKIPS = 3
     }
 
     // 媒体项 / URI / 队列项构造已抽到 PlaybackMediaItems（P1-1 拆分第一刀）：

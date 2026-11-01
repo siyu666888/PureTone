@@ -364,8 +364,8 @@
     <string name="pt_settings_020" formatted="false">导出失败：%1$s</string>
     <!-- 导出诊断日志 -->
     <string name="pt_settings_021" formatted="false">导出诊断日志</string>
-    <!-- 导出最近崩溃堆栈与设备信息，可发送给开发者协助定位；不读取或上传任何个人曲库内容。 -->
-    <string name="pt_settings_022" formatted="false">导出最近崩溃堆栈与设备信息，可发送给开发者协助定位；不读取或上传任何个人曲库内容。</string>
+    <!-- 诊断（已迁入「实验室」分类）：说明压缩为单行，避免两行长句破坏分类节奏 -->
+    <string name="pt_settings_022" formatted="false">仅导出崩溃与设备信息，不含任何个人曲库内容</string>
     <!-- 实验室 -->
     <string name="pt_settings_023" formatted="false">实验室</string>
     <!-- 桌面 -->
@@ -622,4 +622,10 @@
     <string name="pt_meta_011" formatted="false">没有需要补全封面的歌曲</string>
     <!-- 封面补全完成，%1$d 已补全 / %2$d 总数 / %3$d 剩余 -->
     <string name="pt_meta_012" formatted="true">封面补全完成：%1$d / %2$d 首（剩余 %3$d 首未补全）</string>
+    <!-- 播放事件记录段落标题（%1$s 为日志文件名） -->
+    <string name="pt_diag_021" formatted="true">---- 播放事件记录 (%1$s) ----</string>
+    <!-- 播放事件记录为空时的占位 -->
+    <string name="pt_diag_022" formatted="false">(无播放事件记录)</string>
+    <!-- 播放事件记录读取异常时的占位 -->
+    <string name="pt_diag_023" formatted="false">(播放事件读取失败)</string>
 </resources>

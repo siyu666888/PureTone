@@ -79,14 +79,18 @@ internal class PlaybackController(
 
     fun pause() {
         crossfade.cancel()
+        // 用户显式暂停：作废「曲间停顿」的延时续播，否则两秒后会把暂停又拉起来
+        sink.cancelInterTrackGap()
         // 投屏态：暂停的是渲染器。本地本就是暂停的，这里不能再去 pause 本地
         // （否则 stopCast 后恢复本地播放时，位置/状态会被二次重置）。
         if (castState().isCasting) {
             scope.launch { dlnaCast.pause() }
             uiState.update { it.copy(isPlaying = false) }
             sink.saveSessionNow()
+            PlaybackEventLog.record("user-pause", "投屏态")
             return
         }
+        PlaybackEventLog.record("user-pause", "本地 idx=${playerProvider()?.currentMediaItemIndex}")
         playerProvider()?.pause()
         // 同步刷新播放态：onIsPlayingChanged 监听是异步的，投屏 startCast 暂停本地后
         // 若不立即置 false，UI 会短暂显示「播放中」与投屏中提示条冲突（P0-2-③）。
@@ -96,6 +100,8 @@ internal class PlaybackController(
 
     fun stop() {
         crossfade.cancel()
+        sink.cancelInterTrackGap()
+        PlaybackEventLog.record("user-stop", "清空队列")
         playerProvider()?.stop()
         playerProvider()?.clearMediaItems()
         // P3-21：旧实现整包重置 uiState，把 repeatMode / shuffle / speed 一并打回默认，
@@ -253,4 +259,12 @@ interface PlaybackControlSink {
 
     /** 播放器空闲（非播放且队列空）时停掉前台服务（stop 调用） */
     fun stopServiceIfIdle()
+
+    /**
+     * 作废在途的「曲间停顿」延时续播。
+     *
+     * 关闭无缝播放时，自动切歌边界会「暂停 → 延时 → 继续」。若用户在这段延时里
+     * 按了暂停/停止，必须把续播意图一起取消，否则会出现「按了暂停，两秒后自己又响了」。
+     */
+    fun cancelInterTrackGap()
 }

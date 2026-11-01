@@ -8,6 +8,7 @@ import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.puretone.player.BuildConfig
 import com.puretone.player.PureToneApplication
 import com.puretone.player.R
+import com.puretone.player.playback.PlaybackEventLog
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -56,8 +57,17 @@ object DiagnosticExport {
         sb.appendLine()
         sb.appendLine(context.getString(R.string.pt_diag_017))
         sb.appendLine(readLastFfmpegOutput(context))
+        sb.appendLine()
+        // 播放事件记录（P3-6）：崩溃堆栈回答不了「为什么播放自己停了」，
+        // 只有这条时间线能。判读方法见 PlaybackEventLog 类注释。
+        sb.appendLine(context.getString(R.string.pt_diag_021, PlaybackEventLog.FILE_NAME))
+        sb.appendLine(readPlaybackEvents(context))
         return sb.toString()
     }
+
+    private fun readPlaybackEvents(context: Context): String = runCatching {
+        PlaybackEventLog.read().ifBlank { context.getString(R.string.pt_diag_022) }
+    }.getOrDefault(context.getString(R.string.pt_diag_023))
 
     private fun readCrash(context: Context): String? = runCatching {
         val file = File(context.filesDir, PureToneApplication.CRASH_FILE)

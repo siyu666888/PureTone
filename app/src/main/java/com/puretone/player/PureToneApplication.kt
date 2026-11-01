@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import coil.Coil
 import coil.ImageLoader
+import com.puretone.player.playback.PlaybackEventLog
 import com.puretone.player.playback.cast.DlnaCastManager
 import dagger.hilt.android.HiltAndroidApp
 import java.io.File
@@ -35,6 +36,10 @@ class PureToneApplication : Application() {
         Coil.setImageLoader(imageLoader)
         dlnaCastManager.init(this)
         installCrashLogger()
+        // 播放事件日志（P3-6）：诊断报告里原先没有任何播放链路记录，
+        // 「自动停止」类反馈无法定位。这里在进程启动时把 filesDir 注入进去，
+        // 之后由 PlaybackManager / 控制器按需追加记录。
+        PlaybackEventLog.init(filesDir)
     }
 
     override fun onTerminate() {

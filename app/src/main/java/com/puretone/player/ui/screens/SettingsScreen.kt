@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -193,45 +194,6 @@ fun SettingsScreen(
             )
         }
 
-        // 诊断（P3-1）：导出崩溃与设备信息，便于远程定位问题（不含任何个人曲库内容）
-        SettingsGroup(title = stringResource(R.string.pt_settings_019)) {
-            var exportMsg by remember { mutableStateOf<String?>(null) }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(SETTINGS_ROW_HEIGHT)
-                    .clickable {
-                        runCatching {
-                            val file = DiagnosticExport.writeReport(context)
-                            DiagnosticExport.share(context, file)
-                        }.onFailure {
-                            PureToneApplication.writeCrash("exportDiagnostics", it)
-                            exportMsg = context.getString(R.string.pt_settings_020, it.message ?: it.javaClass.simpleName)
-                        }
-                    },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    stringResource(R.string.pt_settings_021),
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f)
-                )
-                exportMsg?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-            Text(
-                stringResource(R.string.pt_settings_022),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-        }
-
         // 实验室（实验性功能）：总开关常驻可见，关闭时其下所有子分类（入口 + 设置项）整体隐藏
         SettingsGroup(title = stringResource(R.string.pt_settings_023)) {
             SwitchRow(
@@ -367,6 +329,58 @@ fun SettingsScreen(
                     stringResource(R.string.pt_settings_043),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+            }
+
+            // 诊断（P3-1）：导出崩溃与设备信息，便于远程定位问题（不含任何个人曲库内容）。
+            // 2026-11-02 迁入「实验室」：它不是日常设置项，而是排查手段——放在实验性功能
+            // 分类下，主设置页保持「外观 / 播放 / 音效 / 隐私」四段清爽结构。
+            // 入口本身仍是「行内点击 + 系统分享面板」，无独立路由；从顶层迁走后，
+            // 唯一导航入口就是这里的这一行（实验室关闭时随之隐藏）。
+            SettingsGroup(title = stringResource(R.string.pt_settings_019)) {
+                var exportMsg by remember { mutableStateOf<String?>(null) }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(SETTINGS_ROW_HEIGHT)
+                        .clickable {
+                            runCatching {
+                                val file = DiagnosticExport.writeReport(context)
+                                DiagnosticExport.share(context, file)
+                            }.onFailure {
+                                PureToneApplication.writeCrash("exportDiagnostics", it)
+                                exportMsg = context.getString(
+                                    R.string.pt_settings_020,
+                                    it.message ?: it.javaClass.simpleName
+                                )
+                            }
+                        },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        stringResource(R.string.pt_settings_021),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f)
+                    )
+                    exportMsg?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                // 说明文案压缩为单行（原为两行长句），并强制不换行、超长省略——
+                // 保持与上方各分类「标题 + 一行说明」同一视觉节奏。
+                Text(
+                    stringResource(R.string.pt_settings_022),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
             }

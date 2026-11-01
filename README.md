@@ -279,6 +279,7 @@ scripts/collect-baseline-profile.sh <device-serial>
 | v1.8.3 | **P3-3 歌单 UI 补完**：新增歌单详情页（头部播放全部 + 溢出菜单重命名/导出 M3U/删除 + 歌曲列表点按播放、拖动排序、移除单曲）；`MeScreen` 歌单卡片点击由「直接播放」改为进入详情页；数据层补 `PlaylistDao.reorder`/`updatePosition` + repo/ViewModel 包装。详见 `dist/v1.8.3_歌单UI补完_P3-3_2026-11-01.md` |
 | v1.8.4 | **P3-4 字符串资源化**：将 UI 层 314 处硬编码中文字面量抽取到 `res/values/strings.xml`（新增 294 个 `pt_` 资源键），为国际化/合规做准备；采用「一次性脚本 `tools/string_extract.py` 批量抽取 composable 内文案 + 手工 Phase B 收尾非 composable/助手函数/诊断报告」策略；`strings.xml` 条目由 2 → 296。详见 `dist/v1.8.4_字符串资源化_P3-4_2026-11-01.md` |
 | v1.8.5 | **ViewModel 消息流资源化收尾 + 设置隐私文案单行化**：引入 `UiMessage` 密封类型（`Res` 资源模板 / `Raw` 动态文本），将 `MetadataViewModel._message` 与 `LibraryViewModel.m3uMessage` 全部改为发射 `UiMessage`（含 `pt_meta_001~012` 共 12 条资源）；M3U 导入/导出提示因含文件路径/歌单名等动态内容保持 `UiMessage.Raw`。设置页「联网补全元数据与歌词」开启提示改为单行文案「已开启：向iTunes与LRCLIB发送信息匹配歌词与元数据」。本地 `compile/lint/test/detekt` 全绿。详见 `dist/v1.8.5_ViewModel消息流资源化_2026-11-02.md` |
+| v1.8.6 | **设置结构调整 + 智能歌单图标修复 + 播放自动停止修复**：①「诊断」整组从设置页顶层迁入「实验室」分类（实验室关闭时随父级隐藏），说明文案压缩为单行「仅导出崩溃与设备信息，不含任何个人曲库内容」并加 `maxLines=1`；②修复智能歌单三枚图标完全不渲染——`DrawTransform.scale` 默认以画布中心为轴心，而图标坐标是 0..24 左上角原点，缩放后整枚图标被推出画布外，改为 `pivot = Offset.Zero`；③修复「播放自动停止」：关闭无缝播放时旧实现只 `pause()` 不续播（每播完一首永久停住），新增 `InterTrackGap` 做「暂停→1.2s→续播」并可被用户命令打断；播放失败（非 APE）不再整队停死，改为跳下一首（连续 3 首失败才放弃且保留队列）；④新增 `PlaybackEventLog` 环形事件日志并纳入诊断报告，补齐「自动停止」缺证据链的问题。详见 `dist/v1.8.6_设置诊断迁移与播放自愈_2026-11-02.md` |
 
 ---
 

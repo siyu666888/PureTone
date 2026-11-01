@@ -35,8 +35,17 @@ fun SmartPlaylistGlyph(kind: SmartPlaylistKind, modifier: Modifier = Modifier) {
         SmartPlaylistKind.RECENTLY_PLAYED -> MaterialTheme.colorScheme.tertiary
     }
     Canvas(modifier.defaultMinSize(28.dp, 28.dp)) {
+        // 图标路径全部按 24×24 的设计坐标系书写（与 Material 图标规范一致），
+        // 这里把 0..24 的坐标系线性映射到画布尺寸。
+        //
+        // 必须显式指定 pivot = Offset.Zero：DrawTransform.scale 默认以**画布中心**
+        // 为缩放轴心，而本图标的坐标原点在左上角。以中心为轴心缩放等于
+        //   p' = center + (p - center) * s
+        // 设计坐标 (12,12)（图标几何中心）会被算成 center - 12s，在 44dp 画布上
+        // ≈ (-231, -231)px —— 整个图标被推到画布左上方之外，屏幕上完全看不到。
+        // 这正是「智能歌单图标不显示」的根因（三个图标同源，故同时失效）。
         val scale = size.minDimension / 24f
-        withTransform({ scale(scale, scale) }) {
+        withTransform({ scale(scale, scale, pivot = Offset.Zero) }) {
             when (kind) {
                 SmartPlaylistKind.RECENTLY_ADDED -> drawHourglass(tint)
                 SmartPlaylistKind.MY_FAVORITES -> drawHeart(tint)
