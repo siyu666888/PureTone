@@ -129,6 +129,27 @@ jobs:
             "$APKSIGNER" verify --verbose "$apk"
           done
 
+      # LGPL 合规断言（P0-3）：
+      # release 开启 shrinkResources 会删掉「无代码引用」的 raw 资源，
+      # 实测曾导致 ffmpeg-kit 的 LGPL 许可证全文与**源码获取方式**被裁掉——
+      # 发布出去的 APK 既无许可证全文也无 source.txt，合规实际未闭环
+      # （且 packaging.pickFirsts 里的 META-INF/NOTICE / LGPL2.1 对本 AAR 无效，
+      #   因为 AAR 内根本没有这些条目）。
+      # 现改为从 AAR 提取到 assets/licenses/（assets 不参与资源裁剪），
+      # 这里断言它们确实在包里，防止回归。
+      - name: 校验 LGPL 许可证随包分发
+        run: |
+          set -e
+          APK=$(ls app/build/outputs/apk/release/*universal-release.apk | head -1)
+          for f in assets/licenses/license.txt assets/licenses/source.txt; do
+            if unzip -l "$APK" | grep -q "$f"; then
+              echo "$f OK"
+            else
+              echo "::error::$f 缺失——LGPL 许可证/源码获取方式未随包分发"
+              exit 1
+            fi
+          done
+
       - name: 校验 Baseline Profile 已打包
         # 手写规则（app/src/main/baselineProfiles/baseline-prof.txt）若被误删或
         # 写了 dex 中不存在的类，AGP 会静默跳过或构建失败。这里断言产物里确实
@@ -140,6 +161,39 @@ jobs:
           unzip -l "$APK" | grep -q "assets/dexopt/baseline.prof" \
             && echo "baseline.prof OK" \
             || { echo "::error::assets/dexopt/baseline.prof 缺失"; exit 1; }
+
+      # 16KB 页大小兼容性（P0-3 第一步实测结论，详见 dist/v1.7.24 交付文档）。
+      #
+      # 实测结论：ffmpeg-kit 6.0-2.LTS 的全部 .so 是 **4KB 页**编译
+      # （PT_LOAD p_align=4096），在 16KB 页设备上无法加载；
+      # 而 APK 内 .so 全部为 Stored（未压缩），故 zip 条目层**必须**16KB 对齐。
+      #
+      # 两层实测结果：
+      #   ZIP  层（zipalign -c -P 16）→ 5 个 APK 全部 EXIT=0，零不对齐条目
+      #                            （AGP 8.6 打包已正确处理）
+      #   ELF 层（PT_LOAD p_align）  → 52 个 .so 中 44 个不合规，全为 ffmpeg-kit 系
+      #
+      # 为什么现在**不**阻塞：Google Play 的 16KB 硬要求绑定 targetSdk 35+，
+      # 本项目当前 targetSdk=34，尚未触发。强行阻塞只会让 CI 永久变红、
+      # 掩盖其它真实失败。
+      # 升级为真门禁的时机：ffmpeg-kit 换成 16KB 构建之后——
+      # 届时删掉本步的 continue-on-error: true 即可。
+      - name: 检查 16KB 页大小对齐（当前已知不合规，仅报告不阻塞）
+        continue-on-error: true
+        run: |
+          set -e
+          # 只查 universal 包：它一个就覆盖 arm64-v8a / armeabi-v7a / x86 / x86_64 四个 ABI
+          APK=$(ls app/build/outputs/apk/release/*universal-release.apk | head -1)
+          echo "checking $APK"
+          python3 tools/check_16kb_alignment.py "$APK" > /tmp/16kb.txt 2>&1 || true
+          cat /tmp/16kb.txt
+          {
+            echo "### 16KB 页大小对齐检查（ELF LOAD 段）"
+            echo ""
+            echo '```'
+            cat /tmp/16kb.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # Baseline Profile 有效性校验（P2-1）：
       # 「打包了」不等于「生效」——规则里若写了 dex 中不存在的类，AGP 会静默丢弃，

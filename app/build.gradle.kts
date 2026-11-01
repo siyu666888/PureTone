@@ -192,6 +192,57 @@ kotlin {
 }
 
 /**
+ * LGPL 许可证随包分发（P0-3 实测修复，2026-11-01）。
+ *
+ * 背景：ffmpeg-kit-min-6.0-2.LTS.aar 是 LGPL-3.0 许可，它把
+ *   - `res/raw/license.txt`            → LGPL 许可证全文
+ *   - `res/raw/license_cpu_features.txt` → CPU features 相关许可
+ *   - `res/raw/source.txt`             → **源码获取方式**（LGPL 第 6 条要求）
+ * 放在 AAR 的 res/raw/ 下。
+ *
+ * 问题（实测）：release 构建开启 `isShrinkResources = true`，
+ * 而这三个 raw 资源**没有任何代码引用**（不是 R.raw.license），
+ * AAPT 的资源裁剪把它们全删了——
+ *   debug   APK → res/raw/license.txt 7651 字节、source.txt 700 字节 ✅
+ *   release APK → res/raw 下 0 个文件 ❌
+ * 即：发布出去的 APK 既无 LGPL 许可证全文，也无源码获取方式，合规未闭环。
+ * （另：`packaging.resources.pickFirsts` 里配的 META-INF/NOTICE / LGPL2.1
+ *   对本 AAR **无效**——AAR 内根本没有这些条目。）
+ *
+ * 为什么用 assets 而不是 `res/raw/keep.xml`：
+ * `tools:keep` 实测**未生效**（加 keep.xml 后重新构建 release，APK 内仍无这些文件）；
+ * 而 assets 目录**不参与资源裁剪**，是确定性的做法。
+ * 且从 AAR **自动提取**而非手工复制——换 16KB 版 ffmpeg-kit 时，
+ * 许可证会随 AAR 一起自动换掉，不会出现「库换了、许可证还是旧的」这种漂移。
+ */
+val ffmpegKitAar = file("libs/ffmpeg-kit-min-6.0-2.LTS.aar")
+val ffmpegLicensesDir = layout.buildDirectory.dir("generated/ffmpegLicenses")
+
+val extractFfmpegLicenses = tasks.register<Copy>("extractFfmpegLicenses") {
+    description = "从 ffmpeg-kit AAR 提取 LGPL 许可证与源码获取方式到 assets/licenses/"
+    from(zipTree(ffmpegKitAar)) {
+        include("res/raw/license*.txt", "res/raw/source*.txt")
+        eachFile { path = "licenses/${path.substringAfterLast('/')}" }
+        includeEmptyDirs = false
+    }
+    into(ffmpegLicensesDir)
+}
+
+// assets 目录来自 build 产物，需要显式接线任务依赖
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn(extractFfmpegLicenses)
+}
+tasks.named("preBuild") { dependsOn(extractFfmpegLicenses) }
+
+android {
+    sourceSets {
+        getByName("main") {
+            assets.srcDir(ffmpegLicensesDir)
+        }
+    }
+}
+
+/**
  * detekt 门禁（P2-2）。
  *
  * 目标：**卡住「下一个 1000+ 行文件」的出现**。P1-1 把 PlaybackManager 从

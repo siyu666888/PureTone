@@ -75,8 +75,8 @@
 | 桌面小部件 | Glance AppWidget |
 | 构建 | AGP 8.6.0 · Gradle 8.7 · JDK 17 · compileSdk 35 / targetSdk 34 · minSdk 26 |
 | 测试 | Robolectric 4.12.2 · Turbine 1.1.0（**344 用例 / 39 类全绿**） |
-| 静态检查 | Android Lint（`warningsAsErrors` + baseline 冻结存量）· detekt 1.23.7（baseline 冻结 1 条）· 文件行数门禁 ≤ 1200 行 |
-| CI | GitHub Actions（单测 / Debug+Release 构建 / apksigner 验签 / Baseline Profile 打包断言 **+ 规则有效性校验** / lint / detekt / 文件行数）+ Dependabot 依赖升级 + 每周依赖漂移巡检 |
+| 静态检查 | Android Lint（`warningsAsErrors` + baseline 冻结存量）· detekt 1.23.8（baseline 冻结 1 条）· 文件行数门禁 ≤ 1200 行 |
+| CI | GitHub Actions（单测 / Debug+Release 构建 / apksigner 验签 / Baseline Profile 打包断言 **+ 规则有效性校验** / lint / detekt / 文件行数 / 16KB 对齐报告）+ Dependabot 依赖升级 + 每周依赖漂移巡检 |
 
 ---
 
@@ -168,6 +168,37 @@ bash scripts/check-file-size.sh # 文件行数上限 1200 行（detekt 的 Large
 
 **清理存量告警的纪律**（务必遵守）：从 baseline 里**删掉对应条目再修代码**，
 不要整体删除 baseline 文件重新生成——那会一次性把既有问题全部重新冻结，等于闸门失效。
+
+### 16KB 页大小（发布合规）
+
+Android 15 起支持 16KB 页大小设备，Google Play 自 2025-11-01 起要求
+面向 Android 15+（即 **targetSdk 35+**）的应用必须支持。
+
+兼容性要过**两关**，缺一不可：
+
+| 关 | 管什么 | 谁负责 | 本项目现状 |
+| --- | --- | --- | --- |
+| ZIP 层 | APK 内未压缩 `.so` 的条目偏移按 16KB 对齐 | AGP 打包 + `zipalign` | ✅ 5 个 APK 全部通过 |
+| ELF 层 | `.so` 内 `PT_LOAD` 段的 `p_align` ≥ 16384 | **第三方库的编译方式**，打包工具管不了 | ❌ 52 个中 44 个 = 4096 |
+
+```bash
+# ELF 层检查（自研解析器，零外部依赖，不需要 NDK）
+python3 tools/check_16kb_alignment.py app/build/outputs/apk/release/*universal-release.apk
+
+# ZIP 层检查（官方工具）
+$ANDROID_HOME/build-tools/35.0.0/zipalign -c -P 16 -v 4 <apk>
+```
+
+> **「zipalign 通过」≠「支持 16KB」**——这是最容易搞混的一点。
+>
+> 现状：不合规的 44 个 `.so` **全部来自 ffmpeg-kit**（2022 年用 4KB 页 NDK 编译），
+> 影响 **APE 转码** 与 **ReplayGain** 两个功能在 16KB 设备上加载失败。
+> AndroidX 自己的两个 `.so` 已是 16384，无风险。
+>
+> 当前 `targetSdk=34`，尚未触发 Play 的硬要求，故 CI 里只**报告不阻塞**
+> （结论写进 CI Summary，保持风险可见）；换成 16KB 版 ffmpeg-kit 后即可升级为门禁。
+>
+> 完整实测数据与换库验证清单见 `dist/v1.7.24_P0-3_16KB对齐实测_2026-11-01.md`。
 
 ### Baseline Profile（性能）
 
