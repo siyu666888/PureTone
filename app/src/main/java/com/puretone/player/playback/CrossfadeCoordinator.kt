@@ -46,6 +46,9 @@ internal interface CrossfadePlayer {
     /** 移除 [index] 处的媒体项（失败静默：索引可能在读取后已失效） */
     fun removeItem(index: Int)
 
+    /** 在 [index] 处插入媒体项（取消淡化时把「让出的下一首」还给主播放器） */
+    fun insertItems(index: Int, items: List<MediaItem>)
+
     /** 置为单曲队列（淡化窗口内备援只承载一首） */
     fun setItem(item: MediaItem)
 
@@ -89,6 +92,10 @@ internal class ExoCrossfadePlayer(private val player: ExoPlayer) : CrossfadePlay
 
     override fun removeItem(index: Int) {
         runCatching { player.removeMediaItem(index) }
+    }
+
+    override fun insertItems(index: Int, items: List<MediaItem>) {
+        runCatching { player.addMediaItems(index.coerceAtLeast(0), items) }
     }
 
     override fun setItem(item: MediaItem) {
@@ -165,6 +172,9 @@ internal class CrossfadeCoordinator(
     private var crossfading: Boolean = false
     private var job: Job? = null
     private var pendingRemaining: List<MediaItem> = emptyList()
+
+    /** 淡化开始被从主播放器摘下的「下一首」；取消淡化时原样还回去（否则队列永久少一首） */
+    private var removedItem: MediaItem? = null
     private var nextIndex: Int = -1
     private var outgoing: CrossfadePlayer? = null
 
@@ -226,6 +236,7 @@ internal class CrossfadeCoordinator(
         if (remaining.isEmpty()) return
         // 主播放器移除下一首：避免其在淡出过程中自行续播（否则重复计完成 / 重复切歌）
         primary.removeItem(index)
+        removedItem = remaining.first()
         // 备援承载下一首，音量从 0 起步
         sec.setItem(remaining.first())
         sec.setVolume(0f)
@@ -240,6 +251,10 @@ internal class CrossfadeCoordinator(
         outgoing = primary
         nextIndex = index
         pendingRemaining = remaining.drop(1)
+        PlaybackEventLog.record(
+            "crossfade-start",
+            "idx=$index cf=${s.crossfadeMs}ms remain=${remainMs}ms"
+        )
         val rampMs = CrossfadeRamp.rampDurationMs(s.crossfadeMs, remainMs)
         job = scope.launch {
             val steps = CrossfadeRamp.steps(rampMs)
@@ -270,15 +285,26 @@ internal class CrossfadeCoordinator(
         }
         pendingRemaining = emptyList()
         nextIndex = -1
+        removedItem = null
         outgoing = null
-        // 复位旧主（现为备援）音量并清空，供下次淡化复用
+        crossfading = false
+        // STATE_ENDED 兜底收尾时渐变协程可能还在跑：这里必须真的取消它。
+        // 只把 job 置空的话，协程会继续按旧角色往「已交换的两个实例」上写音量
+        // （把刚成为新主的那一路又从途中值拉回去），而且再也没人能取消它。
+        job?.cancel()
+        job = null
+        PlaybackEventLog.record("crossfade-finalize", "idx=$index")
+        // ---- 顺序至关重要 ----
+        // 先把所有权交给宿主（player 引用 / MediaSession / 监听器全部换位），再复位旧主。
+        // 反过来（先 pauseAndClear 再交权）那 40ms 里旧主仍是宿主眼中的「当前播放器」：
+        // pause() + clearMediaItems() 会让它落到「队列已空且不在播」的空闲判定上，
+        // 触发 stopServiceIfIdle → 整个服务被停掉（连带 release 两个播放器与会话），
+        // 表现为「开了交叉淡化后一首播完就整体停止，随后前台服务超时崩溃」。
+        host.onFinalize(newPrimary = sec, outgoing = outgoingPlayer, nextIndex = index)
+        // 此时 crossfade.attach() 已把旧主重新注入为备援，secondaryGain 指向旧主的处理器
         outgoingPlayer.setVolume(1f)
         secondaryGain?.setGainLinear(1f)
         outgoingPlayer.pauseAndClear()
-        crossfading = false
-        job = null
-        // 角色交换（主播放器引用 / ReplayGain 处理器 / MediaSession / 监听器）由宿主完成
-        host.onFinalize(newPrimary = sec, outgoing = outgoingPlayer, nextIndex = index)
     }
 
     /**
@@ -290,13 +316,19 @@ internal class CrossfadeCoordinator(
         job?.cancel()
         job = null
         val out = outgoing
+        val removed = removedItem
+        val index = nextIndex
         reset()
+        // 把「让出的下一首」还给主播放器。淡化窗口内它被 removeItem 出去了，
+        // 不还回去的话，用户在中途按暂停/切歌（cancel）后队列会永久少一首。
+        if (out != null && removed != null && index >= 0) out.insertItems(index, listOf(removed))
         out?.setVolume(1f)
         secondaryGain?.setGainLinear(1f)
         secondary?.let { sec ->
             sec.pauseAndClear()
             sec.setVolume(1f)
         }
+        PlaybackEventLog.record("crossfade-cancel", "idx=$index")
     }
 
     /** 清空淡化状态（不含播放器复位，供 finalize 内部与异常路径复用） */
@@ -305,6 +337,7 @@ internal class CrossfadeCoordinator(
         job?.cancel()
         job = null
         outgoing = null
+        removedItem = null
         nextIndex = -1
         pendingRemaining = emptyList()
     }

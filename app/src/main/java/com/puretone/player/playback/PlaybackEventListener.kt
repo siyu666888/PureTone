@@ -20,8 +20,14 @@ import androidx.media3.exoplayer.ExoPlayer
  * 同一手法。这样事件解释的纯逻辑可在纯 JVM 上单测（见 [PlaybackEventClassifier]
  * 与 [CompletionRecorder]），而无需 mock final 的 [ExoPlayer]。
  *
- * 两个监听器以 [listener] / [secondaryListener] 暴露给宿主，由宿主在 bind 时注册、
- * unbind 时注销（与改造前一致，只是对象本体搬到了这里）。
+ * 两个监听器以 [primaryListenerFor] / [secondaryListener] 暴露给宿主，由宿主在 bind 时注册、
+ * unbind 时注销。
+ *
+ * **为什么主监听器要按实例创建**：交叉淡化在曲目边界交换主/备角色，而 ExoPlayer 的回调
+ * 是异步派发的——淡出方「播完」的 STATE_ENDED 可能直到换主之后才落到监听器上。此时
+ * 监听器若按「当前主播放器」去解释事件，就会把**刚接上的那一首**当成「刚播完的那一首」
+ * （误记完整播放 + 误触发播完本曲停止）。因此每个播放器实例各持一个监听器，回调里
+ * 先确认「事件确实来自我现在的主人」（[playerProvider] 恒等比较），否则直接丢弃。
  */
 internal class PlaybackEventListener(
     /** 惰性读取当前主播放器：构造时可能尚未 bind，故用 provider 而非直接引用 */
@@ -31,34 +37,51 @@ internal class PlaybackEventListener(
     private val sink: PlaybackEventSink
 ) {
 
-    /** 主播放器监听器（bind 时注册到主播放器） */
-    val listener: Player.Listener = object : Player.Listener {
+    /**
+     * 每个播放器实例一份主监听器（角色交换后原实例的残留回调因此可被识别并丢弃）。
+     * 用弱引用键：服务反复重建会换新实例，旧条目不该被这里钉住。
+     */
+    private val primaryListeners = java.util.WeakHashMap<ExoPlayer, Player.Listener>()
+
+    /** 取 [player] 对应的主监听器（同一实例重复取返回同一个对象，便于 add/remove 配对） */
+    fun primaryListenerFor(player: ExoPlayer): Player.Listener =
+        primaryListeners.getOrPut(player) { createPrimaryListener(player) }
+
+    private fun createPrimaryListener(owner: ExoPlayer): Player.Listener = object : Player.Listener {
+
+        /** 事件是否来自「我现在的主播放器」；不是就说明是角色交换前残留的回调 */
+        private fun fromCurrentPrimary(): Boolean = playerProvider() === owner
+
         override fun onAudioSessionIdChanged(audioSessionId: Int) {
+            if (!fromCurrentPrimary()) return
             sink.onAudioSessionChanged(audioSessionId)
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (!fromCurrentPrimary()) return
             sink.onIsPlayingChanged(isPlaying)
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if (!fromCurrentPrimary()) return
             sink.onBufferingChanged(playbackState == Player.STATE_BUFFERING)
             if (playbackState == Player.STATE_ENDED) {
+                // 「谁结束了」必须在收尾换主之前取，否则记到的是刚接上的那一首
+                val endedSongId = currentSongIdProvider()
                 // 主播放器自然播到结尾：淡出兜底收尾 + 末首完成去重 + 末首收尾处理。
-                playerProvider()?.let { sink.finalizeCrossfadeIfOutgoing(it) }
-                currentSongIdProvider()?.let { id ->
+                sink.finalizeCrossfadeIfOutgoing(owner)
+                endedSongId?.let { id ->
                     completionRecorder.record(id)?.let { sink.recordCompletion(it) }
                 }
                 sink.onPlaybackEnded()
             }
-            if (playbackState == Player.STATE_IDLE &&
-                (playerProvider()?.mediaItemCount ?: 0) == 0
-            ) {
+            if (playbackState == Player.STATE_IDLE && owner.mediaItemCount == 0) {
                 sink.onIdleCleared()
             }
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (!fromCurrentPrimary()) return
             val prevId = currentSongIdProvider()
             val songId = mediaItem?.mediaId?.toLongOrNull()
             // 上一首「完整播放完成」：自然播完（AUTO）或单曲循环回放（REPEAT）。
@@ -89,7 +112,15 @@ internal class PlaybackEventListener(
             }
         }
 
-        override fun onPlayerError(error: PlaybackException) = sink.onError(error)
+        override fun onPlayerError(error: PlaybackException) {
+            // 错误只上报「当前主播放器」的：已降级的旧主在收尾清空过程中的异常若走
+            // 自愈路径（跳歌/暂停），会把正在播的新主一起带走。
+            if (!fromCurrentPrimary()) {
+                android.util.Log.w("PlaybackEventListener", "ignored error from non-primary: $error")
+                return
+            }
+            sink.onError(error)
+        }
     }
 
     /**

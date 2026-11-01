@@ -34,7 +34,9 @@ class CrossfadeCoordinatorTest {
         override var durationMs: Long = 0L,
         override var positionMs: Long = 0L,
         val items: MutableList<MediaItem> = mutableListOf(),
-        override var currentIndex: Int = 0
+        override var currentIndex: Int = 0,
+        /** 与 [FakeHost] 共享的调用顺序日志：锁「先交权、后复位旧主」 */
+        val callLog: MutableList<String> ? = null
     ) : CrossfadePlayer {
 
         override val itemCount: Int get() = items.size
@@ -46,6 +48,7 @@ class CrossfadeCoordinatorTest {
         var startCount: Int = 0
         var clearCount: Int = 0
         var removeCount: Int = 0
+        var insertCount: Int = 0
 
         override fun itemsFrom(index: Int): List<MediaItem> =
             items.subList(index.coerceIn(0, items.size), items.size).toList()
@@ -53,6 +56,11 @@ class CrossfadeCoordinatorTest {
         override fun removeItem(index: Int) {
             removeCount++
             if (index in items.indices) items.removeAt(index)
+        }
+
+        override fun insertItems(index: Int, inserted: List<MediaItem>) {
+            insertCount++
+            items.addAll(index.coerceIn(0, items.size), inserted)
         }
 
         override fun setItem(item: MediaItem) {
@@ -74,6 +82,7 @@ class CrossfadeCoordinatorTest {
         }
 
         override fun pauseAndClear() {
+            callLog?.add("pauseAndClear")
             clearCount++
             items.clear()
             currentIndex = 0
@@ -83,12 +92,14 @@ class CrossfadeCoordinatorTest {
     private class FakeHost(
         override var settings: PureToneSettings = PureToneSettings(crossfadeMs = 6_000),
         override var queue: List<QueueEntry> = emptyList(),
-        override var isCasting: Boolean = false
+        override var isCasting: Boolean = false,
+        val callLog: MutableList<String>? = null
     ) : CrossfadeCoordinator.Host {
 
         val finalized = mutableListOf<Int>()
 
         override fun onFinalize(newPrimary: CrossfadePlayer, outgoing: CrossfadePlayer, nextIndex: Int) {
+            callLog?.add("onFinalize")
             finalized += nextIndex
         }
     }
@@ -107,11 +118,12 @@ class CrossfadeCoordinatorTest {
     )
 
     /** 主播放器播到第 30s 中的 25s，后面还有两首：命中「剩余 5s ≤ 6s+余量」的触发窗口 */
-    private fun nearEndPlayer(): FakePlayer = FakePlayer(
+    private fun nearEndPlayer(callLog: MutableList<String>? = null): FakePlayer = FakePlayer(
         durationMs = 30_000L,
         positionMs = 25_000L,
         items = mutableListOf(item(1), item(2), item(3)),
-        currentIndex = 0
+        currentIndex = 0,
+        callLog = callLog
     )
 
     /** 在 [runTest] 的 TestScope 上构造：渐变协程的 delay 走虚拟时间，可被 [advanceUntilIdle] 推进 */
@@ -352,5 +364,58 @@ class CrossfadeCoordinatorTest {
         assertFalse(coordinator.isCrossfading)
         // detach 前已取消：备援被清空一次，之后不再起播
         assertEquals(1, secondary.startCount)
+    }
+
+    // ---------- 收尾顺序（交叉淡化导致「一首播完就整体停止」的根因） ----------
+
+    @Test
+    fun `收尾必须先交权再复位旧主`() = runTest {
+        val log = mutableListOf<String>()
+        val host = FakeHost(callLog = log)
+        val (coordinator, _) = coordinator(host = host)
+        coordinator.attach(FakePlayer(), ReplayGainAudioProcessor())
+        val primary = nearEndPlayer(callLog = log)
+
+        coordinator.maybeStart(primary)
+        advanceUntilIdle()
+
+        // 顺倒了会怎样：旧主在仍是「宿主眼中的当前播放器」时被 pause+清空，
+        // 以「队列空 + 不在播」落进空闲停服判定 → 整个服务被停掉（两个播放器一起释放）。
+        assertEquals(listOf("onFinalize", "pauseAndClear"), log)
+    }
+
+    // ---------- 取消：把让出的下一首还回去 ----------
+
+    @Test
+    fun `取消淡化时把让出的下一首还给主播放器`() = runTest {
+        val (coordinator, _) = coordinator()
+        val secondary = FakePlayer()
+        coordinator.attach(secondary, ReplayGainAudioProcessor())
+        val primary = nearEndPlayer()
+
+        coordinator.maybeStart(primary)
+        // 淡化窗口内用户按了暂停/切歌
+        assertEquals(2, primary.itemCount)
+        coordinator.cancel()
+
+        // 不还回去的话，用户中途打断一次就永久少一首歌（下一首凭空消失）
+        assertEquals(3, primary.itemCount)
+        assertEquals(2L, primary.items[1].mediaId.toLong())
+        assertEquals(1, primary.insertCount)
+    }
+
+    @Test
+    fun `收尾后不归还曲目，新主持有剩余队列`() = runTest {
+        val (coordinator, _) = coordinator()
+        val secondary = FakePlayer()
+        coordinator.attach(secondary, ReplayGainAudioProcessor())
+        val primary = nearEndPlayer()
+
+        coordinator.maybeStart(primary)
+        advanceUntilIdle()
+
+        // 正常收尾时下一首已经由备援承载，不能再插回旧主（否则重复一首）
+        assertEquals(0, primary.insertCount)
+        assertEquals(2, secondary.itemCount)
     }
 }

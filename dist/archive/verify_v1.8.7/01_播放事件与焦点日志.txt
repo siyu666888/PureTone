@@ -1,0 +1,18 @@
+== 修复后：交叉淡化 4s，5 首连播（模拟器 pt_test / API34 / x86_64）==
+
+--- files/playback_events.txt ---
+11-01 23:37:51.873 crossfade-start | idx=1 cf=4000ms remain=4117ms
+11-01 23:37:56.040 crossfade-finalize | idx=1
+11-01 23:38:19.998 crossfade-start | idx=1 cf=4000ms remain=4106ms
+11-01 23:38:24.132 crossfade-finalize | idx=1
+11-01 23:38:49.108 crossfade-start | idx=1 cf=4000ms remain=4103ms
+11-01 23:38:53.237 crossfade-finalize | idx=1
+11-01 23:39:20.239 crossfade-start | idx=1 cf=4000ms remain=4084ms
+11-01 23:39:24.335 crossfade-finalize | idx=1
+11-01 23:39:24.344 playback-ended | idx=0 count=1 cf=false
+11-01 23:41:22.621 paused-with-queue | idx=0 state=3 song=5
+
+--- logcat: 音频焦点（全程仅一次 request，无 onAudioFocusChange(-1)） ---
+11-01 23:37:20.703 I/MediaFocusControl(  531): requestAudioFocus() from uid/pid 10141/3585 AA=USAGE_MEDIA/CONTENT_TYPE_MUSIC clientId=android.media.AudioManager@55a2b06com.puretone.player.playback.AudioFocusController$$ExternalSyntheticLambda0@d2455c7 callingPack=com.puretone.player.debug req=1 flags=0x0 sdk=35
+11-01 23:41:22.623 I/MediaFocusControl(  531): abandonAudioFocus() from uid/pid 10141/3585 clientId=android.media.AudioManager@55a2b06com.puretone.player.playback.AudioFocusController$$ExternalSyntheticLambda0@d2455c7
+11-01 23:41:26.121 I/MediaFocusControl(  531): requestAudioFocus() from uid/pid 10141/3585 AA=USAGE_MEDIA/CONTENT_TYPE_MUSIC clientId=android.media.AudioManager@55a2b06com.puretone.player.playback.AudioFocusController$$ExternalSyntheticLambda0@d2455c7 callingPack=com.puretone.player.debug req=1 flags=0x0 sdk=35

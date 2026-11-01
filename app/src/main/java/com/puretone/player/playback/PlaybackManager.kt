@@ -1,5 +1,6 @@
 package com.puretone.player.playback
 
+import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
@@ -23,6 +24,7 @@ import com.puretone.player.playback.cast.CastResult
 import com.puretone.player.playback.cast.CastState
 import com.puretone.player.playback.cast.DlnaCastManager
 import com.puretone.player.widget.WidgetUpdater
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -98,6 +100,7 @@ data class PlaybackUiState(
 @Singleton
 @OptIn(UnstableApi::class)
 class PlaybackManager @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val musicRepository: MusicRepository,
     private val apeTranscoder: ApeTranscoder,
     private val audioEffectController: AudioEffectController,
@@ -161,6 +164,18 @@ class PlaybackManager @Inject constructor(
     private var consecutiveErrorSkips: Int = 0
 
     /**
+     * 应用级音频焦点（双实例必须单点持有，见 [AudioFocusController]）：两个 ExoPlayer 都以
+     * `handleAudioFocus = false` 构建，否则备援在淡化起点申请焦点会把主播放器打成 LOSS。
+     */
+    private val playbackFocus = PlaybackAudioFocus(
+        context = appContext,
+        playerProvider = { player },
+        isCrossfading = { crossfade.isCrossfading },
+        onPlayingFlagChanged = { playing -> _uiState.update { it.copy(isPlaying = playing) } },
+        onSessionChanged = { saveSessionDebounced() }
+    )
+
+    /**
      * 播放会话存档（P1-1 拆分第五刀）。
      *
      * 「保存位置钳到 duration-500」与「恢复时按保存顺序重排」两个已踩过的修复点都在这里，
@@ -211,11 +226,12 @@ class PlaybackManager @Inject constructor(
                 val out = (outgoing as? ExoCrossfadePlayer)?.exo ?: return
                 // MediaSession 指向新主
                 runCatching { session?.setPlayer(sec) }
-                // 交换监听器：新主挂完整 playerListener，旧主（现为备援）挂轻量 secondaryListener
-                out.removeListener(eventListener.listener)
+                // 交换监听器：新主挂完整监听器，旧主（现为备援）挂轻量 secondaryListener。
+                // 监听器按实例取（而非共用一份），这样旧主残留的异步回调能被识别并丢弃。
+                out.removeListener(eventListener.primaryListenerFor(out))
                 out.addListener(eventListener.secondaryListener)
                 sec.removeListener(eventListener.secondaryListener)
-                sec.addListener(eventListener.listener)
+                sec.addListener(eventListener.primaryListenerFor(sec))
                 // 新主的 RG 处理器即原备援处理器实例（处理器在 ExoPlayer 构建时就绑死在
                 // 各自的播放器上，随角色一并换位）
                 val outgoingGain = replayGainProcessor
@@ -429,7 +445,7 @@ class PlaybackManager @Inject constructor(
         // P3-17：防御 bind 重复调用（正常生命周期 unbind→bind 各一次，不可达）。
         // 先清上一次的 settingsJob 与监听器注册，避免重复订阅设置流 / 重复回调。
         settingsJob?.cancel()
-        this.player?.removeListener(eventListener.listener)
+        this.player?.let { it.removeListener(eventListener.primaryListenerFor(it)) }
         this.secondaryPlayer?.removeListener(eventListener.secondaryListener)
         this.player = player
         this.secondaryPlayer = secondary
@@ -438,7 +454,7 @@ class PlaybackManager @Inject constructor(
         this.replayGainProcessorB = replayGainProcessorB
         // 备援播放器交由协调器持有（其淡化窗口内的全部操作都在那里）
         crossfade.attach(ExoCrossfadePlayer(secondary), replayGainProcessorB)
-        player.addListener(eventListener.listener)
+        player.addListener(eventListener.primaryListenerFor(player))
         // 备援播放器只负责「挂接音效会话」与错误兜底，不驱动 UI/切歌（淡入淡出由协调器统一编排）
         secondary.addListener(eventListener.secondaryListener)
         audioEffectController.attachToSession(player.audioSessionId)
@@ -491,9 +507,11 @@ class PlaybackManager @Inject constructor(
     fun unbind() {
         settingsJob?.cancel()
         settingsJob = null
+        // 播放器即将释放：焦点必须一并放弃，否则系统里会留下一个「永远不会主动让出」的客户端
+        playbackFocus.abandon()
         // 备援播放器的释放（含撤销进行中的淡化）一并交给协调器
         crossfade.detach()
-        player?.removeListener(eventListener.listener)
+        player?.let { it.removeListener(eventListener.primaryListenerFor(it)) }
         secondaryPlayer?.removeListener(eventListener.secondaryListener)
         player = null
         secondaryPlayer = null
@@ -870,30 +888,13 @@ class PlaybackManager @Inject constructor(
         _uiState.update { it.copy(isPlaying = isPlaying) }
         // 正常播起来了：连续失败计数归零（只有「一直在失败」才判定为坏队列）
         if (isPlaying) consecutiveErrorSkips = 0
-        else logPauseWithQueueIfAny()
+        else PlaybackEventLog.recordPauseWithQueueIfAny(player, _uiState.value.currentSongId)
+        // 焦点跟着「真的在发声」走：起播即申请、真正停住才放弃（判据见 PlaybackAudioFocus）
+        playbackFocus.onIsPlayingChanged(isPlaying)
         // 桌面小部件同步（内部去抖，连续变化只推一次 IPC）
         widgetUpdater.requestUpdate()
         // 注意：此处绝不可调用 serviceLauncher.ensureStarted()（见 PlaybackEventListener 注释）。
         saveSessionDebounced()
-    }
-
-    /**
-     * 「队列还有歌，但已经不在播了」——自动停止的现场快照。
-     *
-     * 过滤掉 buffering 抖动（此时 playWhenReady 仍为 true）与出错/停止
-     * （playbackState 已落 IDLE，各自有专门日志），只保留真正可疑的
-     * 「READY/BUFFERING 且 playWhenReady=false」这一种。
-     * 有了它，诊断报告里就能把「自动停止」和它前面那条成因记录对起来。
-     */
-    private fun logPauseWithQueueIfAny() {
-        val p = player ?: return
-        if (p.playWhenReady) return
-        if (p.mediaItemCount == 0) return
-        if (p.playbackState == Player.STATE_IDLE) return
-        PlaybackEventLog.record(
-            "paused-with-queue",
-            "idx=${p.currentMediaItemIndex} state=${p.playbackState} song=${_uiState.value.currentSongId}"
-        )
     }
 
     override fun onBufferingChanged(isBuffering: Boolean) {
@@ -947,16 +948,22 @@ class PlaybackManager @Inject constructor(
     override fun onPlaybackEnded() {
         // 末首自然播完（无 AUTO/REPEAT 过渡）的收尾。完成去重已由事件层
         // [CompletionRecorder] 在触发处负责，此处只做：睡眠定时归零 + 立即存档 + 空闲停服。
-        PlaybackEventLog.record("playback-ended", "idx=${player?.currentMediaItemIndex}")
+        PlaybackEventLog.record("playback-ended", endedSnapshot())
         finishEndOfTrackSleepTimer()
         saveSessionNow()
-        if ((player?.mediaItemCount ?: 0) == 0) stopServiceIfIdle()
+        // 判定一律交给 stopServiceIfIdle（它同时看主/备两个实例，交叉淡化收尾时不会误停）
+        stopServiceIfIdle()
     }
 
     override fun onIdleCleared() {
-        PlaybackEventLog.record("idle-cleared", "队列已空，准备空闲停服")
+        PlaybackEventLog.record("idle-cleared", endedSnapshot())
         stopServiceIfIdle()
     }
+
+    /** 播放结束类事件的现场快照（诊断报告靠它把「停服」与「淡化中的角色交换」对上账） */
+    private fun endedSnapshot(): String =
+        "idx=${player?.currentMediaItemIndex} count=${player?.mediaItemCount ?: 0} " +
+            "cf=${crossfade.isCrossfading}"
 
     override fun onError(error: PlaybackException) {
         handlePlayerError(error)
@@ -987,11 +994,18 @@ class PlaybackManager @Inject constructor(
         return player != null
     }
 
-    /** 空闲时停止服务（空闲判定需要读播放器，故留在此处；停服务本身下沉到 launcher） */
+    /**
+     * 空闲时停止服务。判据必须是「**两个**播放器都不在播且都没有队列」：交叉淡化期间主/备
+     * 刚交换过角色，只看主播放器会把仍在出声的那一路判成空闲——实测就是「一首播完整体停止」。
+     */
     override fun stopServiceIfIdle() {
-        if ((player?.isPlaying != true) && (player?.mediaItemCount ?: 0) == 0) {
-            serviceLauncher.stopService()
-        }
+        val primary = player
+        val standby = secondaryPlayer
+        val anyPlaying = primary?.isPlaying == true || standby?.isPlaying == true
+        val anyQueued = (primary?.mediaItemCount ?: 0) > 0 || (standby?.mediaItemCount ?: 0) > 0
+        if (anyPlaying || anyQueued) return
+        PlaybackEventLog.record("service-stop", "p=${primary?.mediaItemCount ?: 0} s=${standby?.mediaItemCount ?: 0}")
+        serviceLauncher.stopService()
     }
 
     private companion object {

@@ -1,6 +1,7 @@
 package com.puretone.player.playback
 
 import android.util.Log
+import androidx.media3.common.Player
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -65,6 +66,21 @@ object PlaybackEventLog {
                 if (f.exists()) f.readLines().takeLast(MAX_LINES).forEach(buffer::addLast)
             }
         }
+    }
+
+    /**
+     * 「队列还有歌，但已经不在播了」——自动停止的现场快照。
+     *
+     * 过滤掉 buffering 抖动（此时 playWhenReady 仍为 true）与出错/停止
+     * （playbackState 已落 IDLE，各自有专门记录），只保留真正可疑的
+     * 「READY/BUFFERING 且 playWhenReady=false」这一种。
+     * 有了它，诊断报告里就能把「自动停止」和它前面那条成因记录对起来。
+     */
+    fun recordPauseWithQueueIfAny(player: Player?, songId: Long?) {
+        val p = player ?: return
+        if (p.playWhenReady || p.mediaItemCount == 0) return
+        if (p.playbackState == Player.STATE_IDLE) return
+        record("paused-with-queue", "idx=${p.currentMediaItemIndex} state=${p.playbackState} song=$songId")
     }
 
     /** 记一条事件。任何异常都被吞掉——日志永远不该影响播放。 */

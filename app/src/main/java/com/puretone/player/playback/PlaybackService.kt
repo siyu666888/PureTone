@@ -130,7 +130,10 @@ class PlaybackService : MediaSessionService() {
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                     .setUsage(C.USAGE_MEDIA)
                     .build(),
-                /* handleAudioFocus = */ true
+                // 焦点**必须**由应用层统一持有（见 AudioFocusController 类注释）：
+                // 双实例各自处理焦点时，备援在交叉淡化起点申请 GAIN，系统会把 LOSS
+                // 派给仍在播放的主播放器 —— 淡出方当场被掐断，并连锁触发空闲停服。
+                /* handleAudioFocus = */ false
             )
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
