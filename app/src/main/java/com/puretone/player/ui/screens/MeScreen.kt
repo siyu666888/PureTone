@@ -1,4 +1,6 @@
 package com.puretone.player.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.puretone.player.R
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -82,7 +84,7 @@ fun MeScreen(
             name.endsWith(".m3u", ignoreCase = true) || name.endsWith(".m3u8", ignoreCase = true)
         }.getOrDefault(false)
         if (!isM3u) {
-            Toast.makeText(context, "请选择 .m3u / .m3u8 歌单文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.pt_me_001), Toast.LENGTH_SHORT).show()
             return@rememberLauncherForActivityResult
         }
         libVm.importM3u(uri)
@@ -105,7 +107,7 @@ fun MeScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("我的音乐", style = MaterialTheme.typography.headlineSmall)
+        Text(stringResource(R.string.pt_me_002), style = MaterialTheme.typography.headlineSmall)
 
         // 听歌数据入口（点击进入详情页）
         Card(
@@ -119,13 +121,13 @@ fun MeScreen(
             ) {
                 Icon(Icons.Rounded.InsertChart, contentDescription = null, tint = PureToneBrand.Primary)
                 Spacer(Modifier.size(12.dp))
-                Text("听歌数据", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.pt_me_003), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             }
         }
 
         // 最近播放（仅展示前 8 首，点击播放也只把前 8 首送进队列，口径统一）
         if (recently.isNotEmpty()) {
-            SectionTitle("最近播放")
+            SectionTitle(stringResource(R.string.pt_me_004))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column {
                     val recent8 = recently.take(8)
@@ -141,7 +143,7 @@ fun MeScreen(
 
         // 我喜欢（收藏）
         if (favorites.isNotEmpty()) {
-            SectionTitle("我喜欢（${favorites.size}）")
+            SectionTitle(stringResource(R.string.pt_me_005, favorites.size))
             // P3-1：原先内层用 LazyColumn + 外层整页 verticalScroll，两个同向滚动容器
             // 互相抢手势（收藏区拖动时外层滚不动）。整页已用 verticalScroll 滚动，
             // 这里改用普通 Column，消除嵌套滚动冲突；收藏上千首的极端场景性能可接受。
@@ -159,20 +161,20 @@ fun MeScreen(
 
         // 歌单
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionTitle("歌单（${playlists.size}）", modifier = Modifier.weight(1f))
+            SectionTitle(stringResource(R.string.pt_me_006, playlists.size), modifier = Modifier.weight(1f))
             TextButton(onClick = {
                 importLauncher.launch(arrayOf("*/*"))
             }) {
-                Text("导入")
+                Text(stringResource(R.string.pt_me_007))
             }
             TextButton(onClick = { showCreate = true }) {
                 Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("新建歌单")
+                Text(stringResource(R.string.pt_me_008))
             }
         }
         if (playlists.isEmpty()) {
-            Text("暂无歌单，点右上角「新建歌单」创建", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.pt_me_009), color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 4.dp),
@@ -193,16 +195,16 @@ fun MeScreen(
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(pw.playlist.name, style = MaterialTheme.typography.titleMedium)
-                            Text("${pw.songs.size} 首", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.pt_me_010, pw.songs.size), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = { playerVm.playSongs(pw.songs, 0) }) {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = "播放歌单", tint = PureToneBrand.Primary)
+                                    Icon(Icons.Default.PlayArrow, contentDescription = stringResource(R.string.pt_me_011), tint = PureToneBrand.Primary)
                                 }
                                 TextButton(onClick = { libVm.exportPlaylist(pw.playlist.id) }) {
-                                    Text("导出")
+                                    Text(stringResource(R.string.pt_me_012))
                                 }
                                 IconButton(onClick = { playlistToDelete = pw }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "删除歌单")
+                                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.pt_me_013))
                                 }
                             }
                         }
@@ -226,16 +228,16 @@ fun MeScreen(
     if (pw != null) {
         AlertDialog(
             onDismissRequest = { playlistToDelete = null },
-            title = { Text("删除歌单") },
-            text = { Text("确定删除歌单「${pw.playlist.name}」吗？此操作不可撤销。") },
+            title = { Text(stringResource(R.string.pt_me_013)) },
+            text = { Text(stringResource(R.string.pt_me_014, pw.playlist.name)) },
             confirmButton = {
                 TextButton(onClick = {
                     libVm.deletePlaylist(pw.playlist.id)
                     playlistToDelete = null
-                }) { Text("删除") }
+                }) { Text(stringResource(R.string.pt_me_015)) }
             },
             dismissButton = {
-                TextButton(onClick = { playlistToDelete = null }) { Text("取消") }
+                TextButton(onClick = { playlistToDelete = null }) { Text(stringResource(R.string.pt_me_016)) }
             }
         )
     }
@@ -252,21 +254,21 @@ private fun CreatePlaylistDialog(onCreate: (String) -> Unit, onDismiss: () -> Un
     var name by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("新建歌单") },
+        title = { Text(stringResource(R.string.pt_me_008)) },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                placeholder = { Text("歌单名称") },
+                placeholder = { Text(stringResource(R.string.pt_me_017)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
         },
         confirmButton = {
-            TextButton(onClick = { onCreate(name) }, enabled = name.isNotBlank()) { Text("创建") }
+            TextButton(onClick = { onCreate(name) }, enabled = name.isNotBlank()) { Text(stringResource(R.string.pt_me_018)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.pt_me_016)) }
         }
     )
 }

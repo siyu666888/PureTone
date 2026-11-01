@@ -1,4 +1,6 @@
 package com.puretone.player.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.puretone.player.R
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -135,7 +137,7 @@ fun PlaylistDetailScreen(
     var showDelete by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
 
-    val name = pw?.playlist?.name ?: "歌单"
+    val name = pw?.playlist?.name ?: stringResource(R.string.pt_playlist_001)
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -152,21 +154,21 @@ fun PlaylistDetailScreen(
                 windowInsets = WindowInsets(0),
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.pt_playlist_002))
                     }
                 },
                 actions = {
                     if (pw != null) {
                         Box {
                             IconButton(onClick = { menuExpanded = true }) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "更多操作")
+                                Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.pt_playlist_003))
                             }
                             DropdownMenu(
                                 expanded = menuExpanded,
                                 onDismissRequest = { menuExpanded = false }
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("重命名") },
+                                    text = { Text(stringResource(R.string.pt_playlist_004)) },
                                     leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
                                     onClick = {
                                         menuExpanded = false
@@ -174,7 +176,7 @@ fun PlaylistDetailScreen(
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("导出 M3U") },
+                                    text = { Text(stringResource(R.string.pt_playlist_005)) },
                                     leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) },
                                     onClick = {
                                         menuExpanded = false
@@ -182,7 +184,7 @@ fun PlaylistDetailScreen(
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("删除歌单") },
+                                    text = { Text(stringResource(R.string.pt_playlist_006)) },
                                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
                                     onClick = {
                                         menuExpanded = false
@@ -202,7 +204,7 @@ fun PlaylistDetailScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentAlignment = Alignment.Center
             ) {
-                Text("歌单不存在", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.pt_playlist_007), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             return@Scaffold
         }
@@ -223,7 +225,7 @@ fun PlaylistDetailScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        "${songList.size} 首",
+                        stringResource(R.string.pt_playlist_008, songList.size),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -235,7 +237,7 @@ fun PlaylistDetailScreen(
                 ) {
                     Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.size(6.dp))
-                    Text("播放全部", style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.pt_playlist_009), style = MaterialTheme.typography.labelLarge)
                 }
             }
 
@@ -244,7 +246,7 @@ fun PlaylistDetailScreen(
                     modifier = Modifier.fillMaxSize().weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("歌单还没有歌曲", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.pt_playlist_010), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 LazyColumn(
@@ -268,7 +270,7 @@ fun PlaylistDetailScreen(
                                     ) {
                                         Icon(
                                             Icons.Rounded.DragHandle,
-                                            contentDescription = "拖动排序",
+                                            contentDescription = stringResource(R.string.pt_playlist_011),
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
@@ -280,7 +282,7 @@ fun PlaylistDetailScreen(
                                     ) {
                                         Icon(
                                             Icons.Default.Delete,
-                                            contentDescription = "从歌单移除",
+                                            contentDescription = stringResource(R.string.pt_playlist_012),
                                             tint = MaterialTheme.colorScheme.error
                                         )
                                     }
@@ -307,17 +309,17 @@ fun PlaylistDetailScreen(
     if (showDelete) {
         AlertDialog(
             onDismissRequest = { showDelete = false },
-            title = { Text("删除歌单") },
-            text = { Text("确定删除歌单「$name」吗？此操作不可撤销。") },
+            title = { Text(stringResource(R.string.pt_playlist_006)) },
+            text = { Text(stringResource(R.string.pt_playlist_013, name)) },
             confirmButton = {
                 TextButton(onClick = {
                     libVm.deletePlaylist(playlistId)
                     showDelete = false
                     navController.popBackStack()
-                }) { Text("删除") }
+                }) { Text(stringResource(R.string.pt_playlist_014)) }
             },
             dismissButton = {
-                TextButton(onClick = { showDelete = false }) { Text("取消") }
+                TextButton(onClick = { showDelete = false }) { Text(stringResource(R.string.pt_playlist_015)) }
             }
         )
     }
@@ -333,21 +335,21 @@ private fun AlertDialogRename(
     var name by remember(initial) { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("重命名歌单") },
+        title = { Text(stringResource(R.string.pt_playlist_016)) },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                placeholder = { Text("歌单名称") },
+                placeholder = { Text(stringResource(R.string.pt_playlist_017)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
         },
         confirmButton = {
-            TextButton(onClick = { onRename(name) }, enabled = name.isNotBlank()) { Text("确定") }
+            TextButton(onClick = { onRename(name) }, enabled = name.isNotBlank()) { Text(stringResource(R.string.pt_playlist_018)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.pt_playlist_015)) }
         }
     )
 }

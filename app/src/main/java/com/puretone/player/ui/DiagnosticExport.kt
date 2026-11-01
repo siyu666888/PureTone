@@ -7,6 +7,7 @@ import androidx.core.content.FileProvider
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.puretone.player.BuildConfig
 import com.puretone.player.PureToneApplication
+import com.puretone.player.R
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -33,28 +34,28 @@ object DiagnosticExport {
     fun buildReport(context: Context): String {
         val sb = StringBuilder()
         val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-        sb.appendLine("==== PureTone 诊断报告 ====")
-        sb.appendLine("生成时间: $now")
+        sb.appendLine(context.getString(R.string.pt_diag_001))
+        sb.appendLine(context.getString(R.string.pt_diag_002, now))
         sb.appendLine()
-        sb.appendLine("---- 应用 ----")
-        sb.appendLine("包名: ${context.packageName}")
-        sb.appendLine("版本: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
-        sb.appendLine("构建类型: ${BuildConfig.BUILD_TYPE}")
-        sb.appendLine("调试构建: ${BuildConfig.DEBUG}")
+        sb.appendLine(context.getString(R.string.pt_diag_003))
+        sb.appendLine(context.getString(R.string.pt_diag_004, context.packageName))
+        sb.appendLine(context.getString(R.string.pt_diag_005, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE))
+        sb.appendLine(context.getString(R.string.pt_diag_006, BuildConfig.BUILD_TYPE))
+        sb.appendLine(context.getString(R.string.pt_diag_007, BuildConfig.DEBUG))
         sb.appendLine()
-        sb.appendLine("---- 设备 ----")
-        sb.appendLine("厂商: ${Build.MANUFACTURER}")
-        sb.appendLine("型号: ${Build.MODEL}")
-        sb.appendLine("产品: ${Build.PRODUCT}")
-        sb.appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
-        sb.appendLine("ABI: ${Build.SUPPORTED_ABIS.joinToString()}")
-        sb.appendLine("区域: ${Locale.getDefault()}")
+        sb.appendLine(context.getString(R.string.pt_diag_008))
+        sb.appendLine(context.getString(R.string.pt_diag_009, Build.MANUFACTURER))
+        sb.appendLine(context.getString(R.string.pt_diag_010, Build.MODEL))
+        sb.appendLine(context.getString(R.string.pt_diag_011, Build.PRODUCT))
+        sb.appendLine(context.getString(R.string.pt_diag_012, Build.VERSION.RELEASE, Build.VERSION.SDK_INT))
+        sb.appendLine(context.getString(R.string.pt_diag_013, Build.SUPPORTED_ABIS.joinToString()))
+        sb.appendLine(context.getString(R.string.pt_diag_014, Locale.getDefault()))
         sb.appendLine()
-        sb.appendLine("---- 最近崩溃记录 (${PureToneApplication.CRASH_FILE}) ----")
-        sb.appendLine(readCrash(context) ?: "(无崩溃记录)")
+        sb.appendLine(context.getString(R.string.pt_diag_015, PureToneApplication.CRASH_FILE))
+        sb.appendLine(readCrash(context) ?: context.getString(R.string.pt_diag_016))
         sb.appendLine()
-        sb.appendLine("---- 最近一次 FFmpeg 命令输出 ----")
-        sb.appendLine(readLastFfmpegOutput())
+        sb.appendLine(context.getString(R.string.pt_diag_017))
+        sb.appendLine(readLastFfmpegOutput(context))
         return sb.toString()
     }
 
@@ -63,10 +64,10 @@ object DiagnosticExport {
         if (file.exists()) file.readText() else null
     }.getOrNull()
 
-    private fun readLastFfmpegOutput(): String = runCatching {
+    private fun readLastFfmpegOutput(context: Context): String = runCatching {
         val out = FFmpegKitConfig.getLastSession()?.output
-        if (out.isNullOrBlank()) "(无)" else out.take(4000) // 截断，避免报告过长
-    }.getOrDefault("(读取失败)")
+        if (out.isNullOrBlank()) context.getString(R.string.pt_diag_018) else out.take(4000) // 截断，避免报告过长
+    }.getOrDefault(context.getString(R.string.pt_diag_019))
 
     /** 写报告到 cacheDir/diagnostics/，返回文件；失败抛异常由调用方处理。 */
     fun writeReport(context: Context): File {
@@ -85,7 +86,7 @@ object DiagnosticExport {
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        val chooser = Intent.createChooser(intent, "导出诊断日志")
+        val chooser = Intent.createChooser(intent, context.getString(R.string.pt_diag_020))
         chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         context.startActivity(chooser)
     }

@@ -1,4 +1,6 @@
 package com.puretone.player.ui.permission
+import androidx.compose.ui.res.stringResource
+import com.puretone.player.R
 
 import android.Manifest
 import android.content.Intent
@@ -102,17 +104,17 @@ fun PermissionGate(content: @Composable () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Text("需要音乐访问权限", style = MaterialTheme.typography.headlineSmall)
+            Text(stringResource(R.string.pt_perm_001), style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(12.dp))
             Text(
-                "PureTone 需要读取本地音乐以构建曲库并播放。通知权限用于播放控制栏，" +
-                    "即使不授予也能正常使用。",
+                stringResource(R.string.pt_perm_002) +
+                    stringResource(R.string.pt_perm_003),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(24.dp))
             Button(onClick = { launcher.launch(requestSet.toTypedArray()) }) {
-                Text("授予权限")
+                Text(stringResource(R.string.pt_perm_004))
             }
             Spacer(Modifier.height(8.dp))
             TextButton(
@@ -124,7 +126,7 @@ fun PermissionGate(content: @Composable () -> Unit) {
                     )
                 }
             ) {
-                Text("前往系统设置")
+                Text(stringResource(R.string.pt_perm_005))
             }
         }
     }

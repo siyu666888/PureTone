@@ -1,4 +1,6 @@
 package com.puretone.player.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.puretone.player.R
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
@@ -77,33 +79,33 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 外观
-        SettingsGroup(title = "外观") {
+        SettingsGroup(title = stringResource(R.string.pt_settings_001)) {
             ThemeSegmentedControl(selected = s.themeMode, onSelect = vm::setThemeMode)
             // 决策 D2：系统动态取色默认关
-            SwitchRow(label = "启用系统动态取色（实验）", checked = s.dynamicColor) { vm.setDynamicColor(it) }
+            SwitchRow(label = stringResource(R.string.pt_settings_002), checked = s.dynamicColor) { vm.setDynamicColor(it) }
             // P2-5：AMOLED 纯黑开关（优先级高于动态取色，见 Theme.kt）
-            SwitchRow(label = "AMOLED 纯黑（省电）", checked = s.amoledBlack) { vm.setAmoledBlack(it) }
+            SwitchRow(label = stringResource(R.string.pt_settings_003), checked = s.amoledBlack) { vm.setAmoledBlack(it) }
         }
 
         // 播放
-        SettingsGroup(title = "播放") {
-            SwitchRow(label = "无缝播放（gapless）", checked = s.gapless) { vm.setGapless(it) }
-            SwitchRow(label = "启动时续播上次歌曲", checked = s.resumeOnStart) { vm.setResumeOnStart(it) }
+        SettingsGroup(title = stringResource(R.string.pt_settings_004)) {
+            SwitchRow(label = stringResource(R.string.pt_settings_005), checked = s.gapless) { vm.setGapless(it) }
+            SwitchRow(label = stringResource(R.string.pt_settings_006), checked = s.resumeOnStart) { vm.setResumeOnStart(it) }
             // 交叉淡化（Crossfade）：0 = 关；1~12 秒，步长 500ms。
             // 仅常规格式生效；APE 等需转码格式在边界退化为无缝/曲间停顿。
             SliderRow(
-                label = "交叉淡化",
+                label = stringResource(R.string.pt_settings_007),
                 value = s.crossfadeMs.toFloat(),
                 valueRange = 0f..PureToneSettings.CROSSFADE_MAX_MS.toFloat(),
                 steps = (PureToneSettings.CROSSFADE_MAX_MS / 500) - 1,
-                valueText = if (s.crossfadeMs <= 0) "关" else "%.1fs".format(s.crossfadeMs / 1000f),
+                valueText = if (s.crossfadeMs <= 0) stringResource(R.string.pt_settings_008) else "%.1fs".format(s.crossfadeMs / 1000f),
                 onValueChange = { vm.setCrossfadeMs(it.toInt()) }
             )
 
             // 倍速 / 睡眠定时：单行分段控件，切换与显示方式同主题分段
             val speedOptions = listOf(0.5f, 1f, 1.25f, 1.5f, 2f)
             SettingsSegmentRow(
-                label = "倍速",
+                label = stringResource(R.string.pt_settings_009),
                 options = speedOptions.map { if (it % 1f == 0f) "${it.toInt()}x" else "${it}x" },
                 // P3-24：旧实现 `.coerceAtLeast(0)` 会把「不在选项里的值」（例如旧版本
                 // 存下的 0.75x）静默显示成第一项 0.5x，用户看到的状态与真实值不符。
@@ -114,8 +116,8 @@ fun SettingsScreen(
             // 睡眠定时：单行分段控件（关 / 15m / 30m / 45m / 60m），切换与显示方式同主题分段
             val sleepOptions = listOf(0, 15, 30, 45, 60)
             SettingsSegmentRow(
-                label = "定时",
-                options = sleepOptions.map { if (it == 0) "关" else "${it}m" },
+                label = stringResource(R.string.pt_settings_010),
+                options = sleepOptions.map { if (it == 0) stringResource(R.string.pt_settings_008) else "${it}m" },
                 selectedIndex = sleepOptions.indexOf(s.sleepTimerMinutes),
                 onSelect = { vm.setSleepTimer(sleepOptions[it]) }
             )
@@ -139,18 +141,18 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "睡眠定时剩余 ${formatRemaining(remainingMs)}",
+                        stringResource(R.string.pt_settings_011, formatRemaining(remainingMs)),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.weight(1f)
                     )
-                    TextButton(onClick = { vm.setSleepTimer(0) }) { Text("取消定时") }
+                    TextButton(onClick = { vm.setSleepTimer(0) }) { Text(stringResource(R.string.pt_settings_012)) }
                 }
             }
         }
 
         // 音效
-        SettingsGroup(title = "音效") {
+        SettingsGroup(title = stringResource(R.string.pt_settings_013)) {
             // 均衡器：行可点击进入均衡器页调节；右侧新增开关，直接启停音效
             Row(
                 modifier = Modifier
@@ -159,7 +161,7 @@ fun SettingsScreen(
                     .clickable { navController.navigate(Routes.EQ) },
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("均衡器", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.pt_settings_014), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                 Switch(checked = s.eqEnabled, onCheckedChange = { vm.setEqEnabled(it) })
             }
         }
@@ -167,18 +169,18 @@ fun SettingsScreen(
         // 隐私（P2-4）：联网补全元数据与歌词总开关。
         // 关闭后 App 不再向 iTunes Search / LRCLIB 发送任何曲目信息（标题/歌手），
         // 搜索元数据、自动填充、下载歌词、批量补封面全部短路。
-        SettingsGroup(title = "隐私") {
+        SettingsGroup(title = stringResource(R.string.pt_settings_015)) {
             SwitchRow(
-                label = "联网补全元数据与歌词",
+                label = stringResource(R.string.pt_settings_016),
                 checked = s.networkMetadataEnabled,
                 onChanged = { vm.setNetworkMetadataEnabled(it) }
             )
             // 说明文案随开关状态变化，让用户明确知道「关掉后会发生什么」。
             Text(
                 if (s.networkMetadataEnabled) {
-                    "开启时会向 iTunes 与 LRCLIB 发送歌名、歌手用于匹配元数据与歌词"
+                    stringResource(R.string.pt_settings_017)
                 } else {
-                    "已关闭：不会向任何服务器发送曲目信息"
+                    stringResource(R.string.pt_settings_018)
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -186,7 +188,7 @@ fun SettingsScreen(
         }
 
         // 诊断（P3-1）：导出崩溃与设备信息，便于远程定位问题（不含任何个人曲库内容）
-        SettingsGroup(title = "诊断") {
+        SettingsGroup(title = stringResource(R.string.pt_settings_019)) {
             var exportMsg by remember { mutableStateOf<String?>(null) }
             Row(
                 modifier = Modifier
@@ -198,13 +200,13 @@ fun SettingsScreen(
                             DiagnosticExport.share(context, file)
                         }.onFailure {
                             PureToneApplication.writeCrash("exportDiagnostics", it)
-                            exportMsg = "导出失败：${it.message ?: it.javaClass.simpleName}"
+                            exportMsg = context.getString(R.string.pt_settings_020, it.message ?: it.javaClass.simpleName)
                         }
                     },
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "导出诊断日志",
+                    stringResource(R.string.pt_settings_021),
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.weight(1f)
                 )
@@ -217,7 +219,7 @@ fun SettingsScreen(
                 }
             }
             Text(
-                "导出最近崩溃堆栈与设备信息，可发送给开发者协助定位；不读取或上传任何个人曲库内容。",
+                stringResource(R.string.pt_settings_022),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp)
@@ -225,9 +227,9 @@ fun SettingsScreen(
         }
 
         // 实验室（实验性功能）：总开关常驻可见，关闭时其下所有子分类（入口 + 设置项）整体隐藏
-        SettingsGroup(title = "实验室") {
+        SettingsGroup(title = stringResource(R.string.pt_settings_023)) {
             SwitchRow(
-                label = "实验室",
+                label = stringResource(R.string.pt_settings_023),
                 checked = s.labEnabled,
                 onChanged = { vm.setLabEnabled(it) }
             )
@@ -260,9 +262,9 @@ fun SettingsScreen(
                     vm.refreshWidgetAdded()
                 }
             }
-            SettingsGroup(title = "桌面") {
+            SettingsGroup(title = stringResource(R.string.pt_settings_024)) {
                 SwitchRow(
-                    label = "桌面播放控制小部件",
+                    label = stringResource(R.string.pt_settings_025),
                     checked = widgetAdded,
                     enabled = canPinWidget || widgetAdded,
                     onChanged = { checked ->
@@ -277,21 +279,21 @@ fun SettingsScreen(
             if (showAddDialog) {
                 AlertDialog(
                     onDismissRequest = { showAddDialog = false },
-                    title = { Text("添加桌面小部件") },
+                    title = { Text(stringResource(R.string.pt_settings_026)) },
                     text = {
                         Text(
-                            "将在桌面添加 PureTone 播放控制小部件，" +
-                                "可直接查看当前歌曲并控制播放 / 切歌。是否继续？"
+                            stringResource(R.string.pt_settings_027) +
+                                stringResource(R.string.pt_settings_028)
                         )
                     },
                     confirmButton = {
                         TextButton(onClick = {
                             showAddDialog = false
                             if (vm.pinWidget()) pinRequested++
-                        }) { Text("确认添加") }
+                        }) { Text(stringResource(R.string.pt_settings_029)) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showAddDialog = false }) { Text("取消") }
+                        TextButton(onClick = { showAddDialog = false }) { Text(stringResource(R.string.pt_settings_030)) }
                     }
                 )
             }
@@ -299,16 +301,16 @@ fun SettingsScreen(
             if (showUnpinHint) {
                 AlertDialog(
                     onDismissRequest = { showUnpinHint = false },
-                    title = { Text("已在桌面上添加") },
-                    text = { Text("如需移除，请在桌面长按该小部件，拖到「移除」区域即可。") },
+                    title = { Text(stringResource(R.string.pt_settings_031)) },
+                    text = { Text(stringResource(R.string.pt_settings_032)) },
                     confirmButton = {
-                        TextButton(onClick = { showUnpinHint = false }) { Text("知道了") }
+                        TextButton(onClick = { showUnpinHint = false }) { Text(stringResource(R.string.pt_settings_033)) }
                     }
                 )
             }
 
             // 存储
-            SettingsGroup(title = "存储") {
+            SettingsGroup(title = stringResource(R.string.pt_settings_034)) {
                 // APE 转码缓存：按字节上限 LRU（见 ApeTranscoder），此处可查大小并一键清理
                 val cacheSize by vm.apeCacheSize.collectAsStateWithLifecycle()
                 LaunchedEffect(Unit) { vm.refreshApeCacheSize() }
@@ -317,29 +319,29 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "APE 转码缓存" + if (cacheSize >= 0L) "（${formatBytes(cacheSize)}）" else "",
+                        stringResource(R.string.pt_settings_035) + if (cacheSize >= 0L) "（${formatBytes(cacheSize)}）" else "",
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.weight(1f)
                     )
                     TextButton(
                         onClick = { vm.clearApeCache() },
                         enabled = cacheSize != 0L
-                    ) { Text("清理") }
+                    ) { Text(stringResource(R.string.pt_settings_036)) }
                 }
             }
 
             // ReplayGain（P1）：响度归一化，让不同音量的歌曲听起来响度一致
-            SettingsGroup(title = "响度（ReplayGain）") {
+            SettingsGroup(title = stringResource(R.string.pt_settings_037)) {
                 SwitchRow(
-                    label = "启用 ReplayGain",
+                    label = stringResource(R.string.pt_settings_038),
                     checked = s.replayGainEnabled,
                     onChanged = { vm.setReplayGainEnabled(it) }
                 )
                 // 模式：按曲目（每首独立归一）/ 按专辑（同专辑内响度一致，曲目间过渡更平）
                 val rgModes = listOf(PureToneSettings.RG_TRACK, PureToneSettings.RG_ALBUM)
-                val rgModeLabels = listOf("曲目", "专辑")
+                val rgModeLabels = listOf(stringResource(R.string.pt_settings_039), stringResource(R.string.pt_settings_040))
                 SettingsSegmentRow(
-                    label = "模式",
+                    label = stringResource(R.string.pt_settings_041),
                     options = rgModeLabels,
                     selectedIndex = rgModes.indexOf(s.replayGainMode).coerceAtLeast(0),
                     enabled = s.replayGainEnabled,
@@ -347,7 +349,7 @@ fun SettingsScreen(
                 )
                 // preamp：在 RG 增益之上叠加的手调补偿（dB，范围 -12 ~ +12）
                 SliderRow(
-                    label = "补偿 (dB)",
+                    label = stringResource(R.string.pt_settings_042),
                     value = s.replayGainPreampDb,
                     valueRange = PureToneSettings.RG_PREAMP_MIN_DB..PureToneSettings.RG_PREAMP_MAX_DB,
                     steps = 48, // -12..12 共 24 个整数 dB，每 0.5 一档 → 48 步
@@ -356,7 +358,7 @@ fun SettingsScreen(
                     onValueChange = { vm.setReplayGainPreamp(it) }
                 )
                 Text(
-                    "依据音频文件内 ReplayGain 标签自动调整响度，文件无标签时本项不生效。",
+                    stringResource(R.string.pt_settings_043),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 4.dp)
@@ -372,7 +374,7 @@ fun SettingsScreen(
             }.getOrDefault("")
         }
         Text(
-            "PureTone · 纯净之音",
+            stringResource(R.string.pt_settings_044),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.primary,
             textAlign = TextAlign.Center,
@@ -403,10 +405,10 @@ private fun ThemeSegmentedControl(
     onSelect: (String) -> Unit
 ) {
     val options = listOf(
-        PureToneSettings.THEME_SYSTEM to "系统",
-        PureToneSettings.THEME_LIGHT to "浅色",
-        PureToneSettings.THEME_DARK to "深色",
-        PureToneSettings.THEME_BLACK to "纯黑"
+        PureToneSettings.THEME_SYSTEM to stringResource(R.string.pt_settings_045),
+        PureToneSettings.THEME_LIGHT to stringResource(R.string.pt_settings_046),
+        PureToneSettings.THEME_DARK to stringResource(R.string.pt_settings_047),
+        PureToneSettings.THEME_BLACK to stringResource(R.string.pt_settings_048)
     )
     Box(
         modifier = Modifier

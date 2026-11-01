@@ -1,4 +1,6 @@
 package com.puretone.player.ui.components
+import androidx.compose.ui.res.stringResource
+import com.puretone.player.R
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -164,7 +166,7 @@ fun SongRow(
             // （历史数据或其它写入入口可能绕过入库归一）
             Text(
                 "${UnknownText.displayArtist(song.artist, "未知艺术家")} · " +
-                    UnknownText.displayAlbum(song.album, "未知专辑"),
+                    UnknownText.displayAlbum(song.album, stringResource(R.string.pt_ui_001)),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -175,7 +177,7 @@ fun SongRow(
         if (song.favorite) {
             Icon(
                 Icons.Rounded.Favorite,
-                contentDescription = "已收藏",
+                contentDescription = stringResource(R.string.pt_ui_002),
                 tint = FavoriteRed,
                 modifier = Modifier
                     .padding(end = 8.dp)
@@ -256,7 +258,7 @@ fun PlayPauseButton(
         ) { playing ->
             Icon(
                 imageVector = if (playing) ControlIcons.Pause else ControlIcons.Play,
-                contentDescription = if (playing) "暂停" else "播放",
+                contentDescription = if (playing) stringResource(R.string.pt_ui_003) else stringResource(R.string.pt_ui_004),
                 tint = scheme.onPrimary,
                 modifier = Modifier.size(size * 0.4f)
             )
@@ -362,9 +364,9 @@ fun PlayModeIconButton(
     iconSize: Dp = 26.dp
 ) {
     val (icon, desc) = when (mode) {
-        PlayMode.SEQUENTIAL -> ControlIcons.RepeatAll to "播放模式：顺序播放"
-        PlayMode.SHUFFLE -> ControlIcons.Shuffle to "播放模式：随机播放"
-        PlayMode.REPEAT_ONE -> ControlIcons.RepeatOne to "播放模式：单曲循环"
+        PlayMode.SEQUENTIAL -> ControlIcons.RepeatAll to stringResource(R.string.pt_ui_005)
+        PlayMode.SHUFFLE -> ControlIcons.Shuffle to stringResource(R.string.pt_ui_006)
+        PlayMode.REPEAT_ONE -> ControlIcons.RepeatOne to stringResource(R.string.pt_ui_007)
     }
     ControlIconButton(
         icon = icon,
@@ -388,7 +390,7 @@ fun FavoriteButton(
 ) {
     ControlIconButton(
         icon = if (favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-        contentDescription = if (favorite) "取消收藏" else "收藏",
+        contentDescription = if (favorite) stringResource(R.string.pt_ui_008) else stringResource(R.string.pt_ui_009),
         onClick = onClick,
         modifier = modifier,
         active = favorite,
@@ -607,7 +609,7 @@ fun MiniPlayer(
                     onClick = onOpen,
                     // 无障碍：长按切换「剩余/总时长」是隐藏交互，给可见的 longClick 标签，
                     // 让 TalkBack 用户能在「长按」动作中读到用途，而非无提示的隐藏手势。
-                    onLongClickLabel = "切换显示剩余时长或总时长",
+                    onLongClickLabel = stringResource(R.string.pt_ui_010),
                     onLongClick = { showRemaining = !showRemaining }
                 )
                     .padding(horizontal = 14.dp, vertical = 10.dp),
@@ -654,7 +656,7 @@ fun MiniPlayer(
                     ) { remainingMode ->
                         if (remainingMode) {
                             Text(
-                                "剩余 -${formatTime(remaining)} / ${formatTime(duration)}",
+                                stringResource(R.string.pt_ui_011, formatTime(remaining), formatTime(duration)),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = scheme.primary,
                                 maxLines = 1
@@ -674,21 +676,21 @@ fun MiniPlayer(
                 // 仅三枚控制按钮，关于中部播放/暂停对称：上一首（左）/ 播放暂停（中）/ 下一首（右）
                 ControlIconButton(
                     icon = ControlIcons.SkipPrevious,
-                    contentDescription = "上一首",
+                    contentDescription = stringResource(R.string.pt_ui_012),
                     onClick = onPrev,
                     buttonSize = 48.dp,
                     iconSize = 24.dp
                 )
                 ControlIconButton(
                     icon = if (state.isPlaying) ControlIcons.Pause else ControlIcons.Play,
-                    contentDescription = "播放/暂停",
+                    contentDescription = stringResource(R.string.pt_ui_013),
                     onClick = onToggle,
                     buttonSize = 48.dp,
                     iconSize = 24.dp
                 )
                 ControlIconButton(
                     icon = ControlIcons.SkipNext,
-                    contentDescription = "下一首",
+                    contentDescription = stringResource(R.string.pt_ui_014),
                     onClick = onNext,
                     buttonSize = 48.dp,
                     iconSize = 24.dp

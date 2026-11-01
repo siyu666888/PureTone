@@ -1,4 +1,6 @@
 package com.puretone.player.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.puretone.player.R
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -86,7 +88,7 @@ fun SongInfoSheet(
     var year by rememberSaveable(song.id) { mutableStateOf(song.year) }
     // 预填搜索词：跳过「未知艺术家/空」，避免污染搜索；统一转简体
     val artistPart = (ChineseText.toSimplified(song.artist) ?: song.artist)
-        .takeIf { it.isNotBlank() && it != "<unknown>" && it != "未知艺术家" }
+        .takeIf { it.isNotBlank() && it != "<unknown>" && it != stringResource(R.string.pt_songinfo_001) }
     var metaQuery by rememberSaveable(song.id) {
         mutableStateOf(
             ChineseText.toSimplified(
@@ -126,9 +128,9 @@ fun SongInfoSheet(
         ) {
             // 标题行
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("歌曲信息", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.pt_songinfo_002), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 IconButton(onClick = onDismiss) {
-                    Icon(Icons.Rounded.Close, contentDescription = "关闭")
+                    Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.pt_songinfo_003))
                 }
             }
 
@@ -158,7 +160,7 @@ fun SongInfoSheet(
                 Spacer(Modifier.size(12.dp))
                 Column {
                     Text(
-                        title.ifBlank { "未知歌曲" },
+                        title.ifBlank { stringResource(R.string.pt_songinfo_004) },
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -182,7 +184,7 @@ fun SongInfoSheet(
             OutlinedTextField(
                 value = title,
                 onValueChange = { title = it },
-                label = { Text("歌名") },
+                label = { Text(stringResource(R.string.pt_songinfo_005)) },
                 singleLine = true,
                 shape = fieldShape,
                 modifier = Modifier.fillMaxWidth()
@@ -190,7 +192,7 @@ fun SongInfoSheet(
             OutlinedTextField(
                 value = artist,
                 onValueChange = { artist = it },
-                label = { Text("歌手") },
+                label = { Text(stringResource(R.string.pt_songinfo_006)) },
                 singleLine = true,
                 shape = fieldShape,
                 modifier = Modifier.fillMaxWidth()
@@ -198,7 +200,7 @@ fun SongInfoSheet(
             OutlinedTextField(
                 value = album,
                 onValueChange = { album = it },
-                label = { Text("专辑") },
+                label = { Text(stringResource(R.string.pt_songinfo_007)) },
                 singleLine = true,
                 shape = fieldShape,
                 modifier = Modifier.fillMaxWidth()
@@ -216,22 +218,22 @@ fun SongInfoSheet(
                 },
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth()
-            ) { Text(if (saving) "保存中…" else "保存修改") }
+            ) { Text(if (saving) stringResource(R.string.pt_songinfo_008) else stringResource(R.string.pt_songinfo_009)) }
             if (saveFailed) {
                 Text(
-                    "保存失败，请重试（编辑内容已保留）",
+                    stringResource(R.string.pt_songinfo_010),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
             }
 
             // 联网匹配
-            Text("联网匹配（${metadataVm.providerName}）", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.pt_songinfo_011, metadataVm.providerName), style = MaterialTheme.typography.titleMedium)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = metaQuery,
                     onValueChange = { metaQuery = it; metadataVm.setQuery(it) },
-                    label = { Text("搜索关键词") },
+                    label = { Text(stringResource(R.string.pt_songinfo_012)) },
                     singleLine = true,
                     shape = fieldShape,
                     modifier = Modifier.weight(1f)
@@ -241,7 +243,7 @@ fun SongInfoSheet(
                     CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
                 } else {
                     IconButton(onClick = { metadataVm.search(metaQuery) }) {
-                        Icon(Icons.Rounded.Search, contentDescription = "搜索")
+                        Icon(Icons.Rounded.Search, contentDescription = stringResource(R.string.pt_songinfo_013))
                     }
                 }
             }
@@ -261,7 +263,7 @@ fun SongInfoSheet(
                     },
                     modifier = Modifier.weight(1f),
                     enabled = !metaSearching
-                ) { Text("自动填充") }
+                ) { Text(stringResource(R.string.pt_songinfo_014)) }
                 OutlinedButton(
                     onClick = {
                         metadataVm.downloadLyrics(song.path, artist, title, song.duration) { ok ->
@@ -274,9 +276,9 @@ fun SongInfoSheet(
                     if (lyricsDownloading) {
                         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.size(6.dp))
-                        Text("下载中")
+                        Text(stringResource(R.string.pt_songinfo_015))
                     } else {
-                        Text("下载歌词")
+                        Text(stringResource(R.string.pt_songinfo_016))
                     }
                 }
             }
@@ -296,7 +298,7 @@ fun SongInfoSheet(
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("撤销自动填充") }
+                ) { Text(stringResource(R.string.pt_songinfo_017)) }
             }
 
             // 搜索结果 / 提示
@@ -319,7 +321,7 @@ fun SongInfoSheet(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                "${c.artist} · ${c.album}".ifBlank { "未知专辑" },
+                                "${c.artist} · ${c.album}".ifBlank { stringResource(R.string.pt_songinfo_018) },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -332,15 +334,15 @@ fun SongInfoSheet(
                                 coverUri = c2.artworkUrl; year = c2.year
                             }
                             playerVm.refreshCurrentSong()
-                        }) { Text("使用") }
+                        }) { Text(stringResource(R.string.pt_songinfo_019)) }
                     }
                 }
                 OutlinedButton(onClick = { metadataVm.clearResults() }, modifier = Modifier.fillMaxWidth()) {
-                    Text("清空结果")
+                    Text(stringResource(R.string.pt_songinfo_020))
                 }
             } else if (!metaSearching) {
                 Text(
-                    "点「自动填充」按歌手+歌名一键套用首个匹配；也可手动搜索后点「使用」；「下载歌词」从 ${metadataVm.lyricsProviderName} 抓取并保存到 App 歌词目录。",
+                    stringResource(R.string.pt_songinfo_021, metadataVm.lyricsProviderName),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

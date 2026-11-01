@@ -1,4 +1,6 @@
 package com.puretone.player.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.puretone.player.R
 
 import android.animation.ValueAnimator
 import android.net.Uri
@@ -158,11 +160,11 @@ fun PlayerScreen(
         contentWindowInsets = WindowInsets(0),
         topBar = {
             TopAppBar(
-                title = { Text("正在播放") },
+                title = { Text(stringResource(R.string.pt_player_001)) },
                 windowInsets = WindowInsets(0),
                 navigationIcon = {
                     IconButton(onClick = navController::popBackStack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.pt_player_002))
                     }
                 },
                 actions = {
@@ -170,7 +172,7 @@ fun PlayerScreen(
                     IconButton(onClick = { showCastPicker = true }) {
                         Icon(
                             if (castState.isCasting) Icons.Filled.CastConnected else Icons.Outlined.Cast,
-                            contentDescription = if (castState.isCasting) "投屏中（点按管理）" else "投屏"
+                            contentDescription = if (castState.isCasting) stringResource(R.string.pt_player_003) else stringResource(R.string.pt_player_004)
                         )
                     }
                 }
@@ -181,7 +183,7 @@ fun PlayerScreen(
     ) { padding ->
         if (entry == null) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("当前没有正在播放的歌曲", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.pt_player_005), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             return@Scaffold
         }
@@ -259,16 +261,16 @@ fun PlayerScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 if (castState.isPreparing) {
-                                    "正在为投屏转码…"
+                                    stringResource(R.string.pt_player_006)
                                 } else {
-                                    "正在投屏到 ${castState.deviceName ?: "设备"}"
+                                    stringResource(R.string.pt_player_007, castState.deviceName ?: "设备")
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             if (castState.isPreparing) {
                                 Text(
-                                    "该格式需转码后投送到 ${castState.deviceName ?: "设备"}，首次可能需要几十秒",
+                                    stringResource(R.string.pt_player_008, castState.deviceName ?: "设备"),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -282,7 +284,7 @@ fun PlayerScreen(
                             }
                         }
                         TextButton(onClick = vm::stopCast) {
-                            Text(if (castState.isPreparing) "取消" else "停止投屏")
+                            Text(if (castState.isPreparing) stringResource(R.string.pt_player_010) else stringResource(R.string.pt_player_011))
                         }
                     }
                 }
@@ -295,7 +297,7 @@ fun PlayerScreen(
                 ) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     Text(
-                        "APE 转码中…",
+                        stringResource(R.string.pt_player_012),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -319,7 +321,7 @@ fun PlayerScreen(
             ) {
                 ControlIconButton(
                     icon = Icons.Outlined.Equalizer,
-                    contentDescription = "均衡器",
+                    contentDescription = stringResource(R.string.pt_player_013),
                     onClick = { navController.navigate(Routes.EQ) },
                     buttonSize = 48.dp,
                     iconSize = 22.dp
@@ -332,7 +334,7 @@ fun PlayerScreen(
                     modifier = Modifier.height(48.dp)
                 ) {
                     Text(
-                        if (coverFlipped) "封面" else "歌词",
+                        if (coverFlipped) stringResource(R.string.pt_player_014) else stringResource(R.string.pt_player_015),
                         style = MaterialTheme.typography.labelLarge
                     )
                 }
@@ -365,7 +367,7 @@ fun PlayerScreen(
                 ) {
                     ControlIconButton(
                         icon = ControlIcons.SkipPrevious,
-                        contentDescription = "上一首",
+                        contentDescription = stringResource(R.string.pt_player_016),
                         onClick = vm::prev,
                         buttonSize = 56.dp,
                         iconSize = 40.dp
@@ -373,7 +375,7 @@ fun PlayerScreen(
                     PlayPauseButton(isPlaying = state.isPlaying, onClick = vm::togglePlay)
                     ControlIconButton(
                         icon = ControlIcons.SkipNext,
-                        contentDescription = "下一首",
+                        contentDescription = stringResource(R.string.pt_player_017),
                         onClick = vm::next,
                         buttonSize = 56.dp,
                         iconSize = 40.dp
@@ -382,7 +384,7 @@ fun PlayerScreen(
 
                 ControlIconButton(
                     icon = ControlIcons.Queue,
-                    contentDescription = "播放队列",
+                    contentDescription = stringResource(R.string.pt_player_018),
                     onClick = { showQueue = true },
                     buttonSize = 48.dp,
                     iconSize = 28.dp
@@ -422,7 +424,7 @@ fun PlayerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "播放队列（${state.queue.size}）",
+                        stringResource(R.string.pt_player_019, state.queue.size),
                         style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.weight(1f)
                     )
@@ -430,13 +432,13 @@ fun PlayerScreen(
                         TextButton(onClick = {
                             vm.clearQueue()
                             showQueue = false
-                        }) { Text("清空") }
+                        }) { Text(stringResource(R.string.pt_player_020)) }
                     }
                 }
                 Spacer(Modifier.height(8.dp))
                 if (state.queue.isEmpty()) {
                     Text(
-                        "队列为空",
+                        stringResource(R.string.pt_player_021),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 24.dp)
                     )
@@ -474,21 +476,21 @@ fun PlayerScreen(
                 ) {
                     ControlIconButton(
                         icon = ControlIcons.SkipPrevious,
-                        contentDescription = "上一首",
+                        contentDescription = stringResource(R.string.pt_player_016),
                         onClick = vm::prev,
                         buttonSize = 56.dp,
                         iconSize = 40.dp
                     )
                     ControlIconButton(
                         icon = if (state.isPlaying) ControlIcons.Pause else ControlIcons.Play,
-                        contentDescription = "播放/暂停",
+                        contentDescription = stringResource(R.string.pt_player_022),
                         onClick = vm::togglePlay,
                         buttonSize = 56.dp,
                         iconSize = 40.dp
                     )
                     ControlIconButton(
                         icon = ControlIcons.SkipNext,
-                        contentDescription = "下一首",
+                        contentDescription = stringResource(R.string.pt_player_017),
                         onClick = vm::next,
                         buttonSize = 56.dp,
                         iconSize = 40.dp
@@ -917,15 +919,15 @@ private fun LyricsFace(
         ) {
             ControlIconButton(
                 icon = Icons.Rounded.RemoveCircleOutline,
-                contentDescription = "缩小字号",
+                contentDescription = stringResource(R.string.pt_player_023),
                 onClick = { onFontSize((fontSizeSp - 2).coerceAtLeast(12)) },
                 buttonSize = 48.dp,
                 iconSize = 18.dp
             )
-            Text("歌词", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.pt_player_015), style = MaterialTheme.typography.titleMedium)
             ControlIconButton(
                 icon = Icons.Rounded.AddCircleOutline,
-                contentDescription = "放大字号",
+                contentDescription = stringResource(R.string.pt_player_024),
                 onClick = { onFontSize((fontSizeSp + 2).coerceAtMost(30)) },
                 buttonSize = 48.dp,
                 iconSize = 18.dp
@@ -934,7 +936,7 @@ private fun LyricsFace(
         if (lyrics == null || lyrics.lines.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    "暂无歌词（可将同名 .lrc 放在歌曲同一目录）",
+                    stringResource(R.string.pt_player_025),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
@@ -1065,7 +1067,7 @@ private fun QueueRow(
 
         if (isCurrent) {
             Text(
-                "正在播放",
+                stringResource(R.string.pt_player_001),
                 style = MaterialTheme.typography.labelSmall,
                 color = scheme.primary,
                 modifier = Modifier.padding(end = 4.dp)
@@ -1082,14 +1084,14 @@ private fun QueueRow(
         IconButton(onClick = onRemove) {
             Icon(
                 Icons.Rounded.RemoveCircleOutline,
-                contentDescription = "从队列移除",
+                contentDescription = stringResource(R.string.pt_player_026),
                 tint = scheme.onSurfaceVariant
             )
         }
         IconButton(onClick = {}, modifier = dragHandle) {
             Icon(
                 Icons.Rounded.DragHandle,
-                contentDescription = "拖拽排序",
+                contentDescription = stringResource(R.string.pt_player_027),
                 tint = scheme.onSurfaceVariant.copy(alpha = 0.55f)
             )
         }
@@ -1133,7 +1135,7 @@ private fun CastPickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("选择投屏设备") },
+        title = { Text(stringResource(R.string.pt_player_028)) },
         text = {
             Column(modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
                 when {
@@ -1143,20 +1145,20 @@ private fun CastPickerDialog(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Text("正在搜索局域网设备…", style = MaterialTheme.typography.bodyMedium)
+                            Text(stringResource(R.string.pt_player_029), style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                     error != null -> {
                         Text(
-                            "搜索失败：$error",
+                            stringResource(R.string.pt_player_030, error ?: ""),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.error
                         )
                     }
                     devices.isEmpty() -> {
                         Text(
-                            "未发现可投屏设备。请确认手机与电视/音箱在同一 Wi-Fi，" +
-                                "且设备已开启 DLNA/投屏接收。",
+                            stringResource(R.string.pt_player_031) +
+                                stringResource(R.string.pt_player_032),
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -1197,10 +1199,10 @@ private fun CastPickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { doSearch() }) { Text("重新搜索") }
+            TextButton(onClick = { doSearch() }) { Text(stringResource(R.string.pt_player_033)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.pt_player_010)) }
         }
     )
 }

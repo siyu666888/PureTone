@@ -2,4 +2,598 @@
 <resources>
     <string name="app_name">PureTone</string>
     <string name="app_widget_description">桌面播放控制：显示当前歌曲，可直接播放 / 暂停 / 切歌</string>
+    <!-- 音乐 -->
+    <string name="pt_app_001" formatted="false">音乐</string>
+    <!-- 我的 -->
+    <string name="pt_app_002" formatted="false">我的</string>
+    <!-- 设置 -->
+    <string name="pt_app_003" formatted="false">设置</string>
+    <!-- 未知专辑 -->
+    <string name="pt_ui_001" formatted="false">未知专辑</string>
+    <!-- 已收藏 -->
+    <string name="pt_ui_002" formatted="false">已收藏</string>
+    <!-- 暂停 -->
+    <string name="pt_ui_003" formatted="false">暂停</string>
+    <!-- 播放 -->
+    <string name="pt_ui_004" formatted="false">播放</string>
+    <!-- 播放模式：顺序播放 -->
+    <string name="pt_ui_005" formatted="false">播放模式：顺序播放</string>
+    <!-- 播放模式：随机播放 -->
+    <string name="pt_ui_006" formatted="false">播放模式：随机播放</string>
+    <!-- 播放模式：单曲循环 -->
+    <string name="pt_ui_007" formatted="false">播放模式：单曲循环</string>
+    <!-- 取消收藏 -->
+    <string name="pt_ui_008" formatted="false">取消收藏</string>
+    <!-- 收藏 -->
+    <string name="pt_ui_009" formatted="false">收藏</string>
+    <!-- 切换显示剩余时长或总时长 -->
+    <string name="pt_ui_010" formatted="false">切换显示剩余时长或总时长</string>
+    <!-- 剩余 -${formatTime(remaining)} / ${formatTime(duration)} -->
+    <string name="pt_ui_011" formatted="false">剩余 -%1$s / %2$s</string>
+    <!-- 上一首 -->
+    <string name="pt_ui_012" formatted="false">上一首</string>
+    <!-- 播放/暂停 -->
+    <string name="pt_ui_013" formatted="false">播放/暂停</string>
+    <!-- 下一首 -->
+    <string name="pt_ui_014" formatted="false">下一首</string>
+    <!-- 需要音乐访问权限 -->
+    <string name="pt_perm_001" formatted="false">需要音乐访问权限</string>
+    <!-- PureTone 需要读取本地音乐以构建曲库并播放。通知权限用于播放控制栏， -->
+    <string name="pt_perm_002" formatted="false">PureTone 需要读取本地音乐以构建曲库并播放。通知权限用于播放控制栏，</string>
+    <!-- 即使不授予也能正常使用。 -->
+    <string name="pt_perm_003" formatted="false">即使不授予也能正常使用。</string>
+    <!-- 授予权限 -->
+    <string name="pt_perm_004" formatted="false">授予权限</string>
+    <!-- 前往系统设置 -->
+    <string name="pt_perm_005" formatted="false">前往系统设置</string>
+    <!-- 最近添加 -->
+    <string name="pt_browse_001" formatted="false">最近添加</string>
+    <!-- 我的最爱 -->
+    <string name="pt_browse_002" formatted="false">我的最爱</string>
+    <!-- 最近播放 -->
+    <string name="pt_browse_003" formatted="false">最近播放</string>
+    <!-- 已选 ${selectedIds.size} 首 -->
+    <string name="pt_browse_004" formatted="false">已选 %1$s 首</string>
+    <!-- 音乐 -->
+    <string name="pt_browse_005" formatted="false">音乐</string>
+    <!-- 专辑 -->
+    <string name="pt_browse_006" formatted="false">专辑</string>
+    <!-- 歌手 -->
+    <string name="pt_browse_007" formatted="false">歌手</string>
+    <!-- 文件夹 -->
+    <string name="pt_browse_008" formatted="false">文件夹</string>
+    <!-- 扫描曲库 -->
+    <string name="pt_browse_009" formatted="false">扫描曲库</string>
+    <!-- 补全缺失封面 -->
+    <string name="pt_browse_010" formatted="false">补全缺失封面</string>
+    <!-- 退出多选 -->
+    <string name="pt_browse_011" formatted="false">退出多选</string>
+    <!-- 多选 -->
+    <string name="pt_browse_012" formatted="false">多选</string>
+    <!-- 排序 -->
+    <string name="pt_browse_013" formatted="false">排序</string>
+    <!-- 按标题 -->
+    <string name="pt_browse_014" formatted="false">按标题</string>
+    <!-- 按添加时间 -->
+    <string name="pt_browse_015" formatted="false">按添加时间</string>
+    <!-- 按歌手 -->
+    <string name="pt_browse_016" formatted="false">按歌手</string>
+    <!-- 按专辑 -->
+    <string name="pt_browse_017" formatted="false">按专辑</string>
+    <!-- 按时长 -->
+    <string name="pt_browse_018" formatted="false">按时长</string>
+    <!-- 按播放次数 -->
+    <string name="pt_browse_019" formatted="false">按播放次数</string>
+    <!-- 搜索 -->
+    <string name="pt_browse_020" formatted="false">搜索</string>
+    <!-- 歌曲 -->
+    <string name="pt_browse_021" formatted="false">歌曲</string>
+    <!-- 正在补全封面 ${bf.first} / ${bf.second} … -->
+    <string name="pt_browse_022" formatted="false">正在补全封面 %1$s / %2$s …</string>
+    <!-- 已选 ${selectedIds.size} / ${list.size} -->
+    <string name="pt_browse_023" formatted="false">已选 %1$s / %2$s</string>
+    <!-- 取消全选 -->
+    <string name="pt_browse_024" formatted="false">取消全选</string>
+    <!-- 全选 -->
+    <string name="pt_browse_025" formatted="false">全选</string>
+    <!-- 加入歌单 -->
+    <string name="pt_browse_026" formatted="false">加入歌单</string>
+    <!-- 播放全部 -->
+    <string name="pt_browse_027" formatted="false">播放全部</string>
+    <!-- 正在扫描本地音乐… -->
+    <string name="pt_browse_028" formatted="false">正在扫描本地音乐…</string>
+    <!-- 搜索歌曲 / 艺术家 / 专辑 -->
+    <string name="pt_browse_029" formatted="false">搜索歌曲 / 艺术家 / 专辑</string>
+    <!-- 清空 -->
+    <string name="pt_browse_030" formatted="false">清空</string>
+    <!-- 未找到匹配的音乐 -->
+    <string name="pt_browse_031" formatted="false">未找到匹配的音乐</string>
+    <!-- 曲库为空，点击右上角扫描按钮建立曲库 -->
+    <string name="pt_browse_032" formatted="false">曲库为空，点击右上角扫描按钮建立曲库</string>
+    <!-- 下一首播放 -->
+    <string name="pt_browse_033" formatted="false">下一首播放</string>
+    <!-- 加入队列 -->
+    <string name="pt_browse_034" formatted="false">加入队列</string>
+    <!-- 取消收藏 -->
+    <string name="pt_browse_035" formatted="false">取消收藏</string>
+    <!-- 收藏 -->
+    <string name="pt_browse_036" formatted="false">收藏</string>
+    <!-- 歌曲信息 -->
+    <string name="pt_browse_037" formatted="false">歌曲信息</string>
+    <!-- 当前排序 -->
+    <string name="pt_browse_038" formatted="false">当前排序</string>
+    <!-- 加入歌单（${songIds.size} 首） -->
+    <string name="pt_browse_039" formatted="false">加入歌单（%1$s 首）</string>
+    <!-- 新建歌单名称 -->
+    <string name="pt_browse_040" formatted="false">新建歌单名称</string>
+    <!-- 新建 -->
+    <string name="pt_browse_041" formatted="false">新建</string>
+    <!-- 选择已有歌单 -->
+    <string name="pt_browse_042" formatted="false">选择已有歌单</string>
+    <!-- 暂无歌单，先在上面新建一个吧 -->
+    <string name="pt_browse_043" formatted="false">暂无歌单，先在上面新建一个吧</string>
+    <!-- ${pw.songs.size} 首 -->
+    <string name="pt_browse_044" formatted="false">%1$s 首</string>
+    <!-- 取消 -->
+    <string name="pt_browse_045" formatted="false">取消</string>
+    <!-- 暂无专辑 -->
+    <string name="pt_browse_046" formatted="false">暂无专辑</string>
+    <!-- ${album.artist} · ${album.songCount} 首 -->
+    <string name="pt_browse_047" formatted="false">%1$s · %2$s 首</string>
+    <!-- 暂无歌手 -->
+    <string name="pt_browse_048" formatted="false">暂无歌手</string>
+    <!-- ${artist.songCount} 首 -->
+    <string name="pt_browse_049" formatted="false">%1$s 首</string>
+    <!-- 暂无文件夹 -->
+    <string name="pt_browse_050" formatted="false">暂无文件夹</string>
+    <!-- ${folder.songCount} 首 -->
+    <string name="pt_browse_051" formatted="false">%1$s 首</string>
+    <!-- 均衡器 -->
+    <string name="pt_eq_001" formatted="false">均衡器</string>
+    <!-- 返回 -->
+    <string name="pt_eq_002" formatted="false">返回</string>
+    <!-- 预设 -->
+    <string name="pt_eq_003" formatted="false">预设</string>
+    <!-- 我的预设 -->
+    <string name="pt_eq_004" formatted="false">我的预设</string>
+    <!-- + 保存当前 -->
+    <string name="pt_eq_005" formatted="false">+ 保存当前</string>
+    <!-- 删除预设 $name -->
+    <string name="pt_eq_006" formatted="false">删除预设 %1$s</string>
+    <!-- 重低音 / 环绕声 -->
+    <string name="pt_eq_007" formatted="false">重低音 / 环绕声</string>
+    <!-- 重低音 -->
+    <string name="pt_eq_008" formatted="false">重低音</string>
+    <!-- 环绕声 -->
+    <string name="pt_eq_009" formatted="false">环绕声</string>
+    <!-- 保存为预设 -->
+    <string name="pt_eq_010" formatted="false">保存为预设</string>
+    <!-- 预设名称 -->
+    <string name="pt_eq_011" formatted="false">预设名称</string>
+    <!-- 保存 -->
+    <string name="pt_eq_012" formatted="false">保存</string>
+    <!-- 取消 -->
+    <string name="pt_eq_013" formatted="false">取消</string>
+    <!-- 专辑 -->
+    <string name="pt_group_001" formatted="false">专辑</string>
+    <!-- 返回 -->
+    <string name="pt_group_002" formatted="false">返回</string>
+    <!-- 暂无歌曲 -->
+    <string name="pt_group_003" formatted="false">暂无歌曲</string>
+    <!-- 加入歌单 -->
+    <string name="pt_group_004" formatted="false">加入歌单</string>
+    <!-- ${songCount} 首 -->
+    <string name="pt_group_005" formatted="false">%1$s 首</string>
+    <!-- 播放全部 -->
+    <string name="pt_group_006" formatted="false">播放全部</string>
+    <!-- 请选择 .m3u / .m3u8 歌单文件 -->
+    <string name="pt_me_001" formatted="false">请选择 .m3u / .m3u8 歌单文件</string>
+    <!-- 我的音乐 -->
+    <string name="pt_me_002" formatted="false">我的音乐</string>
+    <!-- 听歌数据 -->
+    <string name="pt_me_003" formatted="false">听歌数据</string>
+    <!-- 最近播放 -->
+    <string name="pt_me_004" formatted="false">最近播放</string>
+    <!-- 我喜欢（${favorites.size}） -->
+    <string name="pt_me_005" formatted="false">我喜欢（%1$s）</string>
+    <!-- 歌单（${playlists.size}） -->
+    <string name="pt_me_006" formatted="false">歌单（%1$s）</string>
+    <!-- 导入 -->
+    <string name="pt_me_007" formatted="false">导入</string>
+    <!-- 新建歌单 -->
+    <string name="pt_me_008" formatted="false">新建歌单</string>
+    <!-- 暂无歌单，点右上角「新建歌单」创建 -->
+    <string name="pt_me_009" formatted="false">暂无歌单，点右上角「新建歌单」创建</string>
+    <!-- ${pw.songs.size} 首 -->
+    <string name="pt_me_010" formatted="false">%1$s 首</string>
+    <!-- 播放歌单 -->
+    <string name="pt_me_011" formatted="false">播放歌单</string>
+    <!-- 导出 -->
+    <string name="pt_me_012" formatted="false">导出</string>
+    <!-- 删除歌单 -->
+    <string name="pt_me_013" formatted="false">删除歌单</string>
+    <!-- 确定删除歌单「${pw.playlist.name}」吗？此操作不可撤销。 -->
+    <string name="pt_me_014" formatted="false">确定删除歌单「%1$s」吗？此操作不可撤销。</string>
+    <!-- 删除 -->
+    <string name="pt_me_015" formatted="false">删除</string>
+    <!-- 取消 -->
+    <string name="pt_me_016" formatted="false">取消</string>
+    <!-- 歌单名称 -->
+    <string name="pt_me_017" formatted="false">歌单名称</string>
+    <!-- 创建 -->
+    <string name="pt_me_018" formatted="false">创建</string>
+    <!-- 正在播放 -->
+    <string name="pt_player_001" formatted="false">正在播放</string>
+    <!-- 返回 -->
+    <string name="pt_player_002" formatted="false">返回</string>
+    <!-- 投屏中（点按管理） -->
+    <string name="pt_player_003" formatted="false">投屏中（点按管理）</string>
+    <!-- 投屏 -->
+    <string name="pt_player_004" formatted="false">投屏</string>
+    <!-- 当前没有正在播放的歌曲 -->
+    <string name="pt_player_005" formatted="false">当前没有正在播放的歌曲</string>
+    <!-- 正在为投屏转码… -->
+    <string name="pt_player_006" formatted="false">正在为投屏转码…</string>
+    <!-- 正在投屏到设备名 -->
+    <string name="pt_player_007" formatted="true">正在投屏到 %1$s</string>
+    <!-- 该格式需转码后投送到设备名，首次可能需要几十秒 -->
+    <string name="pt_player_008" formatted="true">该格式需转码后投送到 %1$s，首次可能需要几十秒</string>
+    <!-- 取消 -->
+    <string name="pt_player_010" formatted="false">取消</string>
+    <!-- 停止投屏 -->
+    <string name="pt_player_011" formatted="false">停止投屏</string>
+    <!-- APE 转码中… -->
+    <string name="pt_player_012" formatted="false">APE 转码中…</string>
+    <!-- 均衡器 -->
+    <string name="pt_player_013" formatted="false">均衡器</string>
+    <!-- 封面 -->
+    <string name="pt_player_014" formatted="false">封面</string>
+    <!-- 歌词 -->
+    <string name="pt_player_015" formatted="false">歌词</string>
+    <!-- 上一首 -->
+    <string name="pt_player_016" formatted="false">上一首</string>
+    <!-- 下一首 -->
+    <string name="pt_player_017" formatted="false">下一首</string>
+    <!-- 播放队列 -->
+    <string name="pt_player_018" formatted="false">播放队列</string>
+    <!-- 播放队列（${state.queue.size}） -->
+    <string name="pt_player_019" formatted="false">播放队列（%1$s）</string>
+    <!-- 清空 -->
+    <string name="pt_player_020" formatted="false">清空</string>
+    <!-- 队列为空 -->
+    <string name="pt_player_021" formatted="false">队列为空</string>
+    <!-- 播放/暂停 -->
+    <string name="pt_player_022" formatted="false">播放/暂停</string>
+    <!-- 缩小字号 -->
+    <string name="pt_player_023" formatted="false">缩小字号</string>
+    <!-- 放大字号 -->
+    <string name="pt_player_024" formatted="false">放大字号</string>
+    <!-- 暂无歌词（可将同名 .lrc 放在歌曲同一目录） -->
+    <string name="pt_player_025" formatted="false">暂无歌词（可将同名 .lrc 放在歌曲同一目录）</string>
+    <!-- 从队列移除 -->
+    <string name="pt_player_026" formatted="false">从队列移除</string>
+    <!-- 拖拽排序 -->
+    <string name="pt_player_027" formatted="false">拖拽排序</string>
+    <!-- 选择投屏设备 -->
+    <string name="pt_player_028" formatted="false">选择投屏设备</string>
+    <!-- 正在搜索局域网设备… -->
+    <string name="pt_player_029" formatted="false">正在搜索局域网设备…</string>
+    <!-- 搜索失败：$error -->
+    <string name="pt_player_030" formatted="false">搜索失败：%1$s</string>
+    <!-- 未发现可投屏设备。请确认手机与电视/音箱在同一 Wi-Fi， -->
+    <string name="pt_player_031" formatted="false">未发现可投屏设备。请确认手机与电视/音箱在同一 Wi-Fi，</string>
+    <!-- 且设备已开启 DLNA/投屏接收。 -->
+    <string name="pt_player_032" formatted="false">且设备已开启 DLNA/投屏接收。</string>
+    <!-- 重新搜索 -->
+    <string name="pt_player_033" formatted="false">重新搜索</string>
+    <!-- 歌单 -->
+    <string name="pt_playlist_001" formatted="false">歌单</string>
+    <!-- 返回 -->
+    <string name="pt_playlist_002" formatted="false">返回</string>
+    <!-- 更多操作 -->
+    <string name="pt_playlist_003" formatted="false">更多操作</string>
+    <!-- 重命名 -->
+    <string name="pt_playlist_004" formatted="false">重命名</string>
+    <!-- 导出 M3U -->
+    <string name="pt_playlist_005" formatted="false">导出 M3U</string>
+    <!-- 删除歌单 -->
+    <string name="pt_playlist_006" formatted="false">删除歌单</string>
+    <!-- 歌单不存在 -->
+    <string name="pt_playlist_007" formatted="false">歌单不存在</string>
+    <!-- ${songList.size} 首 -->
+    <string name="pt_playlist_008" formatted="false">%1$s 首</string>
+    <!-- 播放全部 -->
+    <string name="pt_playlist_009" formatted="false">播放全部</string>
+    <!-- 歌单还没有歌曲 -->
+    <string name="pt_playlist_010" formatted="false">歌单还没有歌曲</string>
+    <!-- 拖动排序 -->
+    <string name="pt_playlist_011" formatted="false">拖动排序</string>
+    <!-- 从歌单移除 -->
+    <string name="pt_playlist_012" formatted="false">从歌单移除</string>
+    <!-- 确定删除歌单「$name」吗？此操作不可撤销。 -->
+    <string name="pt_playlist_013" formatted="false">确定删除歌单「%1$s」吗？此操作不可撤销。</string>
+    <!-- 删除 -->
+    <string name="pt_playlist_014" formatted="false">删除</string>
+    <!-- 取消 -->
+    <string name="pt_playlist_015" formatted="false">取消</string>
+    <!-- 重命名歌单 -->
+    <string name="pt_playlist_016" formatted="false">重命名歌单</string>
+    <!-- 歌单名称 -->
+    <string name="pt_playlist_017" formatted="false">歌单名称</string>
+    <!-- 确定 -->
+    <string name="pt_playlist_018" formatted="false">确定</string>
+    <!-- 外观 -->
+    <string name="pt_settings_001" formatted="false">外观</string>
+    <!-- 启用系统动态取色（实验） -->
+    <string name="pt_settings_002" formatted="false">启用系统动态取色（实验）</string>
+    <!-- AMOLED 纯黑（省电） -->
+    <string name="pt_settings_003" formatted="false">AMOLED 纯黑（省电）</string>
+    <!-- 播放 -->
+    <string name="pt_settings_004" formatted="false">播放</string>
+    <!-- 无缝播放（gapless） -->
+    <string name="pt_settings_005" formatted="false">无缝播放（gapless）</string>
+    <!-- 启动时续播上次歌曲 -->
+    <string name="pt_settings_006" formatted="false">启动时续播上次歌曲</string>
+    <!-- 交叉淡化 -->
+    <string name="pt_settings_007" formatted="false">交叉淡化</string>
+    <!-- 关 -->
+    <string name="pt_settings_008" formatted="false">关</string>
+    <!-- 倍速 -->
+    <string name="pt_settings_009" formatted="false">倍速</string>
+    <!-- 定时 -->
+    <string name="pt_settings_010" formatted="false">定时</string>
+    <!-- 睡眠定时剩余 ${formatRemaining(remainingMs)} -->
+    <string name="pt_settings_011" formatted="false">睡眠定时剩余 %1$s</string>
+    <!-- 取消定时 -->
+    <string name="pt_settings_012" formatted="false">取消定时</string>
+    <!-- 音效 -->
+    <string name="pt_settings_013" formatted="false">音效</string>
+    <!-- 均衡器 -->
+    <string name="pt_settings_014" formatted="false">均衡器</string>
+    <!-- 隐私 -->
+    <string name="pt_settings_015" formatted="false">隐私</string>
+    <!-- 联网补全元数据与歌词 -->
+    <string name="pt_settings_016" formatted="false">联网补全元数据与歌词</string>
+    <!-- 开启时会向 iTunes 与 LRCLIB 发送歌名、歌手用于匹配元数据与歌词 -->
+    <string name="pt_settings_017" formatted="false">开启时会向 iTunes 与 LRCLIB 发送歌名、歌手用于匹配元数据与歌词</string>
+    <!-- 已关闭：不会向任何服务器发送曲目信息 -->
+    <string name="pt_settings_018" formatted="false">已关闭：不会向任何服务器发送曲目信息</string>
+    <!-- 诊断 -->
+    <string name="pt_settings_019" formatted="false">诊断</string>
+    <!-- 导出失败：${it.message ?: it.javaClass.simpleName} -->
+    <string name="pt_settings_020" formatted="false">导出失败：%1$s</string>
+    <!-- 导出诊断日志 -->
+    <string name="pt_settings_021" formatted="false">导出诊断日志</string>
+    <!-- 导出最近崩溃堆栈与设备信息，可发送给开发者协助定位；不读取或上传任何个人曲库内容。 -->
+    <string name="pt_settings_022" formatted="false">导出最近崩溃堆栈与设备信息，可发送给开发者协助定位；不读取或上传任何个人曲库内容。</string>
+    <!-- 实验室 -->
+    <string name="pt_settings_023" formatted="false">实验室</string>
+    <!-- 桌面 -->
+    <string name="pt_settings_024" formatted="false">桌面</string>
+    <!-- 桌面播放控制小部件 -->
+    <string name="pt_settings_025" formatted="false">桌面播放控制小部件</string>
+    <!-- 添加桌面小部件 -->
+    <string name="pt_settings_026" formatted="false">添加桌面小部件</string>
+    <!-- 将在桌面添加 PureTone 播放控制小部件， -->
+    <string name="pt_settings_027" formatted="false">将在桌面添加 PureTone 播放控制小部件，</string>
+    <!-- 可直接查看当前歌曲并控制播放 / 切歌。是否继续？ -->
+    <string name="pt_settings_028" formatted="false">可直接查看当前歌曲并控制播放 / 切歌。是否继续？</string>
+    <!-- 确认添加 -->
+    <string name="pt_settings_029" formatted="false">确认添加</string>
+    <!-- 取消 -->
+    <string name="pt_settings_030" formatted="false">取消</string>
+    <!-- 已在桌面上添加 -->
+    <string name="pt_settings_031" formatted="false">已在桌面上添加</string>
+    <!-- 如需移除，请在桌面长按该小部件，拖到「移除」区域即可。 -->
+    <string name="pt_settings_032" formatted="false">如需移除，请在桌面长按该小部件，拖到「移除」区域即可。</string>
+    <!-- 知道了 -->
+    <string name="pt_settings_033" formatted="false">知道了</string>
+    <!-- 存储 -->
+    <string name="pt_settings_034" formatted="false">存储</string>
+    <!-- APE 转码缓存 -->
+    <string name="pt_settings_035" formatted="false">APE 转码缓存</string>
+    <!-- 清理 -->
+    <string name="pt_settings_036" formatted="false">清理</string>
+    <!-- 响度（ReplayGain） -->
+    <string name="pt_settings_037" formatted="false">响度（ReplayGain）</string>
+    <!-- 启用 ReplayGain -->
+    <string name="pt_settings_038" formatted="false">启用 ReplayGain</string>
+    <!-- 曲目 -->
+    <string name="pt_settings_039" formatted="false">曲目</string>
+    <!-- 专辑 -->
+    <string name="pt_settings_040" formatted="false">专辑</string>
+    <!-- 模式 -->
+    <string name="pt_settings_041" formatted="false">模式</string>
+    <!-- 补偿 (dB) -->
+    <string name="pt_settings_042" formatted="false">补偿 (dB)</string>
+    <!-- 依据音频文件内 ReplayGain 标签自动调整响度，文件无标签时本项不生效。 -->
+    <string name="pt_settings_043" formatted="false">依据音频文件内 ReplayGain 标签自动调整响度，文件无标签时本项不生效。</string>
+    <!-- PureTone · 纯净之音 -->
+    <string name="pt_settings_044" formatted="false">PureTone · 纯净之音</string>
+    <!-- 系统 -->
+    <string name="pt_settings_045" formatted="false">系统</string>
+    <!-- 浅色 -->
+    <string name="pt_settings_046" formatted="false">浅色</string>
+    <!-- 深色 -->
+    <string name="pt_settings_047" formatted="false">深色</string>
+    <!-- 纯黑 -->
+    <string name="pt_settings_048" formatted="false">纯黑</string>
+    <!-- 未知艺术家 -->
+    <string name="pt_songinfo_001" formatted="false">未知艺术家</string>
+    <!-- 歌曲信息 -->
+    <string name="pt_songinfo_002" formatted="false">歌曲信息</string>
+    <!-- 关闭 -->
+    <string name="pt_songinfo_003" formatted="false">关闭</string>
+    <!-- 未知歌曲 -->
+    <string name="pt_songinfo_004" formatted="false">未知歌曲</string>
+    <!-- 歌名 -->
+    <string name="pt_songinfo_005" formatted="false">歌名</string>
+    <!-- 歌手 -->
+    <string name="pt_songinfo_006" formatted="false">歌手</string>
+    <!-- 专辑 -->
+    <string name="pt_songinfo_007" formatted="false">专辑</string>
+    <!-- 保存中… -->
+    <string name="pt_songinfo_008" formatted="false">保存中…</string>
+    <!-- 保存修改 -->
+    <string name="pt_songinfo_009" formatted="false">保存修改</string>
+    <!-- 保存失败，请重试（编辑内容已保留） -->
+    <string name="pt_songinfo_010" formatted="false">保存失败，请重试（编辑内容已保留）</string>
+    <!-- 联网匹配（${metadataVm.providerName}） -->
+    <string name="pt_songinfo_011" formatted="false">联网匹配（%1$s）</string>
+    <!-- 搜索关键词 -->
+    <string name="pt_songinfo_012" formatted="false">搜索关键词</string>
+    <!-- 搜索 -->
+    <string name="pt_songinfo_013" formatted="false">搜索</string>
+    <!-- 自动填充 -->
+    <string name="pt_songinfo_014" formatted="false">自动填充</string>
+    <!-- 下载中 -->
+    <string name="pt_songinfo_015" formatted="false">下载中</string>
+    <!-- 下载歌词 -->
+    <string name="pt_songinfo_016" formatted="false">下载歌词</string>
+    <!-- 撤销自动填充 -->
+    <string name="pt_songinfo_017" formatted="false">撤销自动填充</string>
+    <!-- 未知专辑 -->
+    <string name="pt_songinfo_018" formatted="false">未知专辑</string>
+    <!-- 使用 -->
+    <string name="pt_songinfo_019" formatted="false">使用</string>
+    <!-- 清空结果 -->
+    <string name="pt_songinfo_020" formatted="false">清空结果</string>
+    <!-- 点「自动填充」按歌手+歌名一键套用首个匹配；也可手动搜索后点「使用」；「下载歌词」从 ${metadataVm.lyricsProviderName} 抓取并保存到 App 歌词目录。 -->
+    <string name="pt_songinfo_021" formatted="false">点「自动填充」按歌手+歌名一键套用首个匹配；也可手动搜索后点「使用」；「下载歌词」从 %1$s 抓取并保存到 App 歌词目录。</string>
+    <!-- 听歌数据 -->
+    <string name="pt_stats_001" formatted="false">听歌数据</string>
+    <!-- 返回 -->
+    <string name="pt_stats_002" formatted="false">返回</string>
+    <!-- 清空历史 -->
+    <string name="pt_stats_003" formatted="false">清空历史</string>
+    <!-- 累计时长 -->
+    <string name="pt_stats_004" formatted="false">累计时长</string>
+    <!-- 总播放 -->
+    <string name="pt_stats_005" formatted="false">总播放</string>
+    <!-- ${s.totalPlays} 次 -->
+    <string name="pt_stats_006" formatted="false">%1$s 次</string>
+    <!-- 收听歌曲 -->
+    <string name="pt_stats_007" formatted="false">收听歌曲</string>
+    <!-- ${s.playedSongs} 首 -->
+    <string name="pt_stats_008" formatted="false">%1$s 首</string>
+    <!-- 活跃天数(近30天) -->
+    <string name="pt_stats_009" formatted="false">活跃天数(近30天)</string>
+    <!-- ${s.activeDays} 天 -->
+    <string name="pt_stats_010" formatted="false">%1$s 天</string>
+    <!-- 日均时长(近30天) -->
+    <string name="pt_stats_011" formatted="false">日均时长(近30天)</string>
+    <!-- 最勤时段 -->
+    <string name="pt_stats_012" formatted="false">最勤时段</string>
+    <!-- 每日听歌（近 ${trend.size} 天） -->
+    <string name="pt_stats_013" formatted="false">每日听歌（近 %1$s 天）</string>
+    <!-- 近 ${trend.size} 天还没有听歌记录 -->
+    <string name="pt_stats_014" formatted="false">近 %1$s 天还没有听歌记录</string>
+    <!-- 时段分布 -->
+    <string name="pt_stats_015" formatted="false">时段分布</string>
+    <!-- ${h}时 -->
+    <string name="pt_stats_016" formatted="false">%1$s时</string>
+    <!-- 最爱歌手 -->
+    <string name="pt_stats_017" formatted="false">最爱歌手</string>
+    <!-- ${a.playCount} 次 -->
+    <string name="pt_stats_018" formatted="false">%1$s 次</string>
+    <!-- 最爱歌曲 -->
+    <string name="pt_stats_019" formatted="false">最爱歌曲</string>
+    <!-- ${t.artist} · ${t.playCount} 次 -->
+    <string name="pt_stats_020" formatted="false">%1$s · %2$s 次</string>
+    <!-- 趣味标签 -->
+    <string name="pt_stats_021" formatted="false">趣味标签</string>
+    <!-- 🎤 最爱歌手：${favArtist} -->
+    <string name="pt_stats_022" formatted="false">🎤 最爱歌手：%1$s</string>
+    <!-- 🌙 深夜听众：最爱在 ${s.peakHour}:00 听歌 -->
+    <string name="pt_stats_023" formatted="false">🌙 深夜听众：最爱在 %1$s:00 听歌</string>
+    <!-- ☀️ 日常听众：高频时段 ${s.peakHour}:00 -->
+    <string name="pt_stats_024" formatted="false">☀️ 日常听众：高频时段 %1$s:00</string>
+    <!-- 📅 近 30 天有 ${s.activeDays} 天在听歌 -->
+    <string name="pt_stats_025" formatted="false">📅 近 30 天有 %1$s 天在听歌</string>
+    <!-- 还没有听歌数据，去播放几首歌后再来看看吧～ -->
+    <string name="pt_stats_026" formatted="false">还没有听歌数据，去播放几首歌后再来看看吧～</string>
+    <!-- 清空播放历史 -->
+    <string name="pt_stats_027" formatted="false">清空播放历史</string>
+    <!-- 将删除全部播放记录与统计（不影响曲库与收藏），确定继续？ -->
+    <string name="pt_stats_028" formatted="false">将删除全部播放记录与统计（不影响曲库与收藏），确定继续？</string>
+    <!-- 清空 -->
+    <string name="pt_stats_029" formatted="false">清空</string>
+    <!-- 取消 -->
+    <string name="pt_stats_030" formatted="false">取消</string>
+
+    <!-- ===== P3-4 Phase B：均衡器页（非 composable 助手 / 预设名映射） ===== -->
+    <!-- 当前设备或系统不支持音效，调节不会产生声音变化。 -->
+    <string name="pt_eq_014" formatted="false">当前设备或系统不支持音效，调节不会产生声音变化。</string>
+    <!-- 播放音乐并开启均衡器后生效；部分设备需连接耳机或蓝牙音频。 -->
+    <string name="pt_eq_015" formatted="false">播放音乐并开启均衡器后生效；部分设备需连接耳机或蓝牙音频。</string>
+    <!-- 设备支持 %1$d 段，已按中心频率就近映射到 %2$d 段。 -->
+    <string name="pt_eq_016" formatted="true">设备支持 %1$d 段，已按中心频率就近映射到 %2$d 段。</string>
+    <!-- 音效已生效。如无变化，请检查系统音效设置或媒体音量。 -->
+    <string name="pt_eq_017" formatted="false">音效已生效。如无变化，请检查系统音效设置或媒体音量。</string>
+    <!-- 均衡器预设：平坦 -->
+    <string name="pt_eq_preset_flat" formatted="false">平坦</string>
+    <!-- 均衡器预设：流行 -->
+    <string name="pt_eq_preset_pop" formatted="false">流行</string>
+    <!-- 均衡器预设：摇滚 -->
+    <string name="pt_eq_preset_rock" formatted="false">摇滚</string>
+    <!-- 均衡器预设：爵士 -->
+    <string name="pt_eq_preset_jazz" formatted="false">爵士</string>
+    <!-- 均衡器预设：古典 -->
+    <string name="pt_eq_preset_classical" formatted="false">古典</string>
+    <!-- 均衡器预设：人声 -->
+    <string name="pt_eq_preset_vocal" formatted="false">人声</string>
+    <!-- 均衡器预设：低音 -->
+    <string name="pt_eq_preset_bass" formatted="false">低音</string>
+
+    <!-- ===== P3-4 Phase B：统计页时长格式化 ===== -->
+    <!-- 0 分钟 -->
+    <string name="pt_stats_dur_zero" formatted="false">0 分钟</string>
+    <!-- %1$d 小时 %2$d 分 -->
+    <string name="pt_stats_dur_hours" formatted="true">%1$d 小时 %2$d 分</string>
+    <!-- %1$d 分钟 -->
+    <string name="pt_stats_dur_min" formatted="true">%1$d 分钟</string>
+    <!-- %1$d 秒 -->
+    <string name="pt_stats_dur_sec" formatted="true">%1$d 秒</string>
+
+    <!-- ===== P3-4 Phase B：诊断报告（P3-1，context.getString） ===== -->
+    <!-- ==== PureTone 诊断报告 ==== -->
+    <string name="pt_diag_001" formatted="false">==== PureTone 诊断报告 ====</string>
+    <!-- 生成时间: %1$s -->
+    <string name="pt_diag_002" formatted="true">生成时间: %1$s</string>
+    <!-- 应用 -->
+    <string name="pt_diag_003" formatted="false">---- 应用 ----</string>
+    <!-- 包名: %1$s -->
+    <string name="pt_diag_004" formatted="true">包名: %1$s</string>
+    <!-- 版本: %1$s (%2$d) -->
+    <string name="pt_diag_005" formatted="true">版本: %1$s (%2$d)</string>
+    <!-- 构建类型: %1$s -->
+    <string name="pt_diag_006" formatted="true">构建类型: %1$s</string>
+    <!-- 调试构建: %1$b -->
+    <string name="pt_diag_007" formatted="true">调试构建: %1$b</string>
+    <!-- 设备 -->
+    <string name="pt_diag_008" formatted="false">---- 设备 ----</string>
+    <!-- 厂商: %1$s -->
+    <string name="pt_diag_009" formatted="true">厂商: %1$s</string>
+    <!-- 型号: %1$s -->
+    <string name="pt_diag_010" formatted="true">型号: %1$s</string>
+    <!-- 产品: %1$s -->
+    <string name="pt_diag_011" formatted="true">产品: %1$s</string>
+    <!-- Android: %1$s (API %2$d) -->
+    <string name="pt_diag_012" formatted="true">Android: %1$s (API %2$d)</string>
+    <!-- ABI: %1$s -->
+    <string name="pt_diag_013" formatted="true">ABI: %1$s</string>
+    <!-- 区域: %1$s -->
+    <string name="pt_diag_014" formatted="true">区域: %1$s</string>
+    <!-- 最近崩溃记录 (%1$s) -->
+    <string name="pt_diag_015" formatted="true">---- 最近崩溃记录 (%1$s) ----</string>
+    <!-- (无崩溃记录) -->
+    <string name="pt_diag_016" formatted="false">(无崩溃记录)</string>
+    <!-- 最近一次 FFmpeg 命令输出 -->
+    <string name="pt_diag_017" formatted="false">---- 最近一次 FFmpeg 命令输出 ----</string>
+    <!-- (无) -->
+    <string name="pt_diag_018" formatted="false">(无)</string>
+    <!-- (读取失败) -->
+    <string name="pt_diag_019" formatted="false">(读取失败)</string>
+    <!-- 导出诊断日志（系统分享面板标题） -->
+    <string name="pt_diag_020" formatted="false">导出诊断日志</string>
 </resources>

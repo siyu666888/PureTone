@@ -1,4 +1,6 @@
 package com.puretone.player.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.puretone.player.R
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -127,9 +129,9 @@ private fun SmartPlaylistsRow(
     modifier: Modifier = Modifier
 ) {
     val items = listOf(
-        SmartPlaylist("最近添加", SmartPlaylistKind.RECENTLY_ADDED, recentlyAdded),
-        SmartPlaylist("我的最爱", SmartPlaylistKind.MY_FAVORITES, topSongs),
-        SmartPlaylist("最近播放", SmartPlaylistKind.RECENTLY_PLAYED, recentlyPlayed)
+        SmartPlaylist(stringResource(R.string.pt_browse_001), SmartPlaylistKind.RECENTLY_ADDED, recentlyAdded),
+        SmartPlaylist(stringResource(R.string.pt_browse_002), SmartPlaylistKind.MY_FAVORITES, topSongs),
+        SmartPlaylist(stringResource(R.string.pt_browse_003), SmartPlaylistKind.RECENTLY_PLAYED, recentlyPlayed)
     )
     // 三卡按 weight 均分整屏宽度：固定内边距 + 等分，杜绝横向滚动与卡片溢出（用户诉求）。
     Row(
@@ -240,10 +242,10 @@ fun BrowseScreen(
     val list = if (searching && searchQuery.isNotBlank()) searchResults else library
 
     val tabTitle = when (tab) {
-        MusicTab.SONGS -> if (selecting) "已选 ${selectedIds.size} 首" else "音乐"
-        MusicTab.ALBUMS -> "专辑"
-        MusicTab.ARTISTS -> "歌手"
-        MusicTab.FOLDERS -> "文件夹"
+        MusicTab.SONGS -> if (selecting) stringResource(R.string.pt_browse_004, selectedIds.size) else stringResource(R.string.pt_browse_005)
+        MusicTab.ALBUMS -> stringResource(R.string.pt_browse_006)
+        MusicTab.ARTISTS -> stringResource(R.string.pt_browse_007)
+        MusicTab.FOLDERS -> stringResource(R.string.pt_browse_008)
     }
 
     // 曲库为空且本次启动还没扫过：自动扫描一次（授权后首次进入即建库）
@@ -281,7 +283,7 @@ fun BrowseScreen(
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Icon(Icons.Rounded.Refresh, contentDescription = "扫描曲库")
+                        Icon(Icons.Rounded.Refresh, contentDescription = stringResource(R.string.pt_browse_009))
                     }
                 }
                 // 补全缺失封面：一键联网补全（所有页签可用）
@@ -295,7 +297,7 @@ fun BrowseScreen(
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Icon(Icons.Rounded.AutoFixHigh, contentDescription = "补全缺失封面")
+                        Icon(Icons.Rounded.AutoFixHigh, contentDescription = stringResource(R.string.pt_browse_010))
                     }
                 }
                 // 以下仅歌曲页签：多选 / 排序 / 搜索
@@ -307,26 +309,26 @@ fun BrowseScreen(
                     }) {
                         Icon(
                             imageVector = if (selecting) Icons.Rounded.Close else Icons.Rounded.Checklist,
-                            contentDescription = if (selecting) "退出多选" else "多选"
+                            contentDescription = if (selecting) stringResource(R.string.pt_browse_011) else stringResource(R.string.pt_browse_012)
                         )
                     }
                     // 排序：弹出排序选项菜单
                     IconButton(onClick = { sortMenuOpen = true }) {
-                        Icon(Icons.Rounded.SwapVert, contentDescription = "排序")
+                        Icon(Icons.Rounded.SwapVert, contentDescription = stringResource(R.string.pt_browse_013))
                     }
                     DropdownMenu(
                         expanded = sortMenuOpen,
                         onDismissRequest = { sortMenuOpen = false }
                     ) {
-                        SortOption("按标题", SongSortOrder.TITLE, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                        SortOption("按添加时间", SongSortOrder.DATE_ADDED, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                        SortOption("按歌手", SongSortOrder.ARTIST, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                        SortOption("按专辑", SongSortOrder.ALBUM, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                        SortOption("按时长", SongSortOrder.DURATION, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                        SortOption("按播放次数", SongSortOrder.PLAY_COUNT, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                        SortOption(stringResource(R.string.pt_browse_014), SongSortOrder.TITLE, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                        SortOption(stringResource(R.string.pt_browse_015), SongSortOrder.DATE_ADDED, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                        SortOption(stringResource(R.string.pt_browse_016), SongSortOrder.ARTIST, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                        SortOption(stringResource(R.string.pt_browse_017), SongSortOrder.ALBUM, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                        SortOption(stringResource(R.string.pt_browse_018), SongSortOrder.DURATION, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                        SortOption(stringResource(R.string.pt_browse_019), SongSortOrder.PLAY_COUNT, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
                     }
                     IconButton(onClick = { searching = !searching }) {
-                        Icon(Icons.Rounded.Search, contentDescription = "搜索")
+                        Icon(Icons.Rounded.Search, contentDescription = stringResource(R.string.pt_browse_020))
                     }
                 }
             }
@@ -334,10 +336,10 @@ fun BrowseScreen(
 
         // 页签：歌曲 / 专辑 / 歌手 / 文件夹
         TabRow(selectedTabIndex = tab.ordinal) {
-            Tab(selected = tab == MusicTab.SONGS, onClick = { tab = MusicTab.SONGS }, text = { Text("歌曲") })
-            Tab(selected = tab == MusicTab.ALBUMS, onClick = { tab = MusicTab.ALBUMS }, text = { Text("专辑") })
-            Tab(selected = tab == MusicTab.ARTISTS, onClick = { tab = MusicTab.ARTISTS }, text = { Text("歌手") })
-            Tab(selected = tab == MusicTab.FOLDERS, onClick = { tab = MusicTab.FOLDERS }, text = { Text("文件夹") })
+            Tab(selected = tab == MusicTab.SONGS, onClick = { tab = MusicTab.SONGS }, text = { Text(stringResource(R.string.pt_browse_021)) })
+            Tab(selected = tab == MusicTab.ALBUMS, onClick = { tab = MusicTab.ALBUMS }, text = { Text(stringResource(R.string.pt_browse_006)) })
+            Tab(selected = tab == MusicTab.ARTISTS, onClick = { tab = MusicTab.ARTISTS }, text = { Text(stringResource(R.string.pt_browse_007)) })
+            Tab(selected = tab == MusicTab.FOLDERS, onClick = { tab = MusicTab.FOLDERS }, text = { Text(stringResource(R.string.pt_browse_008)) })
         }
 
         // 封面补全进度 / 结果提示（库级，任何页签下都提示）
@@ -345,7 +347,7 @@ fun BrowseScreen(
         val msg = metaMessage
         if (bf != null || msg != null) {
             Text(
-                text = if (bf != null) "正在补全封面 ${bf.first} / ${bf.second} …" else msg.orEmpty(),
+                text = if (bf != null) stringResource(R.string.pt_browse_022, bf.first, bf.second) else msg.orEmpty(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
@@ -373,7 +375,7 @@ fun BrowseScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "已选 ${selectedIds.size} / ${list.size}",
+                            stringResource(R.string.pt_browse_023, selectedIds.size, list.size),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f)
@@ -385,7 +387,7 @@ fun BrowseScreen(
                                 selectedIds.addAll(list.map { it.id })
                             }
                         }) {
-                            Text(if (selectedIds.isNotEmpty() && selectedIds.size == list.size) "取消全选" else "全选")
+                            Text(if (selectedIds.isNotEmpty() && selectedIds.size == list.size) stringResource(R.string.pt_browse_024) else stringResource(R.string.pt_browse_025))
                         }
                         Spacer(Modifier.width(8.dp))
                         Button(
@@ -394,7 +396,7 @@ fun BrowseScreen(
                         ) {
                             Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("加入歌单")
+                            Text(stringResource(R.string.pt_browse_026))
                         }
                     }
                 } else {
@@ -414,12 +416,12 @@ fun BrowseScreen(
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(Modifier.size(6.dp))
-                            Text("播放全部", style = MaterialTheme.typography.labelLarge)
+                            Text(stringResource(R.string.pt_browse_027), style = MaterialTheme.typography.labelLarge)
                         }
                         if (isScanning) {
                             Spacer(Modifier.size(12.dp))
                             Text(
-                                "正在扫描本地音乐…",
+                                stringResource(R.string.pt_browse_028),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -434,12 +436,12 @@ fun BrowseScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 8.dp),
-                        placeholder = { Text("搜索歌曲 / 艺术家 / 专辑") },
+                        placeholder = { Text(stringResource(R.string.pt_browse_029)) },
                         singleLine = true,
                         trailingIcon = {
                             if (searchQuery.isNotBlank()) {
                                 IconButton(onClick = { libVm.setSearchQuery("") }) {
-                                    Icon(Icons.Rounded.Close, contentDescription = "清空")
+                                    Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.pt_browse_030))
                                 }
                             }
                         }
@@ -450,9 +452,9 @@ fun BrowseScreen(
                     EmptyState(
                         modifier = Modifier.fillMaxSize().weight(1f),
                         text = when {
-                            searching -> "未找到匹配的音乐"
-                            isScanning -> "正在扫描本地音乐…"
-                            else -> "曲库为空，点击右上角扫描按钮建立曲库"
+                            searching -> stringResource(R.string.pt_browse_031)
+                            isScanning -> stringResource(R.string.pt_browse_028)
+                            else -> stringResource(R.string.pt_browse_032)
                         }
                     )
                 } else {
@@ -480,7 +482,7 @@ fun BrowseScreen(
                                 trailing = if (selecting) null else {
                                     {
                                         IconButton(onClick = { addDialogSongs = listOf(song.id) }) {
-                                            Icon(Icons.Rounded.Add, contentDescription = "加入歌单")
+                                            Icon(Icons.Rounded.Add, contentDescription = stringResource(R.string.pt_browse_026))
                                         }
                                     }
                                 }
@@ -641,16 +643,16 @@ fun SongActionSheet(
             }
             Spacer(Modifier.height(8.dp))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-            ActionItem(Icons.AutoMirrored.Rounded.PlaylistPlay, "下一首播放", onPlayNext)
-            ActionItem(Icons.AutoMirrored.Rounded.PlaylistAdd, "加入队列", onEnqueue)
-            ActionItem(Icons.Rounded.Add, "加入歌单", onAddToPlaylist)
+            ActionItem(Icons.AutoMirrored.Rounded.PlaylistPlay, stringResource(R.string.pt_browse_033), onPlayNext)
+            ActionItem(Icons.AutoMirrored.Rounded.PlaylistAdd, stringResource(R.string.pt_browse_034), onEnqueue)
+            ActionItem(Icons.Rounded.Add, stringResource(R.string.pt_browse_026), onAddToPlaylist)
             ActionItem(
                 imageVector = if (favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                label = if (favorite) "取消收藏" else "收藏",
+                label = if (favorite) stringResource(R.string.pt_browse_035) else stringResource(R.string.pt_browse_036),
                 tint = if (favorite) FavoriteRed else MaterialTheme.colorScheme.onSurface,
                 onClick = onToggleFavorite
             )
-            ActionItem(Icons.Rounded.Info, "歌曲信息", onShowInfo)
+            ActionItem(Icons.Rounded.Info, stringResource(R.string.pt_browse_037), onShowInfo)
         }
     }
 }
@@ -705,7 +707,7 @@ private fun SortOption(
         onClick = { onSelect(order) },
         trailingIcon = {
             if (order == current) {
-                Icon(Icons.Rounded.Check, contentDescription = "当前排序", tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.Rounded.Check, contentDescription = stringResource(R.string.pt_browse_038), tint = MaterialTheme.colorScheme.primary)
             }
         }
     )
@@ -725,7 +727,7 @@ fun AddToPlaylistDialog(
     var newName by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (songIds.size == 1) "加入歌单" else "加入歌单（${songIds.size} 首）") },
+        title = { Text(if (songIds.size == 1) stringResource(R.string.pt_browse_026) else stringResource(R.string.pt_browse_039, songIds.size)) },
         text = {
             Column(
                 modifier = Modifier
@@ -737,7 +739,7 @@ fun AddToPlaylistDialog(
                     OutlinedTextField(
                         value = newName,
                         onValueChange = { newName = it },
-                        placeholder = { Text("新建歌单名称") },
+                        placeholder = { Text(stringResource(R.string.pt_browse_040)) },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
@@ -745,18 +747,18 @@ fun AddToPlaylistDialog(
                     TextButton(
                         onClick = { onCreateAndAdd(newName) },
                         enabled = newName.isNotBlank()
-                    ) { Text("新建") }
+                    ) { Text(stringResource(R.string.pt_browse_041)) }
                 }
                 Spacer(Modifier.size(12.dp))
                 Text(
-                    "选择已有歌单",
+                    stringResource(R.string.pt_browse_042),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.size(4.dp))
                 if (playlists.isEmpty()) {
                     Text(
-                        "暂无歌单，先在上面新建一个吧",
+                        stringResource(R.string.pt_browse_043),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 8.dp)
@@ -775,7 +777,7 @@ fun AddToPlaylistDialog(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(pw.playlist.name, style = MaterialTheme.typography.bodyLarge)
                                 Text(
-                                    "${pw.songs.size} 首",
+                                    stringResource(R.string.pt_browse_044, pw.songs.size),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -787,7 +789,7 @@ fun AddToPlaylistDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.pt_browse_045)) }
         }
     )
 }
@@ -807,7 +809,7 @@ private fun AlbumsTabContent(
     // 避免任何曲库变化都白白跑三次全库分组。
     val albums by vm.albums.collectAsStateWithLifecycle()
     if (albums.isEmpty()) {
-        EmptyState(modifier = Modifier.fillMaxSize(), text = "暂无专辑")
+        EmptyState(modifier = Modifier.fillMaxSize(), text = stringResource(R.string.pt_browse_046))
         return
     }
     LazyVerticalGrid(
@@ -857,7 +859,7 @@ private fun AlbumCard(album: AlbumSummary, onClick: () -> Unit) {
             overflow = TextOverflow.Ellipsis
         )
         Text(
-            "${album.artist} · ${album.songCount} 首",
+            stringResource(R.string.pt_browse_047, album.artist, album.songCount),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -875,7 +877,7 @@ private fun ArtistsTabContent(
     // P3-14：见 AlbumsTabContent——仅在「歌手」页签组合时订阅。
     val artists by vm.artists.collectAsStateWithLifecycle()
     if (artists.isEmpty()) {
-        EmptyState(modifier = Modifier.fillMaxSize(), text = "暂无歌手")
+        EmptyState(modifier = Modifier.fillMaxSize(), text = stringResource(R.string.pt_browse_048))
         return
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -917,7 +919,7 @@ private fun ArtistsTabContent(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        "${artist.songCount} 首",
+                        stringResource(R.string.pt_browse_049, artist.songCount),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1
@@ -938,7 +940,7 @@ private fun FoldersTabContent(
     // P3-14：见 AlbumsTabContent——仅在「文件夹」页签组合时订阅。
     val folders by vm.folders.collectAsStateWithLifecycle()
     if (folders.isEmpty()) {
-        EmptyState(modifier = Modifier.fillMaxSize(), text = "暂无文件夹")
+        EmptyState(modifier = Modifier.fillMaxSize(), text = stringResource(R.string.pt_browse_050))
         return
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -972,7 +974,7 @@ private fun FoldersTabContent(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        "${folder.songCount} 首",
+                        stringResource(R.string.pt_browse_051, folder.songCount),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,

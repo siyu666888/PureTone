@@ -1,4 +1,6 @@
 package com.puretone.player.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.puretone.player.R
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -67,15 +69,15 @@ fun StatsScreen(
         contentWindowInsets = WindowInsets(0),
         topBar = {
             TopAppBar(
-                title = { Text("听歌数据") },
+                title = { Text(stringResource(R.string.pt_stats_001)) },
                 windowInsets = WindowInsets(0),
                 navigationIcon = {
                     IconButton(onClick = navController::popBackStack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.pt_stats_002))
                     }
                 },
                 actions = {
-                    TextButton(onClick = { showClear = true }) { Text("清空历史") }
+                    TextButton(onClick = { showClear = true }) { Text(stringResource(R.string.pt_stats_003)) }
                 }
             )
         }
@@ -90,19 +92,19 @@ fun StatsScreen(
         ) {
             // 总览卡片
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                StatCard("累计时长", formatDuration(s.totalListenMs), Modifier.weight(1f))
-                StatCard("总播放", "${s.totalPlays} 次", Modifier.weight(1f))
+                StatCard(stringResource(R.string.pt_stats_004), formatDuration(s.totalListenMs), Modifier.weight(1f))
+                StatCard(stringResource(R.string.pt_stats_005), stringResource(R.string.pt_stats_006, s.totalPlays), Modifier.weight(1f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                StatCard("收听歌曲", "${s.playedSongs} 首", Modifier.weight(1f))
+                StatCard(stringResource(R.string.pt_stats_007), stringResource(R.string.pt_stats_008, s.playedSongs), Modifier.weight(1f))
                 // P2-6：活跃天数口径为近 30 天，标题标注清楚
-                StatCard("活跃天数(近30天)", "${s.activeDays} 天", Modifier.weight(1f))
+                StatCard(stringResource(R.string.pt_stats_009), stringResource(R.string.pt_stats_010, s.activeDays), Modifier.weight(1f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 // P2-6：日均时长口径为近 30 天，标题标注清楚
-                StatCard("日均时长(近30天)", formatDuration(s.avgListenMsPerActiveDay), Modifier.weight(1f))
+                StatCard(stringResource(R.string.pt_stats_011), formatDuration(s.avgListenMsPerActiveDay), Modifier.weight(1f))
                 StatCard(
-                    "最勤时段",
+                    stringResource(R.string.pt_stats_012),
                     if (s.peakHour >= 0) "${s.peakHour}:00" else "—",
                     Modifier.weight(1f)
                 )
@@ -117,13 +119,13 @@ fun StatsScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        "每日听歌（近 ${trend.size} 天）",
+                        stringResource(R.string.pt_stats_013, trend.size),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(Modifier.height(12.dp))
                     if (trend.all { it.listenMs == 0L }) {
-                        Text("近 ${trend.size} 天还没有听歌记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.pt_stats_014, trend.size), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         BarChart(
                             values = trend.map { it.listenMs },
@@ -151,7 +153,7 @@ fun StatsScreen(
             // 时段分布（0-23 时）
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("时段分布", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(R.string.pt_stats_015), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(12.dp))
                     BarChart(
                         values = s.hourPlays.map { it.second },
@@ -163,7 +165,7 @@ fun StatsScreen(
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         listOf(0, 6, 12, 18, 23).forEach { h ->
                             Text(
-                                "${h}时",
+                                stringResource(R.string.pt_stats_016, h),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -176,7 +178,7 @@ fun StatsScreen(
             if (s.topArtists.isNotEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("最爱歌手", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                        Text(stringResource(R.string.pt_stats_017), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.height(8.dp))
                         s.topArtists.forEachIndexed { i, a ->
                             Row(
@@ -192,7 +194,7 @@ fun StatsScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Text("${a.playCount} 次", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.pt_stats_018, a.playCount), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(" ›", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
@@ -204,7 +206,7 @@ fun StatsScreen(
             if (s.topSongs.isNotEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("最爱歌曲", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                        Text(stringResource(R.string.pt_stats_019), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.height(8.dp))
                         s.topSongs.forEachIndexed { i, t ->
                             Row(
@@ -225,7 +227,7 @@ fun StatsScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    "${t.artist} · ${t.playCount} 次",
+                                    stringResource(R.string.pt_stats_020, t.artist, t.playCount),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1
                                 )
@@ -240,17 +242,17 @@ fun StatsScreen(
             if (s.totalPlays > 0) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("趣味标签", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                        Text(stringResource(R.string.pt_stats_021), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                         val favArtist = s.topArtists.firstOrNull()?.name
-                        if (favArtist != null) Text("🎤 最爱歌手：${favArtist}")
-                        if (s.isNightOwl) Text("🌙 深夜听众：最爱在 ${s.peakHour}:00 听歌")
-                        else if (s.peakHour >= 0) Text("☀️ 日常听众：高频时段 ${s.peakHour}:00")
-                        Text("📅 近 30 天有 ${s.activeDays} 天在听歌")
+                        if (favArtist != null) Text(stringResource(R.string.pt_stats_022, favArtist))
+                        if (s.isNightOwl) Text(stringResource(R.string.pt_stats_023, s.peakHour))
+                        else if (s.peakHour >= 0) Text(stringResource(R.string.pt_stats_024, s.peakHour))
+                        Text(stringResource(R.string.pt_stats_025, s.activeDays))
                     }
                 }
             } else {
                 Text(
-                    "还没有听歌数据，去播放几首歌后再来看看吧～",
+                    stringResource(R.string.pt_stats_026),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -261,16 +263,16 @@ fun StatsScreen(
     if (showClear) {
         AlertDialog(
             onDismissRequest = { showClear = false },
-            title = { Text("清空播放历史") },
-            text = { Text("将删除全部播放记录与统计（不影响曲库与收藏），确定继续？") },
+            title = { Text(stringResource(R.string.pt_stats_027)) },
+            text = { Text(stringResource(R.string.pt_stats_028)) },
             confirmButton = {
                 TextButton(onClick = {
                     showClear = false
                     vm.clearHistory()
-                }) { Text("清空") }
+                }) { Text(stringResource(R.string.pt_stats_029)) }
             },
             dismissButton = {
-                TextButton(onClick = { showClear = false }) { Text("取消") }
+                TextButton(onClick = { showClear = false }) { Text(stringResource(R.string.pt_stats_030)) }
             }
         )
     }
@@ -314,12 +316,13 @@ private fun BarChart(
 }
 
 /** 毫秒 → "X 小时 Y 分钟" / "Y 分钟" / "X 秒" */
+@Composable
 private fun formatDuration(ms: Long): String {
-    if (ms <= 0) return "0 分钟"
+    if (ms <= 0) return stringResource(R.string.pt_stats_dur_zero)
     val totalMin = ms / 60000
     return when {
-        totalMin >= 60 -> "${totalMin / 60} 小时 ${totalMin % 60} 分"
-        totalMin >= 1 -> "$totalMin 分钟"
-        else -> "${ms / 1000} 秒"
+        totalMin >= 60 -> stringResource(R.string.pt_stats_dur_hours, totalMin / 60, totalMin % 60)
+        totalMin >= 1 -> stringResource(R.string.pt_stats_dur_min, totalMin)
+        else -> stringResource(R.string.pt_stats_dur_sec, ms / 1000)
     }
 }

@@ -1,4 +1,6 @@
 package com.puretone.player.ui
+import androidx.compose.ui.res.stringResource
+import com.puretone.player.R
 
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
@@ -119,9 +121,9 @@ fun PureToneApp(initialRoute: String? = null) {
                         }
                         NavigationBar {
                             val items = listOf(
-                                Triple(Routes.BROWSE, "音乐", Icons.Default.Headphones),
-                                Triple(Routes.ME, "我的", Icons.Default.Album),
-                                Triple(Routes.SETTINGS, "设置", Icons.Default.Settings)
+                                Triple(Routes.BROWSE, stringResource(R.string.pt_app_001), Icons.Default.Headphones),
+                                Triple(Routes.ME, stringResource(R.string.pt_app_002), Icons.Default.Album),
+                                Triple(Routes.SETTINGS, stringResource(R.string.pt_app_003), Icons.Default.Settings)
                             )
                             val current = navBackStackEntry
                             items.forEach { (route, label, icon) ->

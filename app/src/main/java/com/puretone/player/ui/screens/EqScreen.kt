@@ -1,4 +1,6 @@
 package com.puretone.player.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.puretone.player.R
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -60,12 +62,12 @@ fun EqScreen(
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text("均衡器") },
+            title = { Text(stringResource(R.string.pt_eq_001)) },
             // P1-7：状态栏 inset 由外层 Scaffold 统一负责，内层不再重复叠加
             windowInsets = WindowInsets(0),
             navigationIcon = {
                 IconButton(onClick = navController::popBackStack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.pt_eq_002))
                 }
             },
             actions = {
@@ -78,7 +80,7 @@ fun EqScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // 预设（P2-1：窄屏 7 个胶囊会溢出裁切，改横向滚动）
-            Text("预设", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.pt_eq_003), style = MaterialTheme.typography.titleMedium)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
@@ -91,7 +93,7 @@ fun EqScreen(
             }
 
             // 我的预设（② 均衡器自定义：保存/应用/删除用户曲线）
-            Text("我的预设", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.pt_eq_004), style = MaterialTheme.typography.titleMedium)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -100,7 +102,7 @@ fun EqScreen(
                 // 入口：把当前 10 段曲线保存为命名预设
                 Card(modifier = Modifier.clickable { showSavePreset = true }) {
                     Text(
-                        "+ 保存当前",
+                        stringResource(R.string.pt_eq_005),
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         style = MaterialTheme.typography.labelLarge
                     )
@@ -119,7 +121,7 @@ fun EqScreen(
                             )
                             Icon(
                                 imageVector = Icons.Filled.Delete,
-                                contentDescription = "删除预设 $name",
+                                contentDescription = stringResource(R.string.pt_eq_006, name),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier
                                     .size(20.dp)
@@ -174,16 +176,16 @@ fun EqScreen(
             // 重低音 / 环绕（同样本地态 + 松手落库）
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("重低音 / 环绕声", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.pt_eq_007), style = MaterialTheme.typography.titleMedium)
                     LabeledSlider(
-                        label = "重低音",
+                        label = stringResource(R.string.pt_eq_008),
                         value = state.bassBoost,
                         enabled = state.enabled,
                         onValueChange = {},
                         onValueChangeFinished = vm::setBassBoost
                     )
                     LabeledSlider(
-                        label = "环绕声",
+                        label = stringResource(R.string.pt_eq_009),
                         value = state.virtualizer,
                         enabled = state.enabled,
                         onValueChange = {},
@@ -206,12 +208,12 @@ fun EqScreen(
     if (showSavePreset) {
         AlertDialog(
             onDismissRequest = { showSavePreset = false },
-            title = { Text("保存为预设") },
+            title = { Text(stringResource(R.string.pt_eq_010)) },
             text = {
                 OutlinedTextField(
                     value = presetName,
                     onValueChange = { presetName = it },
-                    label = { Text("预设名称") },
+                    label = { Text(stringResource(R.string.pt_eq_011)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -224,26 +226,27 @@ fun EqScreen(
                         presetName = ""
                         showSavePreset = false
                     }
-                }) { Text("保存") }
+                }) { Text(stringResource(R.string.pt_eq_012)) }
             },
             dismissButton = {
-                TextButton(onClick = { showSavePreset = false }) { Text("取消") }
+                TextButton(onClick = { showSavePreset = false }) { Text(stringResource(R.string.pt_eq_013)) }
             }
         )
     }
 }
 
 /** 均衡器页底部提示：按设备音效可用性给出可操作的说明 */
+@Composable
 private fun eqHintText(status: EffectStatus): String = when (status.availability) {
     EffectAvailability.UNSUPPORTED ->
-        "当前设备或系统不支持音效，调节不会产生声音变化。"
+        stringResource(R.string.pt_eq_014)
     EffectAvailability.UNKNOWN ->
-        "播放音乐并开启均衡器后生效；部分设备需连接耳机或蓝牙音频。"
+        stringResource(R.string.pt_eq_015)
     EffectAvailability.SUPPORTED ->
         if (status.deviceBandCount in 1 until AudioEffectController.CENTER_FREQS.size) {
-            "设备支持 ${status.deviceBandCount} 段，已按中心频率就近映射到 ${AudioEffectController.CENTER_FREQS.size} 段。"
+            stringResource(R.string.pt_eq_016, status.deviceBandCount, AudioEffectController.CENTER_FREQS.size)
         } else {
-            "音效已生效。如无变化，请检查系统音效设置或媒体音量。"
+            stringResource(R.string.pt_eq_017)
         }
 }
 
@@ -301,14 +304,15 @@ private fun freqLabel(freq: Int): String = when {
 }
 
 /** 预设名称（内部键 → 中文显示） */
+@Composable
 private fun presetLabel(key: String): String = when (key.uppercase()) {
-    "FLAT" -> "平坦"
-    "POP" -> "流行"
-    "ROCK" -> "摇滚"
-    "JAZZ" -> "爵士"
-    "CLASSICAL" -> "古典"
-    "VOCAL" -> "人声"
-    "BASS" -> "低音"
+    "FLAT" -> stringResource(R.string.pt_eq_preset_flat)
+    "POP" -> stringResource(R.string.pt_eq_preset_pop)
+    "ROCK" -> stringResource(R.string.pt_eq_preset_rock)
+    "JAZZ" -> stringResource(R.string.pt_eq_preset_jazz)
+    "CLASSICAL" -> stringResource(R.string.pt_eq_preset_classical)
+    "VOCAL" -> stringResource(R.string.pt_eq_preset_vocal)
+    "BASS" -> stringResource(R.string.pt_eq_preset_bass)
     else -> key
 }
 

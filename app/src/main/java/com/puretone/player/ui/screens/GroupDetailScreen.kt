@@ -1,4 +1,6 @@
 package com.puretone.player.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.puretone.player.R
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -80,7 +82,7 @@ fun GroupDetailScreen(
     val (title, subtitle, coverUri) = when (type) {
         "album" -> {
             val seg = key.split("|", limit = 3)
-            val albumName = seg.getOrNull(2) ?: first?.album ?: "专辑"
+            val albumName = seg.getOrNull(2) ?: first?.album ?: stringResource(R.string.pt_group_001)
             Triple(first?.album ?: albumName, first?.artist, songs.firstNotNullOfOrNull { it.coverUri })
         }
         "artist" -> Triple(key, null, songs.firstNotNullOfOrNull { it.coverUri })
@@ -106,7 +108,7 @@ fun GroupDetailScreen(
                 windowInsets = WindowInsets(0),
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.pt_group_002))
                     }
                 }
             )
@@ -125,7 +127,7 @@ fun GroupDetailScreen(
             if (songs.isEmpty()) {
                 EmptyState(
                     modifier = Modifier.fillMaxSize().weight(1f),
-                    text = "暂无歌曲"
+                    text = stringResource(R.string.pt_group_003)
                 )
             } else {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -136,7 +138,7 @@ fun GroupDetailScreen(
                             onLongClick = { songMenuSong = song },
                             trailing = {
                                 IconButton(onClick = { addDialogSongs = listOf(song.id) }) {
-                                    Icon(Icons.Rounded.Add, contentDescription = "加入歌单")
+                                    Icon(Icons.Rounded.Add, contentDescription = stringResource(R.string.pt_group_004))
                                 }
                             }
                         )
@@ -294,7 +296,7 @@ private fun GroupDetailHeader(
                 )
             }
             Text(
-                "${songCount} 首",
+                stringResource(R.string.pt_group_005, songCount),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -308,7 +310,7 @@ private fun GroupDetailHeader(
         ) {
             Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.size(6.dp))
-            Text("播放全部", style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.pt_group_006), style = MaterialTheme.typography.labelLarge)
         }
     }
 }
