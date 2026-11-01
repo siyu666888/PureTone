@@ -24,7 +24,11 @@
 
     <!-- P2-15：本地播放器没有账号/令牌，但 Room 库里是完整的播放历史与歌单，
          DataStore 里是听歌偏好。默认 allowBackup=true 会让这些数据被 adb 备份或
-         云备份整体抽走；这里按「隐私最小化」关闭（用户数据随 App 卸载清理即可）。 -->
+         云备份整体抽走；这里按「隐私最小化」关闭（用户数据随 App 卸载清理即可）。
+         P2-5：Android 12L（API 31）起 allowBackup 的语义已被 dataExtractionRules
+         部分取代——它对「云备份」与「设备到设备迁移」分别生效，且设备迁移
+         不受 allowBackup 约束。故补两份规则文件把两条路径都显式排除：
+         API 31+ 读 data_extraction_rules.xml，API ≤ 30 读 backup_rules.xml。 -->
     <!-- P0-4 明文流量审计：公网请求（iTunes Search / LRCLIB）均走 HTTPS，零明文；
          唯一的明文是 DLNA 投屏——向局域网渲染设备的 LAN IP 发 SOAP 控制指令。
          NSC 的 domain-config 只认主机名、不支持 CIDR 网段，无法写成「仅局域网放行」，
@@ -34,6 +38,8 @@
         android:name=".PureToneApplication"
         android:allowBackup="false"
         tools:replace="android:allowBackup"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"

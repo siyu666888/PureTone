@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11（API ≤ 30）专用的全量备份规则。
+  Android 12L 起改由 data_extraction_rules.xml 接管（见该文件的注释）。
+
+  策略同为**完全排除**：播放历史、歌单、听歌偏好均属本地数据，
+  不进 adb 备份、不进系统自动备份。
+-->
+<full-backup-content>
+    <exclude domain="root" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="external" path="." />
+</full-backup-content>

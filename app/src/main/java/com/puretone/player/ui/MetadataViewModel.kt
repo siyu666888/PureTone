@@ -6,6 +6,7 @@ import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.metadata.LyricsProvider
 import com.puretone.player.data.metadata.MetadataCandidate
 import com.puretone.player.data.metadata.SongMetadataProvider
+import com.puretone.player.domain.metadata.NetworkMetadataGate
 import com.puretone.player.domain.metadata.buildSearchTerm
 import com.puretone.player.domain.usecase.ApplyCandidateUseCase
 import com.puretone.player.domain.usecase.AutoFillMetadataUseCase
@@ -38,7 +39,9 @@ class MetadataViewModel @Inject constructor(
     private val downloadLyricsUseCase: DownloadLyricsUseCase,
     private val backfillCoversUseCase: BackfillCoversUseCase,
     private val provider: SongMetadataProvider,
-    private val lyricsProvider: LyricsProvider
+    private val lyricsProvider: LyricsProvider,
+    /** P2-4：联网总开关守卫，用于给出准确提示（拦截本身在用例层） */
+    private val gate: NetworkMetadataGate
 ) : ViewModel() {
 
     /** 数据源名称（UI 展示） */
@@ -101,6 +104,15 @@ class MetadataViewModel @Inject constructor(
         // P2-16：先取消上一个在途搜索，连点时只保留最新结果、且不会提前清掉转圈
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
+            // P2-4：联网总开关关闭时给出准确文案。用例层也会拦（防止其他调用方绕过），
+            // 但只有 VM 知道「为什么是空」——不查一次开关的话，空结果会被显示成
+            // 「未找到匹配」，用户会以为是自己搜索词写错了。
+            if (!gate.isEnabled()) {
+                _searching.value = false
+                _results.value = emptyList()
+                _message.value = "已关闭联网补全元数据与歌词（设置页「隐私」）"
+                return@launch
+            }
             _searching.value = true
             val list = searchUseCase(term)
             _searching.value = false
@@ -207,6 +219,9 @@ class MetadataViewModel @Inject constructor(
                 DownloadLyricsUseCase.Outcome.SAVED -> "歌词已下载并保存"
                 DownloadLyricsUseCase.Outcome.NO_LYRICS -> "未找到歌词（${lyricsProvider.sourceName}）"
                 DownloadLyricsUseCase.Outcome.SAVE_FAILED -> "歌词保存失败"
+                // P2-4：联网总开关已关闭——明确告知是开关拦下的，
+                // 否则用户会误以为「这首歌就是没歌词」而去反复重试。
+                DownloadLyricsUseCase.Outcome.DISABLED -> "已关闭联网补全元数据与歌词（设置页「隐私」）"
             }
             onDone(outcome == DownloadLyricsUseCase.Outcome.SAVED)
         }

@@ -16,10 +16,10 @@ import javax.inject.Singleton
 /**
  * 基于 LRCLIB（lrclib.net）的歌词提供者（免 API Key）。
  *
- * - 端点：/api/get（精确匹配）→ /api/search（搜索兜底）；
+ * - 端点：[NetworkConfig.LRCLIB_GET_URL]（精确匹配）→ [NetworkConfig.LRCLIB_SEARCH_URL]（搜索兜底）；
  * - 优先 syncedLyrics（逐行同步）；仅 plainLyrics 时按歌曲时长均排为伪 LRC；
  * - 解析用系统 org.json，无额外依赖；
- * - 全程 IO 线程，超时 8s；任何异常都吞掉返回 null（离线 / 限流时优雅降级）。
+ * - 全程 IO 线程，超时取自 [NetworkConfig]；任何异常都吞掉返回 null（离线 / 限流时优雅降级）。
  */
 @Singleton
 class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
@@ -75,7 +75,8 @@ class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
         optString(name).takeIf { it.isNotBlank() && it != "null" }
 
     private fun buildGetUrl(title: String, artist: String): String = buildString {
-        append("https://lrclib.net/api/get?track_name=")
+        append(NetworkConfig.LRCLIB_GET_URL)
+        append("?track_name=")
         append(URLEncoder.encode(title, "UTF-8"))
         if (artist.isNotBlank()) {
             append("&artist_name=")
@@ -84,7 +85,8 @@ class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
     }
 
     private fun buildSearchUrl(title: String, artist: String): String = buildString {
-        append("https://lrclib.net/api/search?track_name=")
+        append(NetworkConfig.LRCLIB_SEARCH_URL)
+        append("?track_name=")
         append(URLEncoder.encode(title, "UTF-8"))
         if (artist.isNotBlank()) {
             append("&artist_name=")
@@ -95,10 +97,10 @@ class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
     private fun getJson(url: String): JSONObject? {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
-            connectTimeout = 8000
-            readTimeout = 8000
+            connectTimeout = NetworkConfig.CONNECT_TIMEOUT_MS
+            readTimeout = NetworkConfig.READ_TIMEOUT_MS
             // LRCLIB 建议携带 UA
-            setRequestProperty("User-Agent", "PureTone (https://github.com/puretone)")
+            setRequestProperty("User-Agent", NetworkConfig.USER_AGENT)
         }
         return try {
             val code = connection.responseCode
@@ -115,9 +117,9 @@ class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
     private fun getJsonArray(url: String): JSONArray? {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
-            connectTimeout = 8000
-            readTimeout = 8000
-            setRequestProperty("User-Agent", "PureTone (https://github.com/puretone)")
+            connectTimeout = NetworkConfig.CONNECT_TIMEOUT_MS
+            readTimeout = NetworkConfig.READ_TIMEOUT_MS
+            setRequestProperty("User-Agent", NetworkConfig.USER_AGENT)
         }
         return try {
             val code = connection.responseCode

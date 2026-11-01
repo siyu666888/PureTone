@@ -14,10 +14,10 @@ import javax.inject.Singleton
 /**
  * 基于 iTunes Search API 的元数据提供者（免 API Key）。
  *
- * - 端点：https://itunes.apple.com/search?term=...&entity=song&limit=...
+ * - 端点：[NetworkConfig.ITUNES_SEARCH_BASE]?entity=song&limit=...&term=...
  * - 解析用系统 org.json，无额外依赖；
  * - 封面取 artworkUrl100 并升级到 600x600 高清；
- * - 全程 IO 线程，超时 8s；任何异常都吞掉返回空列表（离线/限流时优雅降级）。
+ * - 全程 IO 线程，超时取自 [NetworkConfig]；任何异常都吞掉返回空列表（离线/限流时优雅降级）。
  */
 @Singleton
 class ItunesMetadataProvider @Inject constructor() : SongMetadataProvider {
@@ -28,15 +28,16 @@ class ItunesMetadataProvider @Inject constructor() : SongMetadataProvider {
         withContext(Dispatchers.IO) {
             if (term.isBlank()) return@withContext emptyList()
             val url = buildString {
-                append("https://itunes.apple.com/search?entity=song&limit=")
+                append(NetworkConfig.ITUNES_SEARCH_BASE)
+                append("?entity=song&limit=")
                 append(limit.coerceIn(1, 50))
                 append("&term=")
                 append(URLEncoder.encode(term.trim(), "UTF-8"))
             }
             val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 8000
-                readTimeout = 8000
+                connectTimeout = NetworkConfig.CONNECT_TIMEOUT_MS
+                readTimeout = NetworkConfig.READ_TIMEOUT_MS
             }
             try {
                 val code = connection.responseCode

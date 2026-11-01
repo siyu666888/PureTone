@@ -48,6 +48,10 @@ class SettingsViewModel @Inject constructor(
     // ---------- 实验室（实验性功能总开关） ----------
     fun setLabEnabled(enabled: Boolean) = viewModelScope.launch { settings.setLabEnabled(enabled) }
 
+    // ---------- 隐私：联网补全元数据与歌词总开关（P2-4） ----------
+    fun setNetworkMetadataEnabled(enabled: Boolean) =
+        viewModelScope.launch { settings.setNetworkMetadataEnabled(enabled) }
+
     // ---------- ReplayGain（P1） ----------
     fun setReplayGainEnabled(enabled: Boolean) =
         viewModelScope.launch { settings.setReplayGainEnabled(enabled) }

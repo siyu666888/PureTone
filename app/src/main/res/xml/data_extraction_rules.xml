@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12L（API 31）起，备份/设备迁移行为由 android:dataExtractionRules 声明。
+  与 Android 11 及以下的 android:fullBackupContent 是两套并行机制：
+  - API 31+ 读本文件（data_extraction_rules.xml）
+  - API ≤ 30 读 backup_rules.xml
+  两份必须保持语义一致，否则会出现「低版本不备份、高版本被迁移」的割裂。
+
+  本 App 的策略是**完全排除**（与 android:allowBackup="false" 语义一致）：
+  Room 库里是完整的播放历史与歌单、DataStore 里是听歌偏好，
+  这些属于用户本地数据，不应被云备份整体抽走，也不应随设备迁移转移。
+
+  规则语义：
+  - <cloud-backup>：云备份（Google Auto Backup）——排除全部
+  - <device-transfer>：设备到设备迁移（换机搬家）——排除全部
+  - <full-backup>：API ≤ 30 的全量备份，规则写在本文件里统一管理
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </device-transfer>
+</data-extraction-rules>

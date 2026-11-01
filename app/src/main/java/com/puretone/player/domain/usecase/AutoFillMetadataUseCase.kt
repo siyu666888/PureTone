@@ -4,6 +4,7 @@ import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.metadata.MetadataCandidate
 import com.puretone.player.data.metadata.SongMetadataProvider
 import com.puretone.player.data.repository.MusicRepository
+import com.puretone.player.domain.metadata.NetworkMetadataGate
 import com.puretone.player.domain.metadata.buildSearchTerm
 import com.puretone.player.domain.metadata.isLikelyMatch
 import com.puretone.player.domain.metadata.simplify
@@ -18,10 +19,14 @@ import javax.inject.Inject
  * - 高置信则写入，并带回「写入前的原歌曲」供 VM 撤销。
  *
  * 返回 [AutoFillResult]，VM 据此更新 message / 撤销快照 / 表单同步回调。
+ *
+ * P2-4：用户关闭「联网补全元数据与歌词」时，[NetworkMetadataGate] 拦下请求，
+ * 直接返回失败（带明确文案），不发任何出站请求。
  */
 class AutoFillMetadataUseCase @Inject constructor(
     private val repo: MusicRepository,
-    private val provider: SongMetadataProvider
+    private val provider: SongMetadataProvider,
+    private val gate: NetworkMetadataGate
 ) {
     sealed interface AutoFillResult {
         /** 已套用：携带写入前的原歌曲（供撤销）与套用的候选 */
@@ -35,6 +40,9 @@ class AutoFillMetadataUseCase @Inject constructor(
     suspend operator fun invoke(songId: Long, artist: String, title: String): AutoFillResult {
         val term = buildSearchTerm(artist, title)
         if (term.isBlank()) return AutoFillResult.Failed("请先填写歌名或歌手", emptyList())
+        // P2-4：联网总开关关闭 → 明确提示「已关闭」而非「未找到匹配」，
+        // 否则用户会误以为是网络故障或搜索词不对，反复重试。
+        if (!gate.isEnabled()) return AutoFillResult.Failed("已关闭联网补全元数据", emptyList())
         val list = runCatching { provider.search(term, 5) }.getOrDefault(emptyList()).map { simplify(it) }
         val best = list.firstOrNull() ?: return AutoFillResult.NoMatch(list)
         // P2-2：低置信匹配不自动写入，改为由用户手动选择，避免错误匹配被永久保留

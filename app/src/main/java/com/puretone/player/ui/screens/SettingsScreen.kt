@@ -161,6 +161,27 @@ fun SettingsScreen(
             }
         }
 
+        // 隐私（P2-4）：联网补全元数据与歌词总开关。
+        // 关闭后 App 不再向 iTunes Search / LRCLIB 发送任何曲目信息（标题/歌手），
+        // 搜索元数据、自动填充、下载歌词、批量补封面全部短路。
+        SettingsGroup(title = "隐私") {
+            SwitchRow(
+                label = "联网补全元数据与歌词",
+                checked = s.networkMetadataEnabled,
+                onChanged = { vm.setNetworkMetadataEnabled(it) }
+            )
+            // 说明文案随开关状态变化，让用户明确知道「关掉后会发生什么」。
+            Text(
+                if (s.networkMetadataEnabled) {
+                    "开启时会向 iTunes 与 LRCLIB 发送歌名、歌手用于匹配元数据与歌词"
+                } else {
+                    "已关闭：不会向任何服务器发送曲目信息"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
         // 实验室（实验性功能）：总开关常驻可见，关闭时其下所有子分类（入口 + 设置项）整体隐藏
         SettingsGroup(title = "实验室") {
             SwitchRow(

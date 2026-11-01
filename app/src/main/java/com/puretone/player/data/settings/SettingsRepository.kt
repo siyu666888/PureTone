@@ -117,7 +117,21 @@ data class PureToneSettings(
      * 全部隐藏。默认值取 true：**保留现有 ReplayGain 可见性、不回归**，
      * 用户可主动关闭以收起实验性功能。开关本身常驻可见，便于重新开启。
      */
-    val labEnabled: Boolean = true
+    val labEnabled: Boolean = true,
+
+    // ---------- privacy_ ----------
+    /**
+     * 联网补全元数据与歌词的总开关（P2-4）。
+     *
+     * 关闭后 App **完全不发**任何出站请求到 iTunes Search / LRCLIB：
+     * 搜索元数据、自动填充、歌词下载全部短路（见 `MetadataViewModel` 与
+     * `DownloadLyricsUseCase`）。这是隐私合规的兜底——离线用户或不愿意
+     * 把曲目信息发到境外服务的用户，可以彻底关掉。
+     *
+     * 默认 **true**：保留现有功能与用户体验不变，用户主动关闭。
+     * （若产品改为默认关闭，需注意老用户升级后行为突变会显得像「功能坏了」。）
+     */
+    val networkMetadataEnabled: Boolean = true
 ) {
     companion object {
         const val THEME_SYSTEM = "SYSTEM"
@@ -198,6 +212,8 @@ class SettingsRepository @Inject constructor(
         val eqCustomPresets = stringPreferencesKey("eq_custom_presets")
         // lab_
         val labEnabled = booleanPreferencesKey("lab_enabled")
+        // privacy_
+        val networkMetadataEnabled = booleanPreferencesKey("privacy_network_metadata_enabled")
     }
 
     /**
@@ -239,7 +255,9 @@ class SettingsRepository @Inject constructor(
                 bassBoostStrength = prefs[Keys.bassBoost] ?: defaults.bassBoostStrength,
                 virtualizerStrength = prefs[Keys.virtualizer] ?: defaults.virtualizerStrength,
                 eqCustomPresets = decodeCustomPresets(prefs[Keys.eqCustomPresets]),
-                labEnabled = prefs[Keys.labEnabled] ?: defaults.labEnabled
+                labEnabled = prefs[Keys.labEnabled] ?: defaults.labEnabled,
+                networkMetadataEnabled = prefs[Keys.networkMetadataEnabled]
+                    ?: defaults.networkMetadataEnabled
             ).let { s ->
                 // 定时状态归一化（此前只处理 MINUTES 的过期，现在多一种 END_OF_TRACK）：
                 // 1) 倒计时型定时已过期 → 四个字段全部归零。老数据中「到期时刻还在、
@@ -357,6 +375,15 @@ class SettingsRepository @Inject constructor(
 
     // ---------- lab_ ----------
     suspend fun setLabEnabled(enabled: Boolean) = edit { it[Keys.labEnabled] = enabled }
+
+    // ---------- privacy_ ----------
+    /**
+     * 联网补全元数据与歌词总开关（P2-4）。
+     *
+     * 关闭后所有出站请求短路，App 不再向 iTunes / LRCLIB 发送任何曲目信息。
+     */
+    suspend fun setNetworkMetadataEnabled(enabled: Boolean) =
+        edit { it[Keys.networkMetadataEnabled] = enabled }
 
     // ---------- replaygain_ ----------
     suspend fun setReplayGainEnabled(enabled: Boolean) = edit { it[Keys.replayGainEnabled] = enabled }

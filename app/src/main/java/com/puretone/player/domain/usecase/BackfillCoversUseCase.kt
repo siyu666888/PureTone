@@ -2,6 +2,7 @@ package com.puretone.player.domain.usecase
 
 import com.puretone.player.data.metadata.SongMetadataProvider
 import com.puretone.player.data.repository.MusicRepository
+import com.puretone.player.domain.metadata.NetworkMetadataGate
 import kotlinx.coroutines.delay
 import javax.inject.Inject
 
@@ -13,16 +14,21 @@ import javax.inject.Inject
  * 串行处理、每次请求间隔限流（700ms，P2-2），仅当确实写入封面才计入成功（P2-8）；
  * 完成后重新查询实际剩余缺失数用于校验。
  *
+ * P2-4：用户关闭「联网补全元数据与歌词」时，[NetworkMetadataGate] 拦下请求，
+ * 一条都不发（否则会对整库缺失封面的歌曲逐首联网，是最伤隐私也最费流量的一条路径）。
+ *
  * @param onProgress 每处理一首回调（已处理, 总数），供 VM 更新进度；默认无操作。
  * @return 三元组 (成功补全数, 总数, 剩余未补全数)
  */
 class BackfillCoversUseCase @Inject constructor(
     private val repo: MusicRepository,
-    private val provider: SongMetadataProvider
+    private val provider: SongMetadataProvider,
+    private val gate: NetworkMetadataGate
 ) {
     suspend operator fun invoke(
         onProgress: (processed: Int, total: Int) -> Unit = { _, _ -> }
     ): Triple<Int, Int, Int> {
+        if (!gate.isEnabled()) return Triple(0, 0, 0)
         val missing = runCatching { repo.getSongsMissingCover() }.getOrDefault(emptyList())
         if (missing.isEmpty()) return Triple(0, 0, 0)
         var done = 0
