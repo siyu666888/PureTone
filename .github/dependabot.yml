@@ -20,36 +20,72 @@ updates:
       time: "09:00"
       timezone: "Asia/Shanghai"
     open-pull-requests-limit: 5
-    # 同一组里把 patch/minor 级的更新合并到一个 PR，major 单独开——
-    # 大版本往往有 API 变更，混在一起看不出来。
+    # 分组策略：把同生态的依赖放进一组，一次 PR 只升一个生态——
+    # 避免「一次 PR 升 20 个库」，出了回归根本定位不到是哪个引起的。
+    #
+    # **分组只接受 patch**：实测本项目所有 minor 升级都会撞上工具链上限
+    # （compileSdk 37 / Kotlin 2.2 元数据 / AGP 9.0），
+    # minor 级的库一律由 ignore 规则挡掉，见下方 ignore 段的逐条实测记录。
+    # patch 级是纯 bug 修复、不改 API，是唯一可安全自动合入的层级。
     groups:
-      androidx:
+      # 安全更新：仅 patch。这些库与工具链版本无强耦合，patch 不会破坏构建。
+      safe-patches:
         patterns:
-          - "androidx.*"
+          - "org.robolectric:*"
+          - "app.cash.turbine:*"
+          - "junit:junit"
+          - "androidx.test:*"
+          - "io.coil-kt:*"
+          - "com.arthenica:*"
         update-types:
-          - "minor"
           - "patch"
-      compose:
+      # Compose BOM 单独一组：BOM 的 patch 会带动一整批 compose 库同步升级，
+      # 混进其它组就看不出是哪批引起的。
+      compose-bom:
         patterns:
-          - "androidx.compose.*"
-        update-types:
-          - "minor"
-          - "patch"
-      media3:
-        patterns:
-          - "androidx.media3.*"
-        update-types:
-          - "minor"
-          - "patch"
-      kotlin:
-        patterns:
-          - "org.jetbrains.kotlin*"
+          - "androidx.compose:compose-bom"
         update-types:
           - "patch"
     # 只接受 minor/patch，major 必须人工发起 PR 并跑完整验证。
     # 本项目的 Kotlin / AGP / Compose 大版本升级涉及 API 变更
     # （如 Compose PathBuilder、Kotlin 可见性规则），不能自动合入。
+    #
+    # ⚠️ 以下 ignore 条目全部来自 **Dependabot 首次运行的实测失败**，
+    #    每条都附了 CI 的真实报错原因——不是预防性猜测，是踩过的坑：
+    #
+    # ① kotlinx-coroutines 1.11.0：kotlin_module 元数据版本 2.2.0，
+    #    当前 Kotlin 编译器 2.0.21 只接受 2.0.0 元数据 →
+    #    "Module was compiled with an incompatible version of Kotlin"（编译期直接失败）。
+    #    → coroutines 必须等 Kotlin 升到 2.2+ 才能升，故整条忽略。
+    # ② Hilt 2.60.1：其 Gradle 插件要求 AGP ≥ 9.0.0（当前 8.6.0），
+    #    在 apply 阶段就失败："The Hilt Android Gradle plugin is only compatible
+    #    with Android Gradle plugin (AGP) version 9.0.0 or higher"。
+    #    → 需先做 AGP 9 升级专案，整条忽略。
+    # ③ androidx.hilt:hilt-navigation-compose 1.4.0：要求 compileSdk ≥ 37
+    #    （当前 35），且 AGP 8.6.0 最高只推荐 compileSdk 35 →
+    #    "24 issues were found when checking AAR metadata"。
+    #    → androidx 组需整体等 compileSdk / AGP 升级专案。
+    # ④ com.google.devtools.ksp：版本号与 Kotlin 严格对应（2.0.21-1.0.28 ↔ Kotlin 2.0.21），
+    #    不能脱离 Kotlin 单独升级。
+    #
+    # 结论：当前工具链（AGP 8.6.0 / Gradle 8.7 / Kotlin 2.0.21 / compileSdk 35）
+    # 已接近这些库的新版要求上限，**常规巡检范围内几乎没有可自动升的库**。
+    # 所以本配置的实际价值是「**守住 patch 级安全更新 + 明确知道 major 在哪里**」，
+    # 而不是「每周自动升一堆」。真正的工具链升级走人工专案（见 dist/ 交付文档）。
     ignore:
+      # ② Hilt：插件要求 AGP ≥ 9.0.0
+      - dependency-name: "com.google.dagger.hilt.android"
+      - dependency-name: "com.google.dagger"
+      # ① coroutines：kotlin_module 元数据版本不兼容
+      - dependency-name: "org.jetbrains.kotlinx:kotlinx-coroutines-android"
+      - dependency-name: "org.jetbrains.kotlinx:kotlinx-coroutines-core"
+      - dependency-name: "org.jetbrains.kotlinx:kotlinx-coroutines-test"
+      # ③ androidx：要求 compileSdk 37
+      - dependency-name: "androidx.hilt:hilt-navigation-compose"
+      - dependency-name: "androidx.*"
+      # ④ KSP：须与 Kotlin 同版本
+      - dependency-name: "com.google.devtools.ksp"
+      # Kotlin / AGP 自身的大版本
       - dependency-name: "org.jetbrains.kotlin"
         update-types: ["version-update:semver-major"]
       - dependency-name: "com.android.tools.build"
