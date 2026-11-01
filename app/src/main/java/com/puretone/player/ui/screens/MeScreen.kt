@@ -121,7 +121,11 @@ fun MeScreen(
             ) {
                 Icon(Icons.Rounded.InsertChart, contentDescription = null, tint = PureToneBrand.Primary)
                 Spacer(Modifier.size(12.dp))
-                Text(stringResource(R.string.pt_me_003), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Text(
+                        stringResource(R.string.pt_me_003),
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f)
+                    )
             }
         }
 
@@ -195,10 +199,17 @@ fun MeScreen(
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(pw.playlist.name, style = MaterialTheme.typography.titleMedium)
-                            Text(stringResource(R.string.pt_me_010, pw.songs.size), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    stringResource(R.string.pt_me_010, pw.songs.size),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = { playerVm.playSongs(pw.songs, 0) }) {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = stringResource(R.string.pt_me_011), tint = PureToneBrand.Primary)
+                                        Icon(
+                                            Icons.Default.PlayArrow,
+                                            contentDescription = stringResource(R.string.pt_me_011),
+                                            tint = PureToneBrand.Primary
+                                        )
                                 }
                                 TextButton(onClick = { libVm.exportPlaylist(pw.playlist.id) }) {
                                     Text(stringResource(R.string.pt_me_012))

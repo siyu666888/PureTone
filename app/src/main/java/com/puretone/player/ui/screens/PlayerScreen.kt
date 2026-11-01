@@ -172,7 +172,8 @@ fun PlayerScreen(
                     IconButton(onClick = { showCastPicker = true }) {
                         Icon(
                             if (castState.isCasting) Icons.Filled.CastConnected else Icons.Outlined.Cast,
-                            contentDescription = if (castState.isCasting) stringResource(R.string.pt_player_003) else stringResource(R.string.pt_player_004)
+                                contentDescription = if (castState.isCasting) stringResource(R.string.pt_player_003)
+                                    else stringResource(R.string.pt_player_004)
                         )
                     }
                 }
@@ -284,7 +285,10 @@ fun PlayerScreen(
                             }
                         }
                         TextButton(onClick = vm::stopCast) {
-                            Text(if (castState.isPreparing) stringResource(R.string.pt_player_010) else stringResource(R.string.pt_player_011))
+                                Text(
+                                    if (castState.isPreparing) stringResource(R.string.pt_player_010)
+                                    else stringResource(R.string.pt_player_011)
+                                )
                         }
                     }
                 }

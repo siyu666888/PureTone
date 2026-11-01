@@ -242,7 +242,8 @@ fun BrowseScreen(
     val list = if (searching && searchQuery.isNotBlank()) searchResults else library
 
     val tabTitle = when (tab) {
-        MusicTab.SONGS -> if (selecting) stringResource(R.string.pt_browse_004, selectedIds.size) else stringResource(R.string.pt_browse_005)
+            MusicTab.SONGS -> if (selecting) stringResource(R.string.pt_browse_004, selectedIds.size)
+                else stringResource(R.string.pt_browse_005)
         MusicTab.ALBUMS -> stringResource(R.string.pt_browse_006)
         MusicTab.ARTISTS -> stringResource(R.string.pt_browse_007)
         MusicTab.FOLDERS -> stringResource(R.string.pt_browse_008)
@@ -309,7 +310,8 @@ fun BrowseScreen(
                     }) {
                         Icon(
                             imageVector = if (selecting) Icons.Rounded.Close else Icons.Rounded.Checklist,
-                            contentDescription = if (selecting) stringResource(R.string.pt_browse_011) else stringResource(R.string.pt_browse_012)
+                                contentDescription = if (selecting) stringResource(R.string.pt_browse_011)
+                                    else stringResource(R.string.pt_browse_012)
                         )
                     }
                     // 排序：弹出排序选项菜单
@@ -320,12 +322,36 @@ fun BrowseScreen(
                         expanded = sortMenuOpen,
                         onDismissRequest = { sortMenuOpen = false }
                     ) {
-                        SortOption(stringResource(R.string.pt_browse_014), SongSortOrder.TITLE, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                        SortOption(stringResource(R.string.pt_browse_015), SongSortOrder.DATE_ADDED, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                        SortOption(stringResource(R.string.pt_browse_016), SongSortOrder.ARTIST, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                        SortOption(stringResource(R.string.pt_browse_017), SongSortOrder.ALBUM, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                        SortOption(stringResource(R.string.pt_browse_018), SongSortOrder.DURATION, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
-                        SortOption(stringResource(R.string.pt_browse_019), SongSortOrder.PLAY_COUNT, sortOrder) { libVm.setSortOrder(it); sortMenuOpen = false }
+                            SortOption(
+                                stringResource(R.string.pt_browse_014),
+                                SongSortOrder.TITLE,
+                                sortOrder
+                            ) { libVm.setSortOrder(it); sortMenuOpen = false }
+                            SortOption(
+                                stringResource(R.string.pt_browse_015),
+                                SongSortOrder.DATE_ADDED,
+                                sortOrder
+                            ) { libVm.setSortOrder(it); sortMenuOpen = false }
+                            SortOption(
+                                stringResource(R.string.pt_browse_016),
+                                SongSortOrder.ARTIST,
+                                sortOrder
+                            ) { libVm.setSortOrder(it); sortMenuOpen = false }
+                            SortOption(
+                                stringResource(R.string.pt_browse_017),
+                                SongSortOrder.ALBUM,
+                                sortOrder
+                            ) { libVm.setSortOrder(it); sortMenuOpen = false }
+                            SortOption(
+                                stringResource(R.string.pt_browse_018),
+                                SongSortOrder.DURATION,
+                                sortOrder
+                            ) { libVm.setSortOrder(it); sortMenuOpen = false }
+                            SortOption(
+                                stringResource(R.string.pt_browse_019),
+                                SongSortOrder.PLAY_COUNT,
+                                sortOrder
+                            ) { libVm.setSortOrder(it); sortMenuOpen = false }
                     }
                     IconButton(onClick = { searching = !searching }) {
                         Icon(Icons.Rounded.Search, contentDescription = stringResource(R.string.pt_browse_020))
@@ -336,10 +362,26 @@ fun BrowseScreen(
 
         // 页签：歌曲 / 专辑 / 歌手 / 文件夹
         TabRow(selectedTabIndex = tab.ordinal) {
-            Tab(selected = tab == MusicTab.SONGS, onClick = { tab = MusicTab.SONGS }, text = { Text(stringResource(R.string.pt_browse_021)) })
-            Tab(selected = tab == MusicTab.ALBUMS, onClick = { tab = MusicTab.ALBUMS }, text = { Text(stringResource(R.string.pt_browse_006)) })
-            Tab(selected = tab == MusicTab.ARTISTS, onClick = { tab = MusicTab.ARTISTS }, text = { Text(stringResource(R.string.pt_browse_007)) })
-            Tab(selected = tab == MusicTab.FOLDERS, onClick = { tab = MusicTab.FOLDERS }, text = { Text(stringResource(R.string.pt_browse_008)) })
+                Tab(
+                    selected = tab == MusicTab.SONGS,
+                    onClick = { tab = MusicTab.SONGS },
+                    text = { Text(stringResource(R.string.pt_browse_021)) }
+                )
+                Tab(
+                    selected = tab == MusicTab.ALBUMS,
+                    onClick = { tab = MusicTab.ALBUMS },
+                    text = { Text(stringResource(R.string.pt_browse_006)) }
+                )
+                Tab(
+                    selected = tab == MusicTab.ARTISTS,
+                    onClick = { tab = MusicTab.ARTISTS },
+                    text = { Text(stringResource(R.string.pt_browse_007)) }
+                )
+                Tab(
+                    selected = tab == MusicTab.FOLDERS,
+                    onClick = { tab = MusicTab.FOLDERS },
+                    text = { Text(stringResource(R.string.pt_browse_008)) }
+                )
         }
 
         // 封面补全进度 / 结果提示（库级，任何页签下都提示）
@@ -387,7 +429,11 @@ fun BrowseScreen(
                                 selectedIds.addAll(list.map { it.id })
                             }
                         }) {
-                            Text(if (selectedIds.isNotEmpty() && selectedIds.size == list.size) stringResource(R.string.pt_browse_024) else stringResource(R.string.pt_browse_025))
+                                Text(
+                                    if (selectedIds.isNotEmpty() && selectedIds.size == list.size)
+                                        stringResource(R.string.pt_browse_024)
+                                    else stringResource(R.string.pt_browse_025)
+                                )
                         }
                         Spacer(Modifier.width(8.dp))
                         Button(
@@ -707,7 +753,11 @@ private fun SortOption(
         onClick = { onSelect(order) },
         trailingIcon = {
             if (order == current) {
-                Icon(Icons.Rounded.Check, contentDescription = stringResource(R.string.pt_browse_038), tint = MaterialTheme.colorScheme.primary)
+                    Icon(
+                        Icons.Rounded.Check,
+                        contentDescription = stringResource(R.string.pt_browse_038),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
             }
         }
     )
@@ -727,7 +777,12 @@ fun AddToPlaylistDialog(
     var newName by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (songIds.size == 1) stringResource(R.string.pt_browse_026) else stringResource(R.string.pt_browse_039, songIds.size)) },
+            title = {
+                Text(
+                    if (songIds.size == 1) stringResource(R.string.pt_browse_026)
+                    else stringResource(R.string.pt_browse_039, songIds.size)
+                )
+            },
         text = {
             Column(
                 modifier = Modifier

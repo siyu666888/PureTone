@@ -128,7 +128,11 @@ fun SongInfoSheet(
         ) {
             // 标题行
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.pt_songinfo_002), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                    Text(
+                        stringResource(R.string.pt_songinfo_002),
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.weight(1f)
+                    )
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.pt_songinfo_003))
                 }

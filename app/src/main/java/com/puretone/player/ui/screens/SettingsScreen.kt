@@ -98,7 +98,8 @@ fun SettingsScreen(
                 value = s.crossfadeMs.toFloat(),
                 valueRange = 0f..PureToneSettings.CROSSFADE_MAX_MS.toFloat(),
                 steps = (PureToneSettings.CROSSFADE_MAX_MS / 500) - 1,
-                valueText = if (s.crossfadeMs <= 0) stringResource(R.string.pt_settings_008) else "%.1fs".format(s.crossfadeMs / 1000f),
+                    valueText = if (s.crossfadeMs <= 0) stringResource(R.string.pt_settings_008)
+                        else "%.1fs".format(s.crossfadeMs / 1000f),
                 onValueChange = { vm.setCrossfadeMs(it.toInt()) }
             )
 
@@ -161,7 +162,11 @@ fun SettingsScreen(
                     .clickable { navController.navigate(Routes.EQ) },
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(stringResource(R.string.pt_settings_014), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    Text(
+                        stringResource(R.string.pt_settings_014),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f)
+                    )
                 Switch(checked = s.eqEnabled, onCheckedChange = { vm.setEqEnabled(it) })
             }
         }

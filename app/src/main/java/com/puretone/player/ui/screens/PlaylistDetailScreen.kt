@@ -346,7 +346,9 @@ private fun AlertDialogRename(
             )
         },
         confirmButton = {
-            TextButton(onClick = { onRename(name) }, enabled = name.isNotBlank()) { Text(stringResource(R.string.pt_playlist_018)) }
+                TextButton(onClick = { onRename(name) }, enabled = name.isNotBlank()) {
+                    Text(stringResource(R.string.pt_playlist_018))
+                }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.pt_playlist_015)) }

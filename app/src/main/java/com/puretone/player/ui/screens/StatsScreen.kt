@@ -93,12 +93,24 @@ fun StatsScreen(
             // 总览卡片
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 StatCard(stringResource(R.string.pt_stats_004), formatDuration(s.totalListenMs), Modifier.weight(1f))
-                StatCard(stringResource(R.string.pt_stats_005), stringResource(R.string.pt_stats_006, s.totalPlays), Modifier.weight(1f))
+                    StatCard(
+                        stringResource(R.string.pt_stats_005),
+                        stringResource(R.string.pt_stats_006, s.totalPlays),
+                        Modifier.weight(1f)
+                    )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                StatCard(stringResource(R.string.pt_stats_007), stringResource(R.string.pt_stats_008, s.playedSongs), Modifier.weight(1f))
+                    StatCard(
+                        stringResource(R.string.pt_stats_007),
+                        stringResource(R.string.pt_stats_008, s.playedSongs),
+                        Modifier.weight(1f)
+                    )
                 // P2-6：活跃天数口径为近 30 天，标题标注清楚
-                StatCard(stringResource(R.string.pt_stats_009), stringResource(R.string.pt_stats_010, s.activeDays), Modifier.weight(1f))
+                    StatCard(
+                        stringResource(R.string.pt_stats_009),
+                        stringResource(R.string.pt_stats_010, s.activeDays),
+                        Modifier.weight(1f)
+                    )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 // P2-6：日均时长口径为近 30 天，标题标注清楚
@@ -125,7 +137,10 @@ fun StatsScreen(
                     )
                     Spacer(Modifier.height(12.dp))
                     if (trend.all { it.listenMs == 0L }) {
-                        Text(stringResource(R.string.pt_stats_014, trend.size), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                stringResource(R.string.pt_stats_014, trend.size),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                     } else {
                         BarChart(
                             values = trend.map { it.listenMs },
@@ -153,7 +168,11 @@ fun StatsScreen(
             // 时段分布（0-23 时）
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.pt_stats_015), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            stringResource(R.string.pt_stats_015),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     Spacer(Modifier.height(12.dp))
                     BarChart(
                         values = s.hourPlays.map { it.second },
@@ -178,7 +197,11 @@ fun StatsScreen(
             if (s.topArtists.isNotEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text(stringResource(R.string.pt_stats_017), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                            Text(
+                                stringResource(R.string.pt_stats_017),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         Spacer(Modifier.height(8.dp))
                         s.topArtists.forEachIndexed { i, a ->
                             Row(
@@ -194,7 +217,10 @@ fun StatsScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Text(stringResource(R.string.pt_stats_018, a.playCount), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        stringResource(R.string.pt_stats_018, a.playCount),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 Text(" ›", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
@@ -206,7 +232,11 @@ fun StatsScreen(
             if (s.topSongs.isNotEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text(stringResource(R.string.pt_stats_019), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                            Text(
+                                stringResource(R.string.pt_stats_019),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         Spacer(Modifier.height(8.dp))
                         s.topSongs.forEachIndexed { i, t ->
                             Row(
@@ -242,7 +272,11 @@ fun StatsScreen(
             if (s.totalPlays > 0) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(stringResource(R.string.pt_stats_021), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                            Text(
+                                stringResource(R.string.pt_stats_021),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         val favArtist = s.topArtists.firstOrNull()?.name
                         if (favArtist != null) Text(stringResource(R.string.pt_stats_022, favArtist))
                         if (s.isNightOwl) Text(stringResource(R.string.pt_stats_023, s.peakHour))
