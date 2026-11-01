@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -74,6 +75,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -133,7 +135,7 @@ private fun SmartPlaylistsRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         items.forEach { sp ->
@@ -156,30 +158,31 @@ private fun SmartPlaylistCard(
             containerColor = MaterialTheme.colorScheme.secondaryContainer
         )
     ) {
-        // 图标在文字「前方」（左对齐横排）；图标尺寸固定 28×28dp，避免拉伸/截断。
-        // 文字最多两行（wrap 而非截断），配合整屏等分确保无横向滚动、无截断。
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
+        // 竖向布局：大图标居中在上方、标题居中在下方；卡片设最小高度与充足内边距，
+        // 保证图标完整渲染、标题不被截断，整体排版协调、无横向滚动。
+        // 底部「歌曲数量」文字已按需求移除；空歌单仅置灰标题并禁用点击。
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 108.dp)
+                .padding(vertical = 18.dp, horizontal = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
             SmartPlaylistGlyph(
                 kind = sp.kind,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(44.dp)
             )
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text(
-                    sp.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    maxLines = 2
-                )
-                Text(
-                    if (enabled) "${sp.songs.size} 首" else "暂无",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                )
-            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                sp.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+                    .copy(alpha = if (enabled) 1f else 0.5f),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -454,7 +457,11 @@ fun BrowseScreen(
                     )
                 } else {
                     // key = 歌曲 id：批量选择 / 删除 / 换排序时 Compose 才能正确追踪条目，避免选中态串位
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    // contentPadding 底部留白：末项与底部 MiniPlayer/导航栏之间留出呼吸空间，避免内容被截断。
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = 12.dp)
+                    ) {
                         itemsIndexed(list, key = { _, song -> song.id }) { index, song ->
                             SongRow(
                                 song = song,

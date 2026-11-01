@@ -68,6 +68,18 @@
             </intent-filter>
         </service>
 
+        <!-- P3-1 诊断导出：共享 cacheDir/diagnostics 下的诊断报告文件（见 DiagnosticExport）。
+             不导出、不赋予文件级读权限，仅通过 FLAG_GRANT_READ_URI_PERMISSION 给分享目标临时读。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- 桌面小部件：Exported 是 AppWidgetProvider 的硬性要求（桌面要给到 receiver）；
              更新推送走 App 内的 GlanceAppWidget.update，不依赖系统周期轮询。 -->
         <receiver

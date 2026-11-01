@@ -28,13 +28,13 @@ import kotlin.math.sin
 enum class SmartPlaylistKind { RECENTLY_ADDED, MY_FAVORITES, RECENTLY_PLAYED }
 
 @Composable
-fun SmartPlaylistGlyph(kind: SmartPlaylistKind, modifier: Modifier = Modifier) {
+fun SmartPlaylistGlyph(kind: SmartPlaylistKind, modifier: Modifier = Modifier.size(28.dp)) {
     val tint = when (kind) {
         SmartPlaylistKind.RECENTLY_ADDED -> MaterialTheme.colorScheme.primary
         SmartPlaylistKind.MY_FAVORITES -> FavoriteRed
         SmartPlaylistKind.RECENTLY_PLAYED -> MaterialTheme.colorScheme.tertiary
     }
-    Canvas(modifier.size(28.dp)) {
+    Canvas(modifier) {
         val scale = size.minDimension / 24f
         withTransform({ scale(scale, scale) }) {
             when (kind) {

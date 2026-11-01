@@ -40,9 +40,11 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import android.os.SystemClock
+import com.puretone.player.PureToneApplication
 import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.ui.Routes
 import com.puretone.player.ui.SettingsViewModel
+import com.puretone.player.ui.DiagnosticExport
 import kotlinx.coroutines.delay
 
 /**
@@ -64,6 +66,8 @@ fun SettingsScreen(
     vm: SettingsViewModel = hiltViewModel()
 ) {
     val s by vm.state.collectAsStateWithLifecycle()
+    // 提前取出 context：版本号、诊断导出等子项都要用
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -178,6 +182,45 @@ fun SettingsScreen(
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        // 诊断（P3-1）：导出崩溃与设备信息，便于远程定位问题（不含任何个人曲库内容）
+        SettingsGroup(title = "诊断") {
+            var exportMsg by remember { mutableStateOf<String?>(null) }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(SETTINGS_ROW_HEIGHT)
+                    .clickable {
+                        runCatching {
+                            val file = DiagnosticExport.writeReport(context)
+                            DiagnosticExport.share(context, file)
+                        }.onFailure {
+                            PureToneApplication.writeCrash("exportDiagnostics", it)
+                            exportMsg = "导出失败：${it.message ?: it.javaClass.simpleName}"
+                        }
+                    },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "导出诊断日志",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                exportMsg?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+            Text(
+                "导出最近崩溃堆栈与设备信息，可发送给开发者协助定位；不读取或上传任何个人曲库内容。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp)
             )
         }
 
@@ -322,7 +365,6 @@ fun SettingsScreen(
         }
 
         // 品牌 + 版本号（居中，置于内容最底部）
-        val context = LocalContext.current
         val versionText = remember {
             runCatching {
                 val pi = context.packageManager.getPackageInfo(context.packageName, 0)
