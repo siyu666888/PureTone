@@ -140,8 +140,35 @@ PERM="android.permission.READ_EXTERNAL_STORAGE"
 # ---------------------------------------------------------------------------
 echo ""
 echo "[3/5] 构建 benchmark 包（R8 开启 + 可 profile）"
-./gradlew :app:assembleBenchmark :benchmark:assembleBenchmark --no-daemon
-if [ $? -ne 0 ]; then
+
+# app 的 benchmark 变体用 **release 签名**（见 app/build.gradle.kts：
+# benchmark 变体 initWith(release) 并显式指定 release signingConfig），
+# 签名参数来自 local.properties。若这里缺配置，./gradlew 只会抛一堆
+# 签名相关的看不懂的报错——所以先自查并给出明确指引（诊断出口）。
+#
+# 注意：benchmark 模块自己的测试 APK 用 debug 签名，无需人工干预——
+# AGP 会在 debug.keystore 缺失时自动创建（显式覆盖 storeFile 会关掉这个行为）。
+RELEASE_KEYSTORE=""
+if [ -f "local.properties" ]; then
+  RELEASE_KEYSTORE=$(sed -n 's/^[[:space:]]*storeFile[[:space:]]*=[[:space:]]*//p' local.properties | head -1)
+fi
+if [ -z "$RELEASE_KEYSTORE" ]; then
+  echo "::error::local.properties 里没有 storeFile，无法为 app 的 benchmark 变体签名。"
+  echo "  该变体继承 release 签名（采集要求可 profile + R8 开启，故必须走 release 语义）。"
+  echo "  请在 local.properties 中补齐："
+  echo "    storeFile=<keystore 绝对路径>"
+  echo "    storePassword=... / keyAlias=... / keyPassword=..."
+  exit 1
+fi
+if [ ! -f "$RELEASE_KEYSTORE" ]; then
+  echo "::error::local.properties 指向的 keystore 不存在：$RELEASE_KEYSTORE"
+  echo "  采集需要一份可用的 release keystore（app 的 benchmark 变体用 release 签名）。"
+  echo "  可用 scripts/backup-keystore.sh 生成密钥库并回填 local.properties。"
+  exit 1
+fi
+echo "  app 签名：$RELEASE_KEYSTORE"
+
+if ! ./gradlew :app:assembleBenchmark :benchmark:assembleBenchmark --no-daemon; then
   echo "::error::构建失败"
   exit 1
 fi

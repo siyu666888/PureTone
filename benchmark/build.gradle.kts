@@ -62,16 +62,24 @@ android {
     // baselineprofile 插件要求 targetProjectPath 指向被测 app
     targetProjectPath = ":app"
 
-    signingConfigs {
-        // 采集时 app 与 benchmark 用同一个 debug 签名，才能互相识别安装
-        getByName("debug") {
-            storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
-        }
-    }
-
+    // ⚠️ 这里**刻意不覆盖** debug 签名配置。
+    //
+    // 曾经的写法是显式指定：
+    //     getByName("debug") { storeFile = file("~/.android/debug.keystore") ... }
+    // 结果在 CI 上炸了：
+    //     Keystore file '/home/runner/.android/debug.keystore' not found
+    //     for signing config 'debug'.
+    //
+    // 根因：AGP 的**默认** debug 签名在文件缺失时会自动创建 debug.keystore；
+    // 而一旦显式给出 storeFile，AGP 就认为「这个文件应该已经存在」——
+    // 自动创建被关掉。CI runner 上没人装过 Android Studio，于是必然失败。
+    // 本地之所以「能过」，是因为 Android Studio 早就建好了该文件，属于假绿。
+    //
+    // 顺带澄清一个曾被写进注释里的误解：
+    // 「采集时 app 与 benchmark 用同一个 debug 签名，才能互相识别安装」——**并不需要**。
+    // app 的 benchmark 变体用 release 签名，benchmark 测试包用 debug 签名，
+    // 两者本就是不同签名：instrumentation APK 与被测 app 是通过 adb 通信的，
+    // 不存在「互相识别安装」这一说。
     experimentalProperties["android.experimental.self-instrumenting"] = true
 }
 
