@@ -136,8 +136,8 @@ keyPassword=你的密钥口令
 
 ```bash
 ./gradlew assembleRelease
-# 产物：app/build/outputs/apk/release/PureTone-v1.7.17-universal-release.apk
-#       app/build/outputs/apk/release/PureTone-v1.7.17-arm64-v8a-release.apk
+# 产物：app/build/outputs/apk/release/PureTone-v1.8.0-universal-release.apk
+#       app/build/outputs/apk/release/PureTone-v1.8.0-arm64-v8a-release.apk
 ```
 
 > 产物文件名带版本号（`archivesName` 与 `versionName` 同源，不会漂移）。
@@ -195,7 +195,7 @@ $ANDROID_HOME/build-tools/35.0.0/zipalign -c -P 16 -v 4 <apk>
 > 影响 **APE 转码** 与 **ReplayGain** 两个功能在 16KB 设备上加载失败。
 > AndroidX 自己的两个 `.so` 已是 16384，无风险。
 >
-> 当前 `targetSdk=34`，尚未触发 Play 的硬要求，故 CI 里只**报告不阻塞**
+> 当前 `targetSdk=35` 但走**自分发**（不上 Google Play），Play 的 16KB 硬要求不适用；16KB 仍是 ffmpeg-kit 在 16KB 页设备上的**已知设备兼容问题**（与上架无关），故 CI 里仍只**报告不阻塞**
 > （结论写进 CI Summary，保持风险可见）；换成 16KB 版 ffmpeg-kit 后即可升级为门禁。
 >
 > 完整实测数据与换库验证清单见 `dist/v1.7.24_P0-3_16KB对齐实测_2026-11-01.md`。
@@ -273,13 +273,7 @@ scripts/collect-baseline-profile.sh <device-serial>
 | v1.7.15 | 投屏 M1 收尾：新增 `CastPlaybackPlayer` 门面，投屏期间把 MediaSession 切到门面，通知栏 / 锁屏 / 小部件的控制真正作用于渲染器（此前投屏中按通知栏操作的是已暂停的本地播放器）；播放态镜像与进度改跟渲染器；投屏路由统一收敛到 `PlaybackManager`（原先 ViewModel 与管理器各判断一次）。设置页「桌面」「存储」并入实验室 |
 | v1.7.16 | P1-1 拆分 PlaybackManager 第四刀：交叉淡化状态机与备援播放器下沉到 `CrossfadeCoordinator`（备援引用、淡出方、淡入索引、剩余曲目、渐变协程五份状态一并移出），触发判定与步进计划仍分别委托 `CrossfadePolicy` / `CrossfadeRamp`；修复「角色收尾后备援播放器引用未换位」——连续两次交叉淡化时第二次会拿主播放器当备援，把队列清成单曲 |
 | v1.7.17 | P1-1 拆分第五刀：播放会话存档下沉到 `PlaybackSessionStore`，把「保存位置钳到结尾前 500ms」与「恢复时按保存顺序重排（`IN(:ids)` 无序且去重）」两个已踩过的修复点抽出并补测；去抖保存改为写入时才取快照，避免切歌后存档滞后 |
-| v1.7.18 | 投屏 M3：队列自动续播（渲染器播完自动放下一首）+ 断网优雅回退本地播放，`CastQueuePolicy` / `CastQueueCoordinator` 可测 |
-| v1.7.19 | 遗留审查项对账表：对 R2 标注「未修」的 33 条逐条核实，**实测全部已修，遗留债务 = 0** |
-| v1.7.20 | 静态检查入 CI 门禁：detekt（管 Kotlin 结构）+ 文件行数上限 1200 行 + 依赖漂移双轨巡检；detekt 首次接入 115 条问题真修 114 条，baseline 只冻结 1 条 |
-| v1.7.21 | 交付记录纪律：补写 v1.7.1~v1.7.7 七版交付摘要——**七版全部构建绿灯、单测全绿，却只有 1 版有运行期证据**（且是事后补拍），是「构建绿灯 ≠ 功能可用」的完整样本；README 版本历史补全 v1.7.0~v1.7.20 |
-| v1.7.22 | 把上述教训固化为 README「交付纪律」四条：每版必落 `dist/` 文档且验证结论分三档如实写 / 功能改动要带运行期证据 / 编译期不检查的用测试补上 / 兜底类改动必须同步给出诊断出口 |
-| v1.7.23 | Baseline Profile 真机采集链路：新增 `:benchmark` 模块（androidx.baselineprofile + Macrobenchmark）+ 三条采集路径 + `scripts/collect-baseline-profile.sh`（物理设备三重判定，模拟器直接拒绝）+ CI 双断言（profile 已打包 / 每条类级规则都能在 dex 中找到）。**实际采集未执行**——沙箱无物理设备且 androidx.benchmark 明确拒绝模拟器，当前 profile 仍是手写占位版（309 条规则全部有效）。收尾时修掉一个 CI 必红的缺陷：显式覆盖 debug 签名会关掉 AGP 自动创建 `debug.keystore` 的行为，CI runner 上无此文件必失败（本地因 Android Studio 早建过而假绿），已删除覆盖并用「移走 keystore 再构建」的探针复测 |
-| v1.7.24 | P0-3 第一步「先测再决策」实测出结论：**ffmpeg-kit 未对齐 16KB**——ZIP 层通过（5 个 APK `zipalign -c -P 16` 全 EXIT=0），ELF 层不通过（52 个 `.so` 中 44 个 `p_align=4096`，全为 ffmpeg-kit 系，影响 APE 转码 + ReplayGain）；新增自研 `tools/check_16kb_alignment.py`（零外部依赖、不需 NDK，CI 非阻塞报告）。同刀顺带闭环 LGPL 合规：**原 release 的 `shrinkResources` 把 AAR 里的 LGPL 许可证全文与源码获取方式全裁掉了**（发布 APK 既无许可证全文也无 `source.txt`），改为从 AAR 自动提取到 `assets/licenses/` + CI 阻塞断言。同期收口 Dependabot 存量 PR，并实测出「AGP 的 minor 会抬高 Gradle 版本下限」这条耦合关系，固化进 ignore 规则 |
+| **v1.8.0** | **聚合发布**（原计划 v1.7.18~v1.7.25 各档工作合并为一次发版）：投屏 M3（队列自动续播 + 断网回退）/ 遗留审查对账（债务=0）/ 静态检查门禁（detekt + 文件行数 + 依赖漂移）/ 交付记录纪律 / Baseline Profile 采集链路 / P0-3 16KB 对齐实测（`tools/check_16kb_alignment.py`）+ LGPL 合规闭环 / **targetSdk 34→35（自分发路线，不上 Google Play）**。详见 `dist/v1.8.0_发布说明_2026-11-01.md` |
 
 ---
 

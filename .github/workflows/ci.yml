@@ -173,9 +173,9 @@ jobs:
       #                            （AGP 8.6 打包已正确处理）
       #   ELF 层（PT_LOAD p_align）  → 52 个 .so 中 44 个不合规，全为 ffmpeg-kit 系
       #
-      # 为什么现在**不**阻塞：Google Play 的 16KB 硬要求绑定 targetSdk 35+，
-      # 本项目当前 targetSdk=34，尚未触发。强行阻塞只会让 CI 永久变红、
-      # 掩盖其它真实失败。
+      # 为什么现在**不**阻塞：本项目走**自分发**（不上 Google Play），Play 的 16KB 硬要求不适用；
+      # 16KB 仍是 ffmpeg-kit 在 16KB 页设备上的**已知设备兼容问题**（与上架政策无关，属设备层）。
+      # 强行阻塞只会让 CI 永久变红、掩盖其它真实失败。
       # 升级为真门禁的时机：ffmpeg-kit 换成 16KB 构建之后——
       # 届时删掉本步的 continue-on-error: true 即可。
       - name: 检查 16KB 页大小对齐（当前已知不合规，仅报告不阻塞）
