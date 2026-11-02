@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PureTone 播放进度条 · 交互预览（PlaybackProgressBar 最终实现）</title>
+<style>
+  :root {
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  [data-theme="light"] {
+    --primary: #5E6AD2; --on-primary: #FFFFFF; --surface: #FAF9FF;
+    --track: #E2E1ED; --outline: #78767F; --on-surface: #1B1B21;
+    --page: #EEEDF7; --panel: #FAF9FF; --panel-border: #E2E1ED; --muted: #6B6B76;
+    --chip: #ECECF6;
+  }
+  [data-theme="dark"] {
+    --primary: #BFC2F3; --on-primary: #2A3170; --surface: #121218;
+    --track: #34343E; --outline: #928F9A; --on-surface: #E4E1E9;
+    --page: #0C0C12; --panel: #1A1A22; --panel-border: #292932; --muted: #A0A0AC;
+    --chip: #23232E;
+  }
+  [data-theme="black"] {
+    --primary: #BFC2F3; --on-primary: #2A3170; --surface: #000000;
+    --track: #202027; --outline: #928F9A; --on-surface: #E4E1E9;
+    --page: #000000; --panel: #0A0A0F; --panel-border: #18181F; --muted: #A0A0AC;
+    --chip: #16161D;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: var(--font); background: var(--page); color: var(--on-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 20px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; line-height: 1.6; }
+  .note {
+    background: var(--chip); border: 1px solid var(--panel-border); border-radius: 10px;
+    padding: 10px 14px; font-size: 12.5px; color: var(--muted); margin-bottom: 22px; line-height: 1.6;
+  }
+  .layout { display: grid; grid-template-columns: 280px 1fr; gap: 22px; align-items: start; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 14px;
+    padding: 16px; margin-bottom: 18px;
+  }
+  .panel h3 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+  .ctl { margin-bottom: 16px; }
+  .ctl:last-child { margin-bottom: 0; }
+  .ctl > label { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 7px; }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg button {
+    flex: 1 1 auto; min-width: 56px; padding: 7px 8px; font-size: 12.5px; cursor: pointer;
+    border: 1px solid var(--panel-border); background: var(--chip); color: var(--on-surface);
+    border-radius: 8px; transition: .15s;
+  }
+  .seg button:hover { border-color: var(--primary); }
+  .seg button.active { background: var(--primary); color: var(--on-primary); border-color: var(--primary); font-weight: 600; }
+  .row { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; }
+  input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 8px; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; }
+  .check input { accent-color: var(--primary); width: 16px; height: 16px; }
+
+  .card { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 14px; padding: 20px; margin-bottom: 18px; }
+  .card h2 { margin: 0 0 4px; font-size: 16px; }
+  .card .desc { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; line-height: 1.6; }
+  .stage {
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    padding: 26px 10px; background: var(--surface); border-radius: 12px;
+    border: 1px dashed var(--panel-border);
+  }
+  .device-label { font-size: 11.5px; color: var(--muted); letter-spacing: .3px; }
+
+  /* ===== 进度条核心 ===== */
+  .barwrap { position: relative; height: 48px; }
+  .bar { position: relative; height: 48px; margin: 0 auto; user-select: none; touch-action: none; }
+  .bubble {
+    position: absolute; top: 0; height: 28px; border-radius: 12px;
+    background: var(--primary); color: var(--on-primary);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12.5px; font-weight: 600; box-shadow: 0 3px 8px rgba(0,0,0,.28);
+    pointer-events: none; transform: translateX(-50%); white-space: nowrap;
+    z-index: 0; opacity: 0; transition: opacity .09s ease;
+  }
+  .bubble.show { opacity: 1; }
+  .touch { position: absolute; inset: 0; height: 48px; }
+  .trackwrap { position: absolute; left: 0; bottom: 0; width: 100%; height: 24px; }
+  .track-bg {
+    position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 100%; border-radius: 999px;
+    background: var(--track);
+  }
+  .track-played {
+    position: absolute; left: 0; top: 50%; transform: translateY(-50%); border-radius: 999px;
+    background: var(--primary); transition: width .04s linear;
+  }
+  .halo {
+    position: absolute; top: 12px; border-radius: 999px; background: var(--primary);
+    transform: translate(-50%, -50%); pointer-events: none; transition: opacity .12s ease;
+  }
+  .thumb {
+    position: absolute; top: 12px; border-radius: 999px;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 2px 4px rgba(0,0,0,.30); transition: left .04s linear, width .12s ease, height .12s ease;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .thumb svg { display: block; }
+  /* 动画 */
+  @keyframes pb-pulse { from { opacity: .35; } to { opacity: .15; } }
+  .track-played.pulsing { animation: pb-pulse .9s ease-in-out infinite alternate; }
+  @keyframes pb-breath { 0% { transform: translate(-50%, -50%) scale(1); } 1% { transform: translate(-50%, -50%) scale(1.05); } 50% { transform: translate(-50%, -50%) scale(1.05); } 51% { transform: translate(-50%, -50%) scale(1); } 100% { transform: translate(-50%, -50%) scale(1); } }
+  .thumb.breathing { animation: pb-breath 10s infinite; }
+
+  /* 矩阵 */
+  .matrix { display: grid; grid-template-columns: 92px repeat(3, 1fr); gap: 12px; align-items: center; }
+  .matrix .corner { font-size: 11.5px; color: var(--muted); }
+  .matrix .rhead { font-size: 12px; font-weight: 600; color: var(--on-surface); }
+  .matrix .colhead { font-size: 12px; font-weight: 600; color: var(--muted); text-align: center; }
+  .matrix .cell {
+    background: var(--surface); border: 1px solid var(--panel-border); border-radius: 10px;
+    padding: 14px 8px 10px; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  }
+  .matrix .cellbar { width: 100%; }
+  .matrix .tag { font-size: 10.5px; color: var(--muted); }
+
+  .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 6px; }
+  .legend .item { background: var(--surface); border: 1px solid var(--panel-border); border-radius: 10px; padding: 12px 14px; }
+  .legend .item b { font-size: 12.5px; }
+  .legend .item p { margin: 6px 0 0; font-size: 12px; color: var(--muted); line-height: 1.55; }
+  .status-line { margin-top: 14px; font-size: 12.5px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+  .status-line span b { color: var(--on-surface); }
+  .footer { color: var(--muted); font-size: 11.5px; margin-top: 28px; line-height: 1.6; }
+</style>
+</head>
+<body data-theme="light">
+<div class="wrap">
+  <h1>PureTone 播放进度条 · 交互预览</h1>
+  <p class="sub">对照最终实现 <code>PlaybackProgressBar</code>（PlayerComposables.kt）的视觉与交互还原 —— 四播放态（Loading / Playing / Paused / Ended）× 三交互态（Default / Hover / Dragging）。</p>
+  <div class="note">说明：本地播放无缓冲层，进度只有「已播 / 未播」两层。动画为近似表现（Loading 微光脉动 ~0.9s、Playing 呼吸缩放 ~5s 周期）；真实动效以设备端为准。Hover / 拖拽 / 点击跳转逻辑与代码一致。</div>
+
+  <div class="layout">
+    <!-- 控制面板 -->
+    <div>
+      <div class="panel">
+        <h3>主题</h3>
+        <div class="seg" id="seg-theme">
+          <button data-v="light" class="active">浅色</button>
+          <button data-v="dark">深色</button>
+          <button data-v="black">纯黑</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>预览宽度（断点）</h3>
+        <div class="seg" id="seg-width">
+          <button data-v="240" data-name="窄 (≤280dp)">窄 240</button>
+          <button data-v="420" data-name="常规 (280–600dp)" class="active">常规 420</button>
+          <button data-v="720" data-name="宽 (≥600dp)">宽 720</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>直播条 · 播放态</h3>
+        <div class="seg" id="seg-state">
+          <button data-v="Loading">Loading</button>
+          <button data-v="Playing" class="active">Playing</button>
+          <button data-v="Paused">Paused</button>
+          <button data-v="Ended">Ended</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>直播条 · 交互态</h3>
+        <div class="seg" id="seg-lock">
+          <button data-v="auto" class="active">鼠标自动</button>
+          <button data-v="Default">Default</button>
+          <button data-v="Hover">Hover</button>
+          <button data-v="Dragging">Dragging</button>
+        </div>
+        <div class="ctl" style="margin-top:14px">
+          <div class="row"><label>播放进度</label><span id="played-val">35%</span></div>
+          <input type="range" id="played" min="0" max="100" value="35" />
+        </div>
+        <div class="ctl">
+          <label class="check"><input type="checkbox" id="nodur" /> 无时长降级（禁 seek）</label>
+        </div>
+        <div class="ctl">
+          <label class="check"><input type="checkbox" id="reduce" /> 减少动效（系统无障碍）</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 主区 -->
+    <div>
+      <div class="card">
+        <h2>直播预览</h2>
+        <p class="desc">在进度条上移动鼠标触发 Hover 气泡；按下并拖动触发 Dragging；松手 / 点击定位到该处（等价于 <code>onSeek</code>）。宽度与主题实时联动。</p>
+        <div class="stage">
+          <div class="device-label" id="live-label">常规 (280–600dp)</div>
+          <div class="barwrap" id="live-barwrap"></div>
+        </div>
+        <div class="status-line" id="live-status"></div>
+      </div>
+
+      <div class="card">
+        <h2>四态 × 三交互态 矩阵</h2>
+        <p class="desc">静态对照，便于一次性确认全部 12 种组合。气泡定位在该格进度（Ended 强制满格），动画已停帧。</p>
+        <div class="matrix" id="matrix"></div>
+      </div>
+
+      <div class="card">
+        <h2>视觉差异图例</h2>
+        <div class="legend" id="legend"></div>
+      </div>
+
+      <div class="footer">
+        实现要点：48dp 恒定触控热区；响应式断点（窄 track 4 / thumb 16 / 气泡 48，常规 6 / 18 / 56，宽 8 / 22 / 64，单位 dp）；
+        Hover 轨道 +2dp、滑块 +2dp、光晕 α 0.12；Dragging 轨道 +4dp、滑块 +6dp、光晕 α 0.20、阴影 6dp；
+        Ended 态滑块改为 surface 底 + outline 色重播矢量字形且进度强制满格；无时长降级为半透灰轨并禁用 seek。
+        无障碍：TalkBack 暴露 <code>progressBarRangeInfo</code> + <code>setProgress</code> 调节 + 四态 <code>stateDescription</code>。
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const PRESETS = {
+  narrow:  { track: 4,  thumb: 16, bubble: 48 },
+  regular: { track: 6,  thumb: 18, bubble: 56 },
+  wide:    { track: 8,  thumb: 22, bubble: 64 },
+};
+function presetFor(w){ return w <= 280 ? PRESETS.narrow : (w >= 600 ? PRESETS.wide : PRESETS.regular); }
+function fmt(ms){ const t=Math.floor(ms/1000); const m=Math.floor(t/60); const s=t%60; return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'); }
+
+// 重播矢量字形（对齐 drawReplay：start 50° sweep 280° strokeW=minDim*0.14）
+function replaySVG(size, color){
+  const cx=size/2, cy=size/2, strokeW=size*0.14;
+  const r=(size-strokeW)/2, rad=d=>d*Math.PI/180;
+  const start=50, sweep=280, end=start+sweep;
+  const x0=cx+r*Math.cos(rad(start)), y0=cy+r*Math.sin(rad(start));
+  const x1=cx+r*Math.cos(rad(end)),   y1=cy+r*Math.sin(rad(end));
+  const large = sweep>180?1:0;
+  const arc=`M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r.toFixed(2)} ${r.toFixed(2)} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+  const tx=Math.cos(rad(end+90)), ty=Math.sin(rad(end+90));
+  const al=strokeW*2.4, tipx=x1+tx*al, tipy=y1+ty*al;
+  const px=-ty, py=tx, bw=strokeW*1.2;
+  const b1x=x1+px*bw, b1y=y1+py*bw, b2x=x1-px*bw, b2y=y1-py*bw;
+  const tri=`M ${tipx.toFixed(2)} ${tipy.toFixed(2)} L ${b1x.toFixed(2)} ${b1y.toFixed(2)} L ${b2x.toFixed(2)} ${b2y.toFixed(2)} Z`;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <path d="${arc}" fill="none" stroke="${color}" stroke-width="${strokeW.toFixed(2)}" stroke-linecap="round"/>
+    <path d="${tri}" fill="${color}"/></svg>`;
+}
+
+// 渲染单个进度条。opts: {state, interaction, played(0..1), width, noDuration, reduceMotion, anim(是否启用CSS动画)}
+function renderBar(opts){
+  const W = opts.width;
+  const p = presetFor(W);
+  const st = opts.state;
+  const inter = opts.interaction;
+  const noDur = opts.noDuration;
+  const reduce = opts.reduceMotion;
+  const anim = opts.anim !== false;
+
+  let played = opts.played;
+  if (st === 'Ended') played = 1;
+
+  if (noDur){
+    const trackH = p.track;
+    const bar = `<div class="bar" style="width:${W}px">
+      <div class="touch"></div>
+      <div class="trackwrap">
+        <div class="track-bg" style="height:${trackH}px;background:var(--track);opacity:.5"></div>
+      </div></div>`;
+    return bar;
+  }
+
+  const deltaTrack = inter==='Dragging'?4:(inter==='Hover'?2:0);
+  const deltaThumb = inter==='Dragging'?6:(inter==='Hover'?2:0);
+  const trackH = p.track + deltaTrack;
+  const thumbS = p.thumb + deltaThumb;
+  const haloS = thumbS + 14;
+  const haloA = inter==='Dragging'?0.20:(inter==='Hover'?0.12:0);
+  const bubbleW = p.bubble;
+
+  const bubbleFrac = (inter==='Default') ? 0 : played;
+  const bubbleLeft = Math.max(0, Math.min(W - bubbleW, bubbleFrac*W - bubbleW/2));
+  const showBubble = inter!=='Default';
+  const bubbleTime = fmt(bubbleFrac * 230000); // 用一个固定总时长演示（3:50）
+
+  // 已播透明度
+  let playedAlpha = 1, pulsing=false;
+  if (st==='Loading'){ if (reduce){ playedAlpha=0.55; } else { pulsing=true; } }
+
+  // 滑块缩放（playing breathing）
+  let breathing=false;
+  if (st==='Playing' && inter==='Default' && !reduce && anim) breathing=true;
+
+  const thumbCol = (st==='Ended') ? 'var(--surface)' : 'var(--primary)';
+  const thumbShadow = (inter==='Dragging') ? '0 3px 8px rgba(0,0,0,.38)' : '0 2px 4px rgba(0,0,0,.30)';
+  const thumbInner = (st==='Ended') ? replaySVG(thumbS, getComputedStyle(document.body).getPropertyValue('--outline').trim()) : '';
+
+  const left_played = played*W;
+  const left_halo = played*W;
+  const left_thumb = played*W;
+
+  const bar = `<div class="bar" style="width:${W}px">
+    <div class="bubble ${showBubble?'show':''}" style="width:${bubbleW}px;left:${bubbleLeft}px">${bubbleTime}</div>
+    <div class="touch"></div>
+    <div class="trackwrap">
+      <div class="track-bg" style="height:${trackH}px"></div>
+      <div class="track-played ${pulsing?'pulsing':''}" style="width:${(played*100).toFixed(2)}%;height:${trackH}px;opacity:${playedAlpha}"></div>
+      <div class="halo" style="width:${haloS}px;height:${haloS}px;left:${left_halo}px;opacity:${haloA}"></div>
+      <div class="thumb ${breathing?'breathing':''}" style="width:${thumbS}px;height:${thumbS}px;left:${left_thumb}px;background:${thumbCol};box-shadow:${thumbShadow}">${thumbInner}</div>
+    </div></div>`;
+  return bar;
+}
+
+// ---------- 直播状态 ----------
+const live = { state:'Playing', played:0.35, lock:'auto', noDuration:false, reduceMotion:false, width:420, widthName:'常规 (280–600dp)' };
+const barwrap = document.getElementById('live-barwrap');
+const statusEl = document.getElementById('live-status');
+
+function renderLive(){
+  barwrap.innerHTML = renderBar({ state: live.state, interaction: currentInteraction(), played: live.played, width: live.width, noDuration: live.noDuration, reduceMotion: live.reduceMotion, anim:true });
+  attachLive(barwrap.querySelector('.bar'));
+  updateStatus();
+}
+function currentInteraction(){
+  if (live.lock!=='auto') return live.lock;
+  if (drag.active) return 'Dragging';
+  return hover.active ? 'Hover' : 'Default';
+}
+const hover = { active:false, frac:null };
+const drag  = { active:false, frac:null };
+
+function fracFromEvent(bar, e){
+  const r = bar.getBoundingClientRect();
+  return Math.max(0, Math.min(1, (e.clientX - r.left)/r.width));
+}
+function attachLive(bar){
+  const touch = bar.querySelector('.touch');
+  touch.addEventListener('pointermove', e=>{
+    if (live.lock!=='auto') return;
+    const f = fracFromEvent(bar, e);
+    if (drag.active){ drag.frac=f; }
+    else { hover.active=true; hover.frac=f; }
+    // 直接更新已有 DOM 而非整段重渲染，保证流畅
+    const bub = bar.querySelector('.bubble');
+    const played = bar.querySelector('.track-played');
+    const halo = bar.querySelector('.halo');
+    const thumb = bar.querySelector('.thumb');
+    const fr = drag.active ? drag.frac : hover.frac;
+    const inter = drag.active ? 'Dragging' : 'Hover';
+    const p = presetFor(live.width);
+    const bubbleW = p.bubble;
+    const left = Math.max(0, Math.min(live.width-bubbleW, fr*live.width - bubbleW/2));
+    bub.style.left = left+'px'; bub.style.width = bubbleW+'px'; bub.classList.add('show');
+    bub.textContent = fmt(fr*230000);
+    played.style.width = (fr*100)+'%';
+    halo.style.left = (fr*live.width)+'px';
+    halo.style.opacity = (inter==='Dragging')?0.20:0.12;
+    thumb.style.left = (fr*live.width)+'px';
+    updateStatus(inter, fr);
+  });
+  touch.addEventListener('pointerdown', e=>{
+    if (live.lock!=='auto') return;
+    const f = fracFromEvent(bar, e);
+    drag.active=true; drag.frac=f; touch.setPointerCapture(e.pointerId);
+    updateStatus('Dragging', f);
+  });
+  touch.addEventListener('pointerup', e=>{
+    if (live.lock!=='auto') return;
+    if (drag.active){ live.played = drag.frac; drag.active=false; drag.frac=null; hover.active=false; }
+    renderLive();
+  });
+  touch.addEventListener('pointerleave', ()=>{
+    if (live.lock!=='auto') return;
+    if (!drag.active){ hover.active=false; hover.frac=null; renderLive(); }
+  });
+}
+
+const STATE_DESC = { Loading:'准备中', Playing:'播放中', Paused:'已暂停', Ended:'已结束' };
+function updateStatus(inter, frac){
+  const i = inter || currentInteraction();
+  const f = (i==='Dragging'||i==='Hover') ? frac : live.played;
+  const total = 230000;
+  statusEl.innerHTML =
+    `<span>状态：<b>${STATE_DESC[live.state]}</b></span>` +
+    `<span>交互：<b>${i}</b></span>` +
+    `<span>进度：<b>${fmt(f*total)}</b> / 03:50</span>` +
+    `<span>无时长：<b>${live.noDuration?'是':'否'}</b></span>` +
+    `<span>减少动效：<b>${live.reduceMotion?'是':'否'}</b></span>`;
+}
+
+// ---------- 矩阵 ----------
+function renderMatrix(){
+  const m = document.getElementById('matrix');
+  const states = ['Loading','Playing','Paused','Ended'];
+  const inters = ['Default','Hover','Dragging'];
+  let html = `<div class="corner"></div>`;
+  html += `<div class="colhead">Default</div><div class="colhead">Hover</div><div class="colhead">Dragging</div>`;
+  for (const s of states){
+    html += `<div class="rhead">${s}<br><span style="font-weight:400;color:var(--muted)">${STATE_DESC[s]}</span></div>`;
+    for (const it of inters){
+      const bar = renderBar({ state:s, interaction:it, played:0.35, width: live.width, noDuration:false, reduceMotion:true, anim:false });
+      html += `<div class="cell"><div class="cellbar">${bar}</div><div class="tag">${it}</div></div>`;
+    }
+  }
+  m.innerHTML = html;
+}
+
+// ---------- 图例 ----------
+function renderLegend(){
+  const items = [
+    ['轨道厚度', '窄 4 / 常规 6 / 宽 8 dp；Hover +2、Dragging +4（tween 120ms 过渡）。未播层用 surfaceContainerHighest。'],
+    ['滑块尺寸', '窄 16 / 常规 18 / 宽 22 dp；Hover +2、Dragging +6。默认阴影 3dp，Dragging 加深到 6dp。'],
+    ['品牌色填充', '滑块为 primary 实心（浅色 #5E6AD2 / 深色 #BFC2F3）+ onPrimary 阴影，属选型 B 品牌实色套组。'],
+    ['Hover 光晕', '滑块外扩 +14dp 的 primary 半透明圆：Hover α0.12、Dragging α0.20，强化品牌反馈。'],
+    ['Loading 脉动', '已播层在 0.35↔0.15 间微光脉动（~0.9s），提示解码/准备中；减少动效时固定 0.55。'],
+    ['Playing 呼吸', '默认态滑块每 ~5s 在 1.0↔1.05 间轻微缩放，暗示正在推进。'],
+    ['Ended 重播字形', '进度强制满格，滑块改 surface 底、中心用 outline 色绘制循环箭头矢量字形（drawReplay）。'],
+    ['时间气泡', 'Hover / Dragging 时在指针上方显示 primary 气泡（圆角 12dp、阴影 6dp），格式 mm:ss。'],
+    ['无时长降级', '灰色半透静态轨道，禁用 seek，但保留 48dp 热区避免布局抖动。'],
+    ['无障碍', 'TalkBack 读出百分比进度 + 四态状态描述；setProgress 支持方向键/滑动微调跳转。'],
+  ];
+  document.getElementById('legend').innerHTML = items.map(([t,d])=>`<div class="item"><b>${t}</b><p>${d}</p></div>`).join('');
+}
+
+// ---------- 事件绑定 ----------
+function bindSeg(id, cb){
+  const seg = document.getElementById(id);
+  seg.addEventListener('click', e=>{
+    const b = e.target.closest('button'); if(!b) return;
+    [...seg.querySelectorAll('button')].forEach(x=>x.classList.remove('active'));
+    b.classList.add('active'); cb(b.dataset.v, b);
+  });
+}
+bindSeg('seg-theme', v=>{ document.body.dataset.theme=v; renderMatrix(); renderLive(); });
+bindSeg('seg-width', (v,b)=>{ live.width=+v; live.widthName=b.dataset.name; document.getElementById('live-label').textContent=live.widthName; renderMatrix(); renderLive(); });
+bindSeg('seg-state', v=>{ live.state=v; renderLive(); });
+bindSeg('seg-lock', v=>{ live.lock=v; renderLive(); });
+document.getElementById('played').addEventListener('input', e=>{
+  live.played = (+e.target.value)/100;
+  document.getElementById('played-val').textContent = e.target.value+'%';
+  if (live.state!=='Ended') renderLive();
+});
+document.getElementById('nodur').addEventListener('change', e=>{ live.noDuration=e.target.checked; renderLive(); });
+document.getElementById('reduce').addEventListener('change', e=>{ live.reduceMotion=e.target.checked; renderLive(); });
+
+// 初始化
+renderLegend();
+renderMatrix();
+renderLive();
+</script>
+</body>
+</html>

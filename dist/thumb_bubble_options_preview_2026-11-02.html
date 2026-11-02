@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PureTone · 滑块与气泡备选方案</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+       background:#EDEAF4;color:#2c2a35;padding:26px 18px 70px}
+  h1{font-size:22px;margin:0 0 4px}
+  h2{font-size:17px;margin:30px 0 6px;border-left:5px solid #5E6AD2;padding-left:9px}
+  p.lede{font-size:13px;color:#5a5470;line-height:1.7;max-width:880px;margin:0 0 6px}
+  code{background:#e3def0;padding:1px 5px;border-radius:4px;font-size:12px}
+
+  /* theme scopes */
+  .theme-light{--primary:#5E6AD2;--on-primary:#FFFFFF;--surface:#FAF9FF;--sch:#E8E7F2;--sch-hi:#E2E1ED;
+    --on-surface:#1B1B21;--inv:#303036;--inv-on:#F3EFF7;--outline:#78767F;--outline-v:#C9C7D0;
+    --p-container:#E4E3FA;--on-p-container:#232965;}
+  .theme-dark{--primary:#BFC2F3;--on-primary:#2A3170;--surface:#121218;--sch:#292932;--sch-hi:#34343E;
+    --on-surface:#E4E1E9;--inv:#E4E1E9;--inv-on:#303036;--outline:#928F9A;--outline-v:#47464F;
+    --p-container:#414A9C;--on-p-container:#E4E3FA;}
+
+  .panel{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:14px;margin-top:10px}
+  .opt{background:#fff;border:1px solid #ddd6ea;border-radius:16px;padding:14px 16px 16px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .opt h3{margin:0 0 2px;font-size:15px}
+  .opt .tag{font-size:11px;color:#8a7fa0;margin-bottom:10px}
+  .opt table{width:100%;border-collapse:collapse;font-size:11.5px;margin:8px 0}
+  .opt td{border-top:1px solid #eee;padding:3px 4px;vertical-align:top}
+  .opt td:first-child{color:#7a7390;width:74px;font-weight:600}
+  .swatch{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px;border-radius:12px;margin:8px 0}
+  .row3{display:flex;gap:18px;align-items:flex-end;justify-content:center;padding:14px 0 4px}
+  .lbl{font-size:10.5px;color:#9a90ab;text-align:center;margin-top:6px}
+
+  /* track context */
+  .trackctx{position:relative;height:30px;width:100%;margin-top:6px}
+  .tc-track{position:absolute;left:0;right:0;bottom:6px;height:6px;border-radius:999px;background:var(--sch-hi)}
+  .tc-played{position:absolute;left:0;bottom:6px;height:6px;border-radius:999px;background:var(--primary);width:45%}
+
+  /* ---- THUMB mocks ---- */
+  .thumb{position:relative;border-radius:50%}
+  .thumb .glyph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+  /* A solid white */
+  .tA{width:18px;height:18px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+  .tA.h{box-shadow:0 0 0 6px rgba(94,106,210,.18),0 2px 5px rgba(0,0,0,.35)}
+  .tA.d{box-shadow:0 0 0 10px rgba(94,106,210,.22),0 3px 7px rgba(0,0,0,.4)}
+  /* B brand solid */
+  .tB{width:18px;height:18px;background:var(--primary);box-shadow:0 1px 3px rgba(0,0,0,.3)}
+  .tB.h{box-shadow:0 0 0 6px rgba(94,106,210,.20),0 2px 5px rgba(0,0,0,.3)}
+  .tB.d{box-shadow:0 0 0 10px rgba(94,106,210,.26),0 3px 7px rgba(0,0,0,.36)}
+  /* C outline ring */
+  .tC{width:18px;height:18px;background:#fff;border:2.5px solid var(--primary);box-shadow:0 1px 2px rgba(0,0,0,.25)}
+  .tC.h{border-width:3px;box-shadow:0 0 0 5px rgba(94,106,210,.16),0 2px 4px rgba(0,0,0,.3)}
+  .tC.d{border-width:3.5px;box-shadow:0 0 0 9px rgba(94,106,210,.20),0 3px 6px rgba(0,0,0,.34)}
+  /* D soft container handle */
+  .tD{width:18px;height:18px;border-radius:12px;background:var(--p-container);border:2px solid var(--primary);box-shadow:0 1px 3px rgba(0,0,0,.25)}
+  .tD.h{box-shadow:0 0 0 6px rgba(94,106,210,.18),0 2px 5px rgba(0,0,0,.3)}
+  .tD.d{box-shadow:0 0 0 10px rgba(94,106,210,.22),0 3px 7px rgba(0,0,0,.36)}
+
+  /* scale up for hover/drag display */
+  .s20 .thumb{transform:scale(1.11)} .s24 .thumb{transform:scale(1.34)}
+
+  /* ---- BUBBLE mocks ---- */
+  .bub{position:relative;font-weight:500;font-size:12px;line-height:16px;letter-spacing:.5px;padding:6px 10px;border-radius:8px;white-space:nowrap}
+  .bub .tail{position:absolute;left:50%;bottom:-5px;transform:translateX(-50%);width:10px;height:10px;rotate:45deg}
+  /* A inverse */
+  .bA{background:var(--inv);color:var(--inv-on);border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,.3)}
+  .bA .tail{background:var(--inv)}
+  /* B brand */
+  .bB{background:var(--primary);color:var(--on-primary);border-radius:12px;box-shadow:0 3px 8px rgba(0,0,0,.35)}
+  .bB .tail{background:var(--primary)}
+  /* C light card */
+  .bC{background:var(--sch-hi);color:var(--on-surface);border:1px solid var(--outline-v);border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,.22)}
+  .bC .tail{background:var(--sch-hi);border-right:1px solid var(--outline-v);border-bottom:1px solid var(--outline-v)}
+  /* D minimal pill */
+  .bD{background:var(--p-container);color:var(--on-p-container);border-radius:999px;padding:6px 14px;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+
+  .theme-light .swatch,.theme-dark .swatch{background:var(--surface)}
+  .opt .foot{font-size:11px;color:#8a7fa0;margin-top:6px;line-height:1.5}
+</style>
+</head>
+<body>
+  <h1>PureTone · 滑块 &amp; 气泡 备选方案</h1>
+  <p class="lede">
+    所有方案锚定 PureTone 真实主题令牌（<code>theme/Color.kt</code> / <code>Shape.kt</code> / <code>Type.kt</code>）：
+    浅色 primary <code>#5E6AD2</code>、深色 primary <code>#BFC2F3</code>，inverseSurface、surfaceContainerHighest、primaryContainer、outline/outlineVariant 等；
+    形状 small 8 / medium 12 dp；字体沿用气泡现用的 <code>labelMedium</code>（12sp·Medium·ls .5）。
+    下方每个方案均给出「默认 / 悬停 / 拖拽」三态与浅·深双主题渲染，确保新组件在两种主题下都不产生风格冲突。
+  </p>
+
+  <!-- ============ THUMB ============ -->
+  <h2>一、滑块（Thumb）· 4 套方案</h2>
+  <div class="panel">
+
+    <!-- A -->
+    <div class="opt">
+      <h3>A · 实心白盘（Solid White Disc）</h3>
+      <div class="tag">最贴近现状与 M3 默认滑块，安全、低存在感</div>
+      <table>
+        <tr><td>配色</td><td>填充 surface(白)；onSurface 投影</td></tr>
+        <tr><td>圆角</td><td>CircleShape（正圆）</td></tr>
+        <tr><td>阴影</td><td>默认 3dp；hover/drag 4–6dp</td></tr>
+        <tr><td>交互反馈</td><td>hover/drag 加 primary 18–22% 光晕环（6–10dp），尺寸 18→20→24dp</td></tr>
+      </table>
+      <div class="theme-light"><div class="swatch"><div class="row3"><div><div class="thumb tA"></div><div class="lbl">默认</div></div><div><div class="thumb tA h"></div><div class="lbl">悬停</div></div><div class="s24"><div class="thumb tA d"></div><div class="lbl">拖拽</div></div></div></div></div>
+      <div class="theme-dark"><div class="swatch"><div class="row3"><div><div class="thumb tA"></div><div class="lbl">默认</div></div><div><div class="thumb tA h"></div><div class="lbl">悬停</div></div><div class="s24"><div class="thumb tA d"></div><div class="lbl">拖拽</div></div></div></div></div>
+      <div class="theme-light"><div class="trackctx"><div class="tc-track"></div><div class="tc-played"></div><div class="thumb tA" style="position:absolute;bottom:6px;left:45%;transform:translate(-50%,50%)"></div></div></div>
+      <div class="foot">结束态：白盘描边 outline + ↻ 重播字形（沿用前文约定）。</div>
+    </div>
+
+    <!-- B -->
+    <div class="opt">
+      <h3>B · 品牌实心（Brand Solid）</h3>
+      <div class="tag">primary 实心圆，品牌感最强，与已播进度同色系呼应</div>
+      <table>
+        <tr><td>配色</td><td>填充 primary；onPrimary 文字/图标</td></tr>
+        <tr><td>圆角</td><td>CircleShape（正圆）</td></tr>
+        <tr><td>阴影</td><td>默认 3dp；hover/drag 4–6dp</td></tr>
+        <tr><td>交互反馈</td><td>hover/drag 外扩 primary 20–26% 光晕（6–10dp），尺寸 18→20→24dp</td></tr>
+      </table>
+      <div class="theme-light"><div class="swatch"><div class="row3"><div><div class="thumb tB"></div><div class="lbl">默认</div></div><div><div class="thumb tB h"></div><div class="lbl">悬停</div></div><div class="s24"><div class="thumb tB d"></div><div class="lbl">拖拽</div></div></div></div></div>
+      <div class="theme-dark"><div class="swatch"><div class="row3"><div><div class="thumb tB"></div><div class="lbl">默认</div></div><div><div class="thumb tB h"></div><div class="lbl">悬停</div></div><div class="s24"><div class="thumb tB d"></div><div class="lbl">拖拽</div></div></div></div></div>
+      <div class="theme-light"><div class="trackctx"><div class="tc-track"></div><div class="tc-played"></div><div class="thumb tB" style="position:absolute;bottom:6px;left:45%;transform:translate(-50%,50%)"></div></div></div>
+      <div class="foot">结束态：改 outline 实心 + ↻，避免与「播放中」primary 混淆。</div>
+    </div>
+
+    <!-- C -->
+    <div class="opt">
+      <h3>C · 描边环（Outline Ring）</h3>
+      <div class="tag">空心白盘 + primary 描边，靠线条表达，轻量现代</div>
+      <table>
+        <tr><td>配色</td><td>白填充 + 2.5dp primary 描边；onPrimary 字</td></tr>
+        <tr><td>圆角</td><td>CircleShape（正圆）</td></tr>
+        <tr><td>阴影</td><td>默认 2dp；hover/drag 3–4dp</td></tr>
+        <tr><td>交互反馈</td><td>描边加粗 2.5→3→3.5dp + primary 16–20% 光晕，尺寸不变</td></tr>
+      </table>
+      <div class="theme-light"><div class="swatch"><div class="row3"><div><div class="thumb tC"></div><div class="lbl">默认</div></div><div><div class="thumb tC h"></div><div class="lbl">悬停</div></div><div class="s24"><div class="thumb tC d"></div><div class="lbl">拖拽</div></div></div></div></div>
+      <div class="theme-dark"><div class="swatch"><div class="row3"><div><div class="thumb tC"></div><div class="lbl">默认</div></div><div><div class="thumb tC h"></div><div class="lbl">悬停</div></div><div class="s24"><div class="thumb tC d"></div><div class="lbl">拖拽</div></div></div></div></div>
+      <div class="theme-light"><div class="trackctx"><div class="tc-track"></div><div class="tc-played"></div><div class="thumb tC" style="position:absolute;bottom:6px;left:45%;transform:translate(-50%,50%)"></div></div></div>
+      <div class="foot">结束态：描边改 outline，内部 ↻ 用 primary 着色。</div>
+    </div>
+
+    <!-- D -->
+    <div class="opt">
+      <h3>D · 柔光容器把手（Soft Container Handle）</h3>
+      <div class="tag">primaryContainer 填充 + primary 描边 + 大圆角矩形，呼应品牌大圆角，最「控件化」</div>
+      <table>
+        <tr><td>配色</td><td>primaryContainer 填充 + 2dp primary 描边；onPrimaryContainer 字</td></tr>
+        <tr><td>圆角</td><td>medium 12dp（竖向圆角矩形把手）</td></tr>
+        <tr><td>阴影</td><td>默认 3dp；hover/drag 4–6dp</td></tr>
+        <tr><td>交互反馈</td><td>同 A 的 primary 光晕；形状辨识度高于正圆</td></tr>
+      </table>
+      <div class="theme-light"><div class="swatch"><div class="row3"><div><div class="thumb tD"></div><div class="lbl">默认</div></div><div><div class="thumb tD h"></div><div class="lbl">悬停</div></div><div class="s24"><div class="thumb tD d"></div><div class="lbl">拖拽</div></div></div></div></div>
+      <div class="theme-dark"><div class="swatch"><div class="row3"><div><div class="thumb tD"></div><div class="lbl">默认</div></div><div><div class="thumb tD h"></div><div class="lbl">悬停</div></div><div class="s24"><div class="thumb tD d"></div><div class="lbl">拖拽</div></div></div></div></div>
+      <div class="theme-light"><div class="trackctx"><div class="tc-track"></div><div class="tc-played"></div><div class="thumb tD" style="position:absolute;bottom:6px;left:45%;transform:translate(-50%,50%)"></div></div></div>
+      <div class="foot">结束态：把手描边改 outline，内部 ↻。</div>
+    </div>
+
+  </div>
+
+  <!-- ============ BUBBLE ============ -->
+  <h2>二、气泡（Bubble / Time Tooltip）· 4 套方案</h2>
+  <div class="panel">
+
+    <!-- A -->
+    <div class="opt">
+      <h3>A · 反色胶囊（Inverse Pill）· 现状风</h3>
+      <div class="tag">inverseSurface 深色底 + inverseOnSurface 字，最稳，深浅主题自动反相</div>
+      <table>
+        <tr><td>配色</td><td>inverseSurface / inverseOnSurface</td></tr>
+        <tr><td>圆角</td><td>small 8dp</td></tr>
+        <tr><td>阴影</td><td>4dp（现状）</td></tr>
+        <tr><td>字体</td><td>labelMedium 12sp·Medium·ls .5</td></tr>
+        <tr><td>指示</td><td>保留下三角（同 inverseSurface）</td></tr>
+      </table>
+      <div class="theme-light"><div class="swatch"><div class="bub bA">1:23<span class="tail"></span></div></div></div>
+      <div class="theme-dark"><div class="swatch"><div class="bub bA">1:23<span class="tail"></span></div></div></div>
+      <div class="foot">深浅两套均取自主题角色，天然贴合、无冲突。</div>
+    </div>
+
+    <!-- B -->
+    <div class="opt">
+      <h3>B · 品牌实色胶囊（Brand Solid）</h3>
+      <div class="tag">primary 底 + onPrimary 字，与 Brand Solid 滑块（B）成套呼应</div>
+      <table>
+        <tr><td>配色</td><td>primary / onPrimary</td></tr>
+        <tr><td>圆角</td><td>medium 12dp（更贴品牌大圆角）</td></tr>
+        <tr><td>阴影</td><td>6dp（更浮起）</td></tr>
+        <tr><td>字体</td><td>labelMedium</td></tr>
+        <tr><td>指示</td><td>下三角同 primary</td></tr>
+      </table>
+      <div class="theme-light"><div class="swatch"><div class="bub bB">1:23<span class="tail"></span></div></div></div>
+      <div class="theme-dark"><div class="swatch"><div class="bub bB">1:23<span class="tail"></span></div></div></div>
+      <div class="foot">在深色模式 primary 变浅紫，气泡仍清晰；与 B 滑块组成「品牌套组」。</div>
+    </div>
+
+    <!-- C -->
+    <div class="opt">
+      <h3>C · 浅色浮起卡片（Surface Card）</h3>
+      <div class="tag">surfaceContainerHigh 浅底 + onSurface 字 + 描边，轻盈、大圆角</div>
+      <table>
+        <tr><td>配色</td><td>surfaceContainerHigh / onSurface + outlineVariant 描边</td></tr>
+        <tr><td>圆角</td><td>medium 12dp</td></tr>
+        <tr><td>阴影</td><td>4dp</td></tr>
+        <tr><td>字体</td><td>labelMedium</td></tr>
+        <tr><td>指示</td><td>下三角带右侧/底部描边</td></tr>
+      </table>
+      <div class="theme-light"><div class="swatch"><div class="bub bC">1:23<span class="tail"></span></div></div></div>
+      <div class="theme-dark"><div class="swatch"><div class="bub bC">1:23<span class="tail"></span></div></div></div>
+      <div class="foot">浅底在浅色模式更隐形融入；深色模式转深底，仍浮起可辨。</div>
+    </div>
+
+    <!-- D -->
+    <div class="opt">
+      <h3>D · 极简无尾胶囊（Minimal Pill）</h3>
+      <div class="tag">primaryContainer 底 + onPrimaryContainer 字 + 全圆角胶囊，无三角，最克制纯净</div>
+      <table>
+        <tr><td>配色</td><td>primaryContainer / onPrimaryContainer</td></tr>
+        <tr><td>圆角</td><td>完全圆角（pill，高/2）</td></tr>
+        <tr><td>阴影</td><td>2dp（极轻）</td></tr>
+        <tr><td>字体</td><td>labelMedium</td></tr>
+        <tr><td>指示</td><td>无下三角（靠贴近轨道表达）</td></tr>
+      </table>
+      <div class="theme-light"><div class="swatch"><div class="bub bD">1:23</div></div></div>
+      <div class="theme-dark"><div class="swatch"><div class="bub bD">1:23</div></div></div>
+      <div class="foot">呼应品牌「纯净」理念；去掉三角后更简洁，但需靠间距贴近轨道以暗示归属。</div>
+    </div>
+
+  </div>
+
+  <h2>三、搭配建议</h2>
+  <p class="lede">
+    • <b>保守一致组</b>：滑块 A（白盘）+ 气泡 A（反色）—— 最贴近现状，风险最低。<br/>
+    • <b>品牌强化组</b>：滑块 B（品牌实心）+ 气泡 B（品牌实色）—— 视觉最统一、最出彩。<br/>
+    • <b>轻盈通透组</b>：滑块 C（描边环）+ 气泡 C（浅色卡片）—— 极简、现代、低干扰。<br/>
+    • <b>纯净控件组</b>：滑块 D（柔光把手）+ 气泡 D（无尾胶囊）—— 大圆角呼应品牌形状体系。<br/>
+    各套在浅/深主题均做了渲染验证，令牌全部来自 <code>PureToneColorSchemes</code>，不引入任何外部色值，可自然融入。
+  </p>
+</body>
+</html>

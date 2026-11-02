@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PureTone 播放进度条 · 视觉预览（本地播放，无缓冲层）</title>
+<style>
+  :root{
+    --primary:#6750A4;
+    --on-primary:#FFFFFF;
+    --track:#E7E0EC;          /* surfaceContainerHighest */
+    --thumb:#FFFFFF;
+    --thumb-ring:#6750A4;
+    --bubble:#322F35;         /* inverseSurface */
+    --bubble-text:#F5EFF7;    /* inverseOnSurface */
+    --outline:#79747E;
+    --surface:#FFFBFE;
+    --label:#49454F;
+    --bg:#F3EEF8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--label);padding:28px 20px 60px}
+  h1{font-size:22px;margin:0 0 4px}
+  h2{font-size:16px;margin:26px 0 10px;border-left:4px solid var(--primary);padding-left:8px}
+  p.lede{font-size:13px;color:#67586f;margin:0 0 8px;max-width:760px;line-height:1.6}
+  .tokens{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 4px}
+  .token{display:flex;align-items:center;gap:6px;font-size:12px;background:#fff;border:1px solid #e3dcec;
+         border-radius:8px;padding:6px 10px}
+  .sw{width:16px;height:16px;border-radius:4px;border:1px solid rgba(0,0,0,.1)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px;margin-top:8px}
+  .card{background:var(--surface);border:1px solid #e3dcec;border-radius:14px;padding:14px 16px 18px;
+        box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .card .cap{font-size:12px;font-weight:600;color:#67586f;margin-bottom:2px;display:flex;justify-content:space-between}
+  .card .sub{font-size:11px;color:#9a8ea3;margin-bottom:12px}
+
+  /* ---- progress bar mock ---- */
+  .bar{position:relative;height:48px;width:100%}
+  .track{position:absolute;left:0;right:0;bottom:11px;height:var(--th,6px);border-radius:999px;
+         background:var(--track);overflow:hidden}
+  .played{height:100%;width:var(--p,40%);background:var(--primary);border-radius:999px}
+  .shimmer{position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(103,80,164,.35),transparent);
+           transform:translateX(-100%);animation:shim 1.4s linear infinite}
+  @keyframes shim{to{transform:translateX(100%)}}
+  .thumb{position:absolute;bottom:11px;left:var(--p,40%);width:var(--ts,18px);height:var(--ts,18px);
+         transform:translate(-50%,50%);background:var(--thumb);border-radius:50%;
+         box-shadow:0 1px 3px rgba(0,0,0,.35)}
+  .thumb.ring{box-shadow:0 0 0 var(--ring,6px) rgba(103,80,164,.18),0 1px 4px rgba(0,0,0,.35)}
+  .thumb.ended{background:var(--outline)}
+  .thumb.ended .glyph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+                      color:#fff;font-size:13px;font-weight:700}
+  .bubble{position:absolute;left:var(--p,40%);bottom:34px;transform:translateX(-50%);
+          background:var(--bubble);color:var(--bubble-text);font-size:12px;font-weight:600;
+          padding:4px 8px;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,.3);white-space:nowrap;
+          opacity:0;transition:opacity .12s;pointer-events:none}
+  .bubble::after{content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%);
+                 border:5px solid transparent;border-top-color:var(--bubble)}
+  .show-bubble .bubble{opacity:1}
+
+  /* interaction variants */
+  .i-default{--th:6px;--ts:18px;--ring:0px}
+  .i-hover{--th:8px;--ts:20px;--ring:6px}
+  .i-drag{--th:10px;--ts:24px;--ring:10px}
+  .i-hover .thumb,.i-drag .thumb{box-shadow:0 0 0 var(--ring) rgba(103,80,164,.18),0 1px 4px rgba(0,0,0,.4)}
+
+  /* responsive device frames */
+  .frames{display:flex;flex-wrap:wrap;gap:18px;margin-top:8px}
+  .device{background:var(--surface);border:1px solid #e3dcec;border-radius:14px;padding:14px}
+  .device .name{font-size:12px;font-weight:600;margin-bottom:8px;color:#67586f}
+  .device.narrow{width:248px}
+  .device.normal{width:360px}
+  .device.wide{width:600px}
+  .device.narrow .bar{--th:4px;--ts:16px}
+  .device.normal .bar{--th:6px;--ts:18px}
+  .device.wide .bar{--th:8px;--ts:22px}
+  .device .hint{font-size:11px;color:#9a8ea3;margin-top:8px}
+</style>
+</head>
+<body>
+  <h1>PureTone 播放进度条 · 视觉预览</h1>
+  <p class="lede">
+    基于规格文档 <code>dist/playback_progress_bar_redesign_spec_2026-11-02.md</code>。
+    <b>本地播放器无已缓冲进度</b>，进度仅两层（已播 / 未播）。下方为各「播放状态 × 交互状态」组合的视觉预览，
+    颜色与尺寸均来自 Material 3 令牌（占位 primary=#6750A4，实际接入时取 <code>MaterialTheme.colorScheme</code>）。
+  </p>
+
+  <h2>颜色 / 尺寸令牌</h2>
+  <div class="tokens">
+    <div class="token"><span class="sw" style="background:var(--primary)"></span>primary 已播</div>
+    <div class="token"><span class="sw" style="background:var(--track)"></span>surfaceContainerHighest 未播</div>
+    <div class="token"><span class="sw" style="background:var(--thumb);border:1px solid #ccc"></span>White 滑块</div>
+    <div class="token"><span class="sw" style="background:var(--outline)"></span>outline 结束态滑块</div>
+    <div class="token"><span class="sw" style="background:var(--bubble)"></span>inverseSurface 气泡</div>
+    <div class="token"><span class="sw" style="background:#fff;border:2px solid var(--primary)"></span>hover/drag 滑块光晕</div>
+  </div>
+  <p class="lede" style="margin-top:6px">轨道高度 DEFAULT 6dp / HOVER 8dp / DRAGGING 10dp；滑块 18 / 20 / 24dp；触控热区恒定 48dp。</p>
+
+  <h2>状态矩阵（窄条轨道 = DEFAULT，中 = HOVER，粗 = DRAGGING）</h2>
+  <div class="grid">
+
+    <!-- PLAYING -->
+    <div class="card">
+      <div class="cap"><span>Playing · DEFAULT</span><span>播放中</span></div>
+      <div class="sub">正常推进，滑块 18dp 静止于当前位置</div>
+      <div class="bar i-default" style="--p:42%">
+        <div class="track"><div class="played"></div></div>
+        <div class="thumb"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="cap"><span>Playing · HOVER</span><span>播放中</span></div>
+      <div class="sub">鼠标悬停：轨道 8dp、滑块 20dp 带光晕，气泡预览指针处时间（不提交）</div>
+      <div class="bar i-hover show-bubble" style="--p:42%">
+        <div class="track"><div class="played"></div></div>
+        <div class="thumb ring"></div>
+        <div class="bubble">1:23</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="cap"><span>Playing · DRAGGING</span><span>播放中</span></div>
+      <div class="sub">拖拽中：轨道 10dp、滑块 24dp，气泡跟随滑块显示实时时间</div>
+      <div class="bar i-drag show-bubble" style="--p:68%">
+        <div class="track"><div class="played"></div></div>
+        <div class="thumb ring"></div>
+        <div class="bubble">2:31</div>
+      </div>
+    </div>
+
+    <!-- PAUSED -->
+    <div class="card">
+      <div class="cap"><span>Paused · DEFAULT</span><span>已暂停</span></div>
+      <div class="sub">所有动画冻结，滑块静止；气泡仅 hover/drag 出现</div>
+      <div class="bar i-default" style="--p:55%">
+        <div class="track"><div class="played"></div></div>
+        <div class="thumb"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="cap"><span>Paused · HOVER</span><span>已暂停</span></div>
+      <div class="sub">悬停预览（暂停态同样可 hover）</div>
+      <div class="bar i-hover show-bubble" style="--p:55%">
+        <div class="track"><div class="played"></div></div>
+        <div class="thumb ring"></div>
+        <div class="bubble">2:03</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="cap"><span>Paused · DRAGGING</span><span>已暂停</span></div>
+      <div class="sub">暂停态拖拽，行为与播放态拖拽一致</div>
+      <div class="bar i-drag show-bubble" style="--p:30%">
+        <div class="track"><div class="played"></div></div>
+        <div class="thumb ring"></div>
+        <div class="bubble">1:06</div>
+      </div>
+    </div>
+
+    <!-- LOADING -->
+    <div class="card">
+      <div class="cap"><span>Loading · DEFAULT</span><span>准备中</span></div>
+      <div class="sub">本地无缓冲层：轨道整体微光脉动表示准备/解码中，滑块弱化</div>
+      <div class="bar i-default" style="--p:12%">
+        <div class="track"><div class="played"></div><div class="shimmer"></div></div>
+        <div class="thumb" style="opacity:.55"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="cap"><span>Loading · HOVER</span><span>准备中</span></div>
+      <div class="sub">准备态悬停预览（允许跳过准备直接定位）</div>
+      <div class="bar i-hover show-bubble" style="--p:12%">
+        <div class="track"><div class="played"></div><div class="shimmer"></div></div>
+        <div class="thumb ring" style="opacity:.7"></div>
+        <div class="bubble">0:24</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="cap"><span>Loading · DRAGGING</span><span>准备中</span></div>
+      <div class="sub">准备态拖拽预览</div>
+      <div class="bar i-drag show-bubble" style="--p:80%">
+        <div class="track"><div class="played"></div><div class="shimmer"></div></div>
+        <div class="thumb ring" style="opacity:.7"></div>
+        <div class="bubble">3:12</div>
+      </div>
+    </div>
+
+    <!-- ENDED -->
+    <div class="card">
+      <div class="cap"><span>Ended · DEFAULT</span><span>已结束</span></div>
+      <div class="sub">进度满 100%，滑块变 outline 描边 + 重播字形，暗示重头播</div>
+      <div class="bar i-default" style="--p:100%">
+        <div class="track"><div class="played"></div></div>
+        <div class="thumb ended"><span class="glyph">↻</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="cap"><span>Ended · HOVER</span><span>已结束</span></div>
+      <div class="sub">结束态悬停预览（指向任意处即重头播）</div>
+      <div class="bar i-hover show-bubble" style="--p:100%">
+        <div class="track"><div class="played"></div></div>
+        <div class="thumb ended ring"><span class="glyph">↻</span></div>
+        <div class="bubble">3:59</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="cap"><span>Ended · DRAGGING</span><span>已结束</span></div>
+      <div class="sub">结束态拖拽，重播暗示保持</div>
+      <div class="bar i-drag show-bubble" style="--p:20%">
+        <div class="track"><div class="played"></div></div>
+        <div class="thumb ended ring"><span class="glyph">↻</span></div>
+        <div class="bubble">0:48</div>
+      </div>
+    </div>
+
+  </div>
+
+  <h2>响应式断点（令牌随可用宽度缩放）</h2>
+  <div class="frames">
+    <div class="device narrow">
+      <div class="name">窄屏（≤280dp，手表/折叠外屏）</div>
+      <div class="bar i-default" style="--p:40%">
+        <div class="track"><div class="played"></div></div>
+        <div class="thumb"></div>
+      </div>
+      <div class="hint">轨道下限 4dp / 滑块 16dp（夹紧，避免过粗）</div>
+    </div>
+    <div class="device normal">
+      <div class="name">常规（280–600dp，手机）</div>
+      <div class="bar i-default" style="--p:40%">
+        <div class="track"><div class="played"></div></div>
+        <div class="thumb"></div>
+      </div>
+      <div class="hint">默认令牌：轨道 6dp / 滑块 18dp</div>
+    </div>
+    <div class="device wide">
+      <div class="name">宽屏（≥600dp，平板/桌面/横屏）</div>
+      <div class="bar i-default" style="--p:40%">
+        <div class="track"><div class="played"></div></div>
+        <div class="thumb"></div>
+      </div>
+      <div class="hint">轨道上限 8dp / 滑块 22dp（hover/drag 再 +2/+4）</div>
+    </div>
+  </div>
+
+  <p class="lede" style="margin-top:24px">
+    确认要点：① 两层进度是否足够（本地无缓冲，已删除缓冲层）；② Loading 用轨道微光（非缓冲层）是否可接受；
+    ③ hover 气泡（桌面/触控笔）与 drag 气泡的区分；④ 各态滑块尺寸/光晕/结束态重播字形；
+    ⑤ 响应式三断点的令牌缩放。确认后我将按规格第 9 节落地到 <code>PlayerProgressBar</code> 与 <code>ProgressSection</code>。
+  </p>
+</body>
+</html>

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PureTone · 已落地：品牌实色滑块 + 品牌实色气泡</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+       background:#EDEAF4;color:#2c2a35;padding:26px 18px 60px}
+  h1{font-size:21px;margin:0 0 4px}
+  p.lede{font-size:13px;color:#5a5470;line-height:1.7;max-width:840px;margin:0 0 14px}
+  code{background:#e3def0;padding:1px 5px;border-radius:4px;font-size:12px}
+  .theme-light{--primary:#5E6AD2;--on-primary:#FFFFFF;--surface:#FAF9FF;--sch-hi:#E2E1ED;--on-surface:#1B1B21}
+  .theme-dark{--primary:#BFC2F3;--on-primary:#2A3170;--surface:#121218;--sch-hi:#34343E;--on-surface:#E4E1E9}
+  .panel{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:14px;margin-top:8px}
+  .card{background:#fff;border:1px solid #ddd6ea;border-radius:16px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .card h3{margin:0 0 2px;font-size:15px}
+  .card .tag{font-size:11px;color:#8a7fa0;margin-bottom:14px}
+
+  /* the bar */
+  .bar{position:relative;height:48px;width:100%}
+  .track{position:absolute;left:0;right:0;bottom:11px;height:6px;border-radius:999px;background:var(--sch-hi)}
+  .played{position:absolute;left:0;bottom:11px;height:6px;border-radius:999px;background:var(--primary);width:var(--p,45%)}
+  .halo{position:absolute;bottom:11px;left:var(--p,45%);width:34px;height:34px;transform:translate(-50%,50%);
+        border-radius:50%;background:var(--primary);opacity:.20}
+  .thumb{position:absolute;bottom:11px;left:var(--p,45%);width:18px;height:18px;transform:translate(-50%,50%);
+         border-radius:50%;background:var(--primary);box-shadow:0 1px 3px rgba(0,0,0,.35)}
+  .thumb.drag{box-shadow:0 3px 7px rgba(0,0,0,.4)}
+  .bub{position:absolute;left:var(--p,45%);bottom:34px;transform:translateX(-50%);
+       background:var(--primary);color:var(--on-primary);font-weight:500;font-size:12px;line-height:16px;
+       letter-spacing:.5px;padding:6px 10px;border-radius:12px;box-shadow:0 3px 8px rgba(0,0,0,.35);white-space:nowrap}
+  .bub::after{content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%);border:5px solid transparent;border-top-color:var(--primary)}
+  .swatch{background:var(--surface);border-radius:12px;padding:10px 14px}
+  .lbl{font-size:11px;color:#9a90ab;text-align:center;margin-top:10px}
+</style>
+</head>
+<body>
+  <h1>PureTone · 已落地视觉确认</h1>
+  <p class="lede">
+    选型 <b>B 品牌实心滑块 + B 品牌实色气泡</b> 已写入 <code>PlayerComposables.kt</code> 的 <code>PlayerProgressBar</code>，
+    并通过 <code>assembleDebug / detekt / lintDebug / check-file-size</code> 全部门禁。
+    下方为实际效果的浅/深双主题渲染：滑块 = <code>primary</code> 实心，拖拽时叠加 20% 光晕环、阴影 3→6dp；
+    气泡 = <code>primary</code> 底 / <code>onPrimary</code> 字、12dp 圆角、6dp 投影。
+  </p>
+
+  <div class="panel">
+    <div class="card">
+      <h3>浅色 · 默认（播放中）</h3>
+      <div class="tag">无气泡；品牌实心滑块静止于当前进度</div>
+      <div class="theme-light"><div class="swatch">
+        <div class="bar"><div class="track"></div><div class="played"></div><div class="thumb"></div></div>
+      </div></div>
+      <div class="lbl">滑块 = primary #5E6AD2 实心</div>
+    </div>
+
+    <div class="card">
+      <h3>浅色 · 拖拽中</h3>
+      <div class="tag">滑块加 20% 光晕环 + 加深阴影；气泡跟随显示时间</div>
+      <div class="theme-light"><div class="swatch">
+        <div class="bar" style="--p:68%">
+          <div class="track"></div><div class="played"></div>
+          <div class="halo"></div><div class="thumb drag"></div>
+          <div class="bub">2:31</div>
+        </div>
+      </div></div>
+      <div class="lbl">气泡 = primary 底 / 白字 / 12dp 圆角</div>
+    </div>
+
+    <div class="card">
+      <h3>深色 · 默认（播放中）</h3>
+      <div class="tag">primary 自动转为浅紫 #BFC2F3，仍清晰</div>
+      <div class="theme-dark"><div class="swatch">
+        <div class="bar"><div class="track"></div><div class="played"></div><div class="thumb"></div></div>
+      </div></div>
+      <div class="lbl">滑块 = primary #BFC2F3 实心</div>
+    </div>
+
+    <div class="card">
+      <h3>深色 · 拖拽中</h3>
+      <div class="tag">同浅色逻辑，onPrimary 转为深蓝 #2A3170 保证对比</div>
+      <div class="theme-dark"><div class="swatch">
+        <div class="bar" style="--p:30%">
+          <div class="track"></div><div class="played"></div>
+          <div class="halo"></div><div class="thumb drag"></div>
+          <div class="bub">1:06</div>
+        </div>
+      </div></div>
+      <div class="lbl">气泡字色 onPrimary = #2A3170</div>
+    </div>
+  </div>
+
+  <p class="lede" style="margin-top:22px">
+    确认无误即完成本次「滑块 + 气泡」重设计落地（仍为现有 <code>PlayerProgressBar</code>，未替换整条为 <code>PlaybackProgressBar</code>）。
+    若你也想推进完整重设计（播放状态 Loading/Playing/Paused/Ended、hover 预览、滑块尺寸随态缩放 18→24dp 等），可再确认，我按规格第 9 节继续。
+  </p>
+</body>
+</html>
