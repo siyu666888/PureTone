@@ -1,11 +1,13 @@
 package com.puretone.player.playback.cast
 
 import android.content.Context
+import android.net.wifi.WifiManager
 import android.util.Log
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.playback.ApeTranscoder
 import com.yinnho.upnpcast.DLNACast
 import com.yinnho.upnpcast.DLNACast.Device
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -129,6 +131,7 @@ sealed interface CastResult {
 @Singleton
 class DlnaCastManager @Inject constructor(
     private val apeTranscoder: ApeTranscoder,
+    @ApplicationContext private val appContext: Context,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -162,10 +165,13 @@ class DlnaCastManager @Inject constructor(
 
     /** 初始化底层引擎（Application.onCreate 调用一次；可重复调用，库内部幂等替换） */
     fun init(context: Context) {
+        CastNetworkLog.init(context.filesDir)
         try {
             DLNACast.init(context.applicationContext)
+            CastNetworkLog.log("DLNACast.init ok")
         } catch (e: Exception) {
             Log.w(TAG, "DLNACast.init failed", e)
+            CastNetworkLog.log("DLNACast.init failed：${e.javaClass.simpleName} ${e.message}")
         }
     }
 
@@ -183,16 +189,87 @@ class DlnaCastManager @Inject constructor(
     /**
      * SSDP 设备发现，返回局域网内渲染器列表（已映射为 [CastDevice]）。
      * 失败返回空列表并记录日志，不抛异常。
+     *
+     * ## 真机发现失败的头号根因：没有持有 MulticastLock
+     *
+     * Android 的 Wi-Fi 驱动为省电，会**丢弃没有被应用显式「订阅」的组播包**。
+     * SSDP 的 M-SEARCH 回包正是组播（239.255.255.250:1900），所以不持锁就收不到，
+     * 表现就是「永远发现不到设备」——模拟器上却往往正常（模拟器网络栈与真机不同，
+     * 没有这层省电过滤），这正是「模拟器能投、真机投不了」的由来。
+     *
+     * UPnPCast v1.3.0 库自身**没有**任何 `MulticastLock` 代码（已反编译核实），
+     * 权限虽然由库的清单合并进来了（`CHANGE_WIFI_MULTICAST_STATE`），
+     * 但「有权限」不等于「拿了锁」，必须由应用在搜索期间 `acquire()`。
+     * 本方法在库搜索的整个窗口内持锁，搜索结束立即释放。
+     *
+     * 另有两处真机常见坑，一并处理：
+     * - **端口 1900 被占用**：库内部 bind 失败会退化为随机端口，此时 M-SEARCH 仍会发出，
+     *   但回包可能对不上；我们把实际发现数落盘，便于判断是「没发出去」还是「回不来」。
+     * - **手机未连 Wi-Fi / 连的是访客网络（AP 隔离）**：这两设备天然发现不到，
+     *   且用户无从判断，故把网络快照落盘到诊断报告。
      */
-    suspend fun searchDevices(timeoutMs: Long = 5000): List<CastDevice> =
-        try {
-            DLNACast.search(timeout = timeoutMs)
+    suspend fun searchDevices(timeoutMs: Long = 5000): List<CastDevice> {
+        CastNetworkLog.log("=== 开始设备发现 ===")
+        CastNetworkLog.log(CastNetworkLog.snapshot(appContext).trimEnd())
+
+        val lock = acquireMulticastLock()
+        val started = System.currentTimeMillis()
+        return try {
+            val raw = DLNACast.search(timeout = timeoutMs)
+            val elapsed = System.currentTimeMillis() - started
+            val result = raw
                 .also { lastDevices = it }
                 .map { CastDevice(it.id, it.name, it.address, it.isTV) }
+            CastNetworkLog.logSearch("ssdp", timeoutMs, result.size, elapsed)
+            CastNetworkLog.logDevices(result)
+            if (result.isEmpty()) {
+                CastNetworkLog.log(
+                    "空结果：请确认手机与投屏设备处于同一 Wi-Fi（非访客网络）、" +
+                        "手机未开启 VPN/移动数据优先、投屏设备已开机并允许被发现"
+                )
+            }
+            result
         } catch (e: Exception) {
             Log.e(TAG, "DLNA search failed", e)
+            CastNetworkLog.log("search 异常：${e.javaClass.simpleName} ${e.message}")
             emptyList()
+        } finally {
+            releaseMulticastLock(lock)
+            CastNetworkLog.log("=== 设备发现结束（耗时 ${System.currentTimeMillis() - started}ms）===")
         }
+    }
+
+    /**
+     * 取得组播锁（Wi-Fi 省电过滤组播包的直接对策）。
+     *
+     * 锁是**引用计数**的：每 acquire 一次必须对应一次 release，否则锁会一直持有、
+     * 白白耗电。异常路径（拿不到锁）不能影响搜索本身——搜不到只是「没设备」，
+     * 不能变成「崩溃」，故全部包在 runCatching 里。
+     */
+    private fun acquireMulticastLock(): WifiManager.MulticastLock? = runCatching {
+        val wm = appContext.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        if (wm == null) {
+            CastNetworkLog.log("multicast_lock=unavailable（无 WifiManager）")
+            return null
+        }
+        // 注：WifiManager.isMulticastLockSupported() 是 @hide 的非公开 API，不能用；
+        // createMulticastLock 在所有 Android 设备上都可用，无需先探测支持性。
+        wm.createMulticastLock(CAST_LOCK_TAG).apply {
+            setReferenceCounted(true)
+            acquire()
+        }
+    }.onFailure {
+        CastNetworkLog.log("multicast_lock=error ${it.message}")
+    }.getOrNull()
+
+    private fun releaseMulticastLock(lock: WifiManager.MulticastLock?) {
+        runCatching {
+            if (lock != null && lock.isHeld) {
+                lock.release()
+                CastNetworkLog.log("multicast_lock=released")
+            }
+        }.onFailure { CastNetworkLog.log("multicast_lock=release_error ${it.message}") }
+    }
 
     /** 选定投屏设备（按 id 反查底层 [Device]） */
     fun selectDevice(device: CastDevice) {
@@ -398,5 +475,8 @@ class DlnaCastManager @Inject constructor(
 
     companion object {
         private const val TAG = "DlnaCastManager"
+
+        /** 组播锁标签（系统设置里可按此查到本应用的网络使用情况） */
+        private const val CAST_LOCK_TAG = "PureTone-DLNA"
     }
 }

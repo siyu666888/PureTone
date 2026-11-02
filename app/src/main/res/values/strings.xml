@@ -630,6 +630,10 @@
     <string name="pt_diag_022" formatted="false">(无播放事件记录)</string>
     <!-- 播放事件记录读取异常时的占位 -->
     <string name="pt_diag_023" formatted="false">(播放事件读取失败)</string>
+    <!-- 投屏网络诊断段落标题（%1$s 为日志文件名） -->
+    <string name="pt_diag_024" formatted="true">---- 投屏网络诊断 (%1$s) ----</string>
+    <!-- 投屏网络诊断为空时的占位 -->
+    <string name="pt_diag_025" formatted="false">(无投屏网络诊断记录；请先打开投屏设备选择界面再导出本报告)</string>
     <!-- 智能歌单 功能入口图标描述 -->
     <string name="pt_smart_playlist_000" formatted="false">智能歌单</string>
     <!-- 智能歌单分区标题右侧标签：表示由系统自动聚合生成 -->

@@ -20,21 +20,39 @@ import javax.inject.Singleton
  * - 优先 syncedLyrics（逐行同步）；仅 plainLyrics 时按歌曲时长均排为伪 LRC；
  * - 解析用系统 org.json，无额外依赖；
  * - 全程 IO 线程，超时取自 [NetworkConfig]；任何异常都吞掉返回 null（离线 / 限流时优雅降级）。
+ *
+ * ## 定位
+ *
+ * 本类现在是 [MultiChannelLyricsProvider] 内部的**一个渠道**，不再直接对外暴露。
+ * LRCLIB 的优势是欧美流行乐的逐行同步歌词质量高、接口稳定；不足是华语/日语覆盖不足
+ * （那部分由 AMLL 渠道补）。故在聚合器里排在 AMLL 之后。
  */
 @Singleton
 class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
 
     override val sourceName: String = "LRCLIB"
 
+    /** 命中方式（供聚合器判定渠道） */
+    enum class Match { EXACT, SEARCH }
+
+    /** 最近一次命中的方式；未命中时为 null */
+    @Volatile
+    var lastMatch: Match? = null
+        private set
+
     override suspend fun fetch(artist: String, title: String, durationMs: Long): String? =
         withContext(Dispatchers.IO) {
+            lastMatch = null
             val a = artist.trim().takeIf { it.isNotBlank() && it != "<unknown>" && it != "未知艺术家" }.orEmpty()
             val t = title.trim()
             if (t.isBlank()) return@withContext null
 
             // 1) 精确匹配
             val exact = runCatching { getJson(buildGetUrl(t, a)) }.getOrNull()
-            pickFrom(exact, durationMs)?.let { return@withContext it }
+            pickFrom(exact, durationMs)?.let {
+                lastMatch = Match.EXACT
+                return@withContext it
+            }
 
             // 2) 搜索兜底：先找同步，再找纯文本
             val arr = runCatching { getJsonArray(buildSearchUrl(t, a)) }.getOrNull()
@@ -43,9 +61,15 @@ class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
                     for (i in 0 until arr.length()) {
                         val obj = arr.optJSONObject(i) ?: continue
                         val synced = obj.optLyrics("syncedLyrics")
-                        if (pass == 0 && synced != null) return@withContext synced
+                        if (pass == 0 && synced != null) {
+                            lastMatch = Match.SEARCH
+                            return@withContext synced
+                        }
                         val plain = obj.optLyrics("plainLyrics")
-                        if (pass == 1 && plain != null) return@withContext plainToLrc(plain, durationMs)
+                        if (pass == 1 && plain != null) {
+                            lastMatch = Match.SEARCH
+                            return@withContext plainToLrc(plain, durationMs)
+                        }
                     }
                 }
             }

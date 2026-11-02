@@ -34,7 +34,11 @@ class DownloadLyricsUseCase @Inject constructor(
     ): Outcome {
         if (audioPath.isBlank()) return Outcome.SAVE_FAILED
         if (!gate.isEnabled()) return Outcome.DISABLED
-        val lrc = runCatching { lyricsProvider.fetch(artist, title, durationMs) }.getOrNull()
+        // 传 audioPath：多渠道聚合器会先查本地（同目录 .lrc / 内嵌歌词），
+        // 本地命中就不必联网——既快又省流量。
+        val lrc = runCatching {
+            lyricsProvider.fetchWithPath(audioPath, artist, title, durationMs)
+        }.getOrNull()
         if (lrc.isNullOrBlank()) return Outcome.NO_LYRICS
         val ok = runCatching { withContext(Dispatchers.IO) { lyricsStore.save(audioPath, lrc) } }
             .getOrDefault(false)

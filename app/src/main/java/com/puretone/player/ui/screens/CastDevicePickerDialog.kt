@@ -38,6 +38,7 @@ import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.playback.cast.CastDevice
+import com.puretone.player.playback.cast.CastNetworkLog
 import com.puretone.player.ui.PlayerViewModel
 import kotlinx.coroutines.launch
 
@@ -98,10 +99,12 @@ fun CastDevicePickerDialog(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasPermission = granted
+        CastNetworkLog.logPermission(context, neededPermission, granted)
         if (granted) doSearch() else permissionDenied = true
     }
 
     LaunchedEffect(Unit) {
+        CastNetworkLog.logPermission(context, neededPermission, hasPermission)
         if (hasPermission) doSearch() else permissionLauncher.launch(neededPermission)
     }
 

@@ -20,4 +20,20 @@ interface LyricsProvider {
      * @param durationMs 歌曲时长（毫秒），用于纯文本歌词均排；<=0 时按每行约 3.5s 兜底
      */
     suspend fun fetch(artist: String, title: String, durationMs: Long): String?
+
+    /**
+     * 带音频路径的取词（可选增强）。
+     *
+     * 实现了本地歌词渠道（歌曲同目录 `.lrc` / 音频内嵌歌词）的实现应覆写本方法，
+     * 以便在联网之前先命中本地歌词——本地有就无需联网，既快又省流量。
+     * 默认实现退化为 [fetch]，保证既有实现无需改动即可工作。
+     *
+     * @param audioPath 音频绝对路径
+     */
+    suspend fun fetchWithPath(
+        audioPath: String?,
+        artist: String,
+        title: String,
+        durationMs: Long
+    ): String? = fetch(artist, title, durationMs)
 }

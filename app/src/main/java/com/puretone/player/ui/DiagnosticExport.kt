@@ -9,6 +9,7 @@ import com.puretone.player.BuildConfig
 import com.puretone.player.PureToneApplication
 import com.puretone.player.R
 import com.puretone.player.playback.PlaybackEventLog
+import com.puretone.player.playback.cast.CastNetworkLog
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -62,8 +63,18 @@ object DiagnosticExport {
         // 只有这条时间线能。判读方法见 PlaybackEventLog 类注释。
         sb.appendLine(context.getString(R.string.pt_diag_021, PlaybackEventLog.FILE_NAME))
         sb.appendLine(readPlaybackEvents(context))
+        sb.appendLine()
+        // 投屏网络诊断：回答「为什么真机发现不到设备」。
+        // 关键事实（网络类型/本机 IPv4/组播锁/发现数）全在这一段里，
+        // 没有它就只能靠猜。判读方法见 CastNetworkLog 类注释。
+        sb.appendLine(context.getString(R.string.pt_diag_024, CastNetworkLog.FILE_NAME))
+        sb.appendLine(readCastNetwork(context))
         return sb.toString()
     }
+
+    private fun readCastNetwork(context: Context): String = runCatching {
+        CastNetworkLog.read(context).orEmpty().ifBlank { context.getString(R.string.pt_diag_025) }
+    }.getOrDefault(context.getString(R.string.pt_diag_025))
 
     private fun readPlaybackEvents(context: Context): String = runCatching {
         PlaybackEventLog.read().ifBlank { context.getString(R.string.pt_diag_022) }

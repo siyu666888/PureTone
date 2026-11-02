@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PureTone · 默认海报设计方案预览</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+       background:#EDEAF4;color:#2c2a35;padding:26px 18px 70px}
+  h1{font-size:23px;margin:0 0 4px}
+  h2{font-size:17px;margin:34px 0 6px;border-left:5px solid #5E6AD2;padding-left:9px}
+  h3{font-size:14px;margin:0 0 6px}
+  p.lede{font-size:13px;color:#5a5470;line-height:1.75;max-width:920px;margin:0 0 8px}
+  code{background:#e3def0;padding:1px 5px;border-radius:4px;font-size:12px}
+  .hint{font-size:12px;color:#8a7fa0;margin:4px 0 0}
+
+  .theme-light{--primary:#5E6AD2;--primary-dark:#3A449E;--tertiary:#7A56C6;
+    --surface:#FAF9FF;--on-surface:#1B1B21;--on-surface-v:#47464F;--outline:#C9C7D0;}
+  .theme-dark{--primary:#BFC2F3;--primary-dark:#8A93E4;--tertiary:#D8C2F5;
+    --surface:#121218;--on-surface:#E4E1E9;--on-surface-v:#C9C7D0;--outline:#47464F;}
+  .theme-black{--primary:#BFC2F3;--primary-dark:#8A93E4;--tertiary:#D8C2F5;
+    --surface:#000000;--on-surface:#E4E1E9;--on-surface-v:#C9C7D0;--outline:#47464F;}
+
+  .panel{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px;margin-top:12px}
+  .opt{background:#fff;border:1px solid #ddd6ea;border-radius:16px;padding:14px 16px 16px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .opt h3{color:#3a3560}
+  .opt .tag{font-size:11px;color:#8a7fa0;margin-bottom:10px;line-height:1.6}
+  .opt.reco{border:2px solid #5E6AD2;box-shadow:0 4px 14px rgba(94,106,210,.18)}
+  .opt.reco .tag{color:#5E6AD2;font-weight:700}
+
+  .stage{border-radius:12px;padding:16px 12px;margin:8px 0 4px;display:flex;gap:14px;align-items:flex-end;justify-content:center;flex-wrap:wrap}
+  .stage.tl{background:#FAF9FF}
+  .stage.td{background:#121218}
+  .stage.tb{background:#000}
+  .cell{text-align:center}
+  .cell .lbl{font-size:10px;margin-top:6px;opacity:.62}
+
+  /* ---- 默认海报 ---- */
+  .poster{position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,var(--primary) 0%,var(--primary-dark) 100%)}
+  .poster.fixed{background:linear-gradient(135deg,#5E6AD2 0%,#3A449E 100%)}
+  .poster .rings{position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,.20)}
+  .poster .r2{width:72%;height:72%}
+  .poster .r1{width:50%;height:50%;border-color:rgba(255,255,255,.13)}
+  .poster .note{color:#fff;font-weight:400;line-height:1;user-select:none}
+  .poster .wave{position:absolute;left:14%;right:14%;bottom:16%;display:flex;gap:7%;align-items:flex-end;justify-content:center;height:26%}
+  .poster .wave i{display:block;width:9%;background:rgba(255,255,255,.55);border-radius:2px}
+  .poster .mono{color:#fff;font-weight:700;letter-spacing:.5px;user-select:none}
+
+  /* 旧样式（现状） */
+  .old{position:relative;background:transparent;display:flex;align-items:center;justify-content:center}
+  .old .g{opacity:.6;font-size:15px;color:#47464F}
+  .stage.td .old .g,.stage.tb .old .g{color:#C9C7D0}
+
+  .circ{border-radius:50%!important}
+  .sq8{border-radius:8px}
+  .sq10{border-radius:10px}
+  .sq12{border-radius:12px}
+
+  table{width:100%;border-collapse:collapse;font-size:12px;margin:10px 0}
+  td,th{border-top:1px solid #eceaf2;padding:5px 6px;vertical-align:top;text-align:left}
+  th{color:#6f6a86;font-size:11px;background:#f7f6fc}
+  td:first-child{color:#7a7390;font-weight:600;white-space:nowrap}
+  .tag-good{color:#2e7d32;font-weight:700}
+  .tag-mid{color:#b26a00;font-weight:700}
+  .tag-bad{color:#c62828;font-weight:700}
+  .badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:999px;background:#e3def0;color:#5a5470;margin-left:5px}
+  .rec-badge{background:#5E6AD2;color:#fff}
+  .note-block{background:#fff;border:1px solid #ddd6ea;border-radius:14px;padding:14px 16px;margin-top:12px;font-size:12.5px;line-height:1.8}
+  .note-block h3{margin-bottom:4px}
+</style>
+</head>
+<body>
+
+<h1>PureTone · 默认海报设计方案预览</h1>
+<p class="lede">
+  目标：歌曲 / 专辑 / 歌手 / <b>歌单</b> 在<b>没有封面</b>时，显示一张<b>设计过的默认海报</b>，而不是现在这个孤零零的灰色小图标。
+  本页只做<b>方案比选</b>，确认后才动代码。
+</p>
+<p class="hint">
+  预览按 1dp ≈ 1px 真实尺寸渲染（72 的方块即 72dp），可据此判断细节在真机上是否糊。
+  每格下方的数字是<b>dp 尺寸</b>。
+</p>
+
+<!-- ============ 现状 ============ -->
+<h2>一、现状：11 个落点全是「裸图标」</h2>
+<p class="lede">
+  全量排查后确认，无封面时的回退共有 11 处（其中播放页大封面一处此前已做过设计，见下文对比）。
+  典型观感是<b>灰色小音符悬在空白里</b>，在大卡片（专辑格、歌单头）上尤其像「加载失败」。
+</p>
+<div class="panel">
+  <div class="opt">
+    <h3>现状实样</h3>
+    <div class="tag">浅色 / 深色 两套主题下的裸图标</div>
+    <div class="stage tl">
+      <div class="cell"><div class="old sq8" style="width:48px;height:48px"><span class="g">♪</span></div><div class="lbl">48dp 歌曲行</div></div>
+      <div class="cell"><div class="old sq10" style="width:48px;height:48px"><span class="g">♪</span></div><div class="lbl">48dp 队列</div></div>
+      <div class="cell"><div class="old sq8" style="width:44px;height:44px"><span class="g">♪</span></div><div class="lbl">44dp 队列预览</div></div>
+      <div class="cell"><div class="old sq12" style="width:72px;height:72px"><span class="g">♪</span></div><div class="lbl">72dp 歌单头</div></div>
+    </div>
+    <div class="stage td">
+      <div class="cell"><div class="old sq8" style="width:48px;height:48px"><span class="g">♪</span></div><div class="lbl">48dp 歌曲行</div></div>
+      <div class="cell"><div class="old sq12" style="width:72px;height:72px"><span class="g">♪</span></div><div class="lbl">72dp 歌单头</div></div>
+    </div>
+    <table>
+      <tr><td>问题</td><td>没有底色 → 与「有封面」的卡片视觉断裂；大尺寸时空白占比过高</td></tr>
+      <tr><td>问题</td><td>图标随主题变灰 → 缺少品牌辨识，不像「设计如此」</td></tr>
+      <tr><td>问题</td><td>歌单详情头永远无封面（<code>coverUri</code> 写死 null），现状是 Folder 图标</td></tr>
+    </table>
+  </div>
+
+  <div class="opt reco">
+    <h3>播放页大封面（已有的成熟设计）</h3>
+    <div class="tag">P2-4 已落地：品牌渐变盘体 + 黑胶纹路 + ♪，可作视觉母版</div>
+    <div class="stage tl">
+      <div class="cell"><div class="poster" style="width:120px;height:120px;border-radius:50%">
+        <div class="rings r2"></div><div class="rings r1"></div><span class="note" style="font-size:34px">♪</span>
+      </div><div class="lbl">唱片内圆封面</div></div>
+    </div>
+    <div class="stage td">
+      <div class="cell"><div class="poster" style="width:120px;height:120px;border-radius:50%">
+        <div class="rings r2"></div><div class="rings r1"></div><span class="note" style="font-size:34px">♪</span>
+      </div><div class="lbl">唱片内圆封面</div></div>
+    </div>
+    <table>
+      <tr><td>优点</td><td>「品牌渐变 + 同心圆 + ♪」已被真机验证观感良好</td></tr>
+      <tr><td>优点</td><td>天然有底色，任何尺寸都不显空</td></tr>
+      <tr><td>局限</td><td>同心圆在 <b>≤48dp</b> 会糊成一团灰边 —— 需按尺寸分级</td></tr>
+      <tr><td>局限</td><td>深色主题下渐变偏浅（<code>primary=#BFC2F3</code>），与纯黑主题不匹配</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ============ 候选方案 ============ -->
+<h2>二、四个候选图案方案</h2>
+<p class="lede">
+  四案共用同一套「品牌紫渐变底 + 白色前景」语言，差别只在<b>前景图案</b>与<b>配色是否随主题</b>。
+  每案都在 <b>72dp 大卡片 / 48dp 中格 / 44dp 小格 / 圆形</b> 四种真实尺寸下渲染。
+</p>
+
+<div class="panel">
+
+  <!-- 方案 A -->
+  <div class="opt">
+    <h3>方案 A · 素色渐变 + 音符</h3>
+    <div class="tag">最简：只有渐变底和一枚居中的 ♪，无任何纹理</div>
+    <div class="stage tl">
+      <div class="cell"><div class="poster sq12" style="width:72px;height:72px"><span class="note" style="font-size:26px">♪</span></div><div class="lbl">72</div></div>
+      <div class="cell"><div class="poster sq8" style="width:48px;height:48px"><span class="note" style="font-size:19px">♪</span></div><div class="lbl">48</div></div>
+      <div class="cell"><div class="poster sq8" style="width:44px;height:44px"><span class="note" style="font-size:17px">♪</span></div><div class="lbl">44</div></div>
+      <div class="cell"><div class="poster circ" style="width:48px;height:48px"><span class="note" style="font-size:19px">♪</span></div><div class="lbl">48 圆</div></div>
+    </div>
+    <div class="stage td">
+      <div class="cell"><div class="poster sq12" style="width:72px;height:72px"><span class="note" style="font-size:26px">♪</span></div><div class="lbl">72</div></div>
+      <div class="cell"><div class="poster sq8" style="width:48px;height:48px"><span class="note" style="font-size:19px">♪</span></div><div class="lbl">48</div></div>
+    </div>
+    <table>
+      <tr><td>清晰度</td><td><span class="tag-good">优</span> 任何尺寸都不糊（无细纹理）</td></tr>
+      <tr><td>信息量</td><td><span class="tag-mid">中</span> 只有音符，无区分度</td></tr>
+      <tr><td>工作量</td><td><span class="tag-good">最小</span> 约 40 行</td></tr>
+    </table>
+  </div>
+
+  <!-- 方案 B -->
+  <div class="opt reco">
+    <h3>方案 B · 黑胶纹 + 音符（与播放页同源）<span class="badge rec-badge">推荐</span></h3>
+    <div class="tag">沿用播放页已有的「渐变 + 同心圆 + ♪」，大尺寸显纹路、小尺寸自动退化</div>
+    <div class="stage tl">
+      <div class="cell"><div class="poster sq12" style="width:72px;height:72px"><div class="rings r2"></div><div class="rings r1"></div><span class="note" style="font-size:24px">♪</span></div><div class="lbl">72 带纹</div></div>
+      <div class="cell"><div class="poster sq8" style="width:48px;height:48px"><span class="note" style="font-size:19px">♪</span></div><div class="lbl">48 退化</div></div>
+      <div class="cell"><div class="poster sq8" style="width:44px;height:44px"><span class="note" style="font-size:17px">♪</span></div><div class="lbl">44 退化</div></div>
+      <div class="cell"><div class="poster circ" style="width:48px;height:48px"><span class="note" style="font-size:19px">♪</span></div><div class="lbl">48 圆</div></div>
+    </div>
+    <div class="stage td">
+      <div class="cell"><div class="poster sq12" style="width:72px;height:72px"><div class="rings r2"></div><div class="rings r1"></div><span class="note" style="font-size:24px">♪</span></div><div class="lbl">72 带纹</div></div>
+      <div class="cell"><div class="poster sq8" style="width:48px;height:48px"><span class="note" style="font-size:19px">♪</span></div><div class="lbl">48 退化</div></div>
+    </div>
+    <table>
+      <tr><td>清晰度</td><td><span class="tag-good">优</span> 按 dp 分级：≥64dp 画双环，&lt;64dp 只留渐变+音符</td></tr>
+      <tr><td>信息量</td><td><span class="tag-good">好</span> 唱片语义，和「音乐播放器」强关联</td></tr>
+      <tr><td>一致性</td><td><span class="tag-good">最高</span> 与播放页现有大封面完全同源</td></tr>
+      <tr><td>工作量</td><td><span class="tag-mid">中</span> 约 90 行 + 尺寸分级常量</td></tr>
+    </table>
+  </div>
+
+  <!-- 方案 C -->
+  <div class="opt">
+    <h3>方案 C · 渐变 + 声波柱</h3>
+    <div class="tag">底部一排高低不等的白色声波柱，偏「音频可视化」气质</div>
+    <div class="stage tl">
+      <div class="cell"><div class="poster sq12" style="width:72px;height:72px">
+        <div class="wave"><i style="height:40%"></i><i style="height:85%"></i><i style="height:60%"></i><i style="height:100%"></i><i style="height:45%"></i></div>
+      </div><div class="lbl">72</div></div>
+      <div class="cell"><div class="poster sq8" style="width:48px;height:48px">
+        <div class="wave"><i style="height:40%"></i><i style="height:90%"></i><i style="height:55%"></i><i style="height:100%"></i></div>
+      </div><div class="lbl">48</div></div>
+      <div class="cell"><div class="poster sq8" style="width:44px;height:44px">
+        <div class="wave"><i style="height:45%"></i><i style="height:95%"></i><i style="height:100%"></i><i style="height:50%"></i></div>
+      </div><div class="lbl">44</div></div>
+      <div class="cell"><div class="poster circ" style="width:48px;height:48px">
+        <div class="wave"><i style="height:40%"></i><i style="height:90%"></i><i style="height:55%"></i><i style="height:100%"></i></div>
+      </div><div class="lbl">48 圆</div></div>
+    </div>
+    <div class="stage td">
+      <div class="cell"><div class="poster sq12" style="width:72px;height:72px">
+        <div class="wave"><i style="height:40%"></i><i style="height:85%"></i><i style="height:60%"></i><i style="height:100%"></i><i style="height:45%"></i></div>
+      </div><div class="lbl">72</div></div>
+      <div class="cell"><div class="poster sq8" style="width:48px;height:48px">
+        <div class="wave"><i style="height:40%"></i><i style="height:90%"></i><i style="height:55%"></i><i style="height:100%"></i></div>
+      </div><div class="lbl">48</div></div>
+    </div>
+    <table>
+      <tr><td>清晰度</td><td><span class="tag-mid">中</span> 48dp 下柱子仅剩 3~4 根、边缘发虚</td></tr>
+      <tr><td>信息量</td><td><span class="tag-good">好</span> 视觉活泼，列表里辨识度高</td></tr>
+      <tr><td>风险</td><td><span class="tag-mid">中</span> 与播放页黑胶纹风格不统一，像两个产品</td></tr>
+    </table>
+  </div>
+
+  <!-- 方案 D -->
+  <div class="opt">
+    <h3>方案 D · 首字色块（Spotify 式）</h3>
+    <div class="tag">按歌名/歌手首字符生成稳定色 + 白色首字，无图标</div>
+    <div class="stage tl">
+      <div class="cell"><div class="poster sq12" style="width:72px;height:72px;background:linear-gradient(135deg,#D2694A,#A8443A)"><span class="mono" style="font-size:30px">晴</span></div><div class="lbl">72 歌名首字</div></div>
+      <div class="cell"><div class="poster sq8" style="width:48px;height:48px;background:linear-gradient(135deg,#3F8E7C,#2C6A5C)"><span class="mono" style="font-size:20px">W</span></div><div class="lbl">48</div></div>
+      <div class="cell"><div class="poster sq8" style="width:44px;height:44px;background:linear-gradient(135deg,#C2874A,#8E5F2E)"><span class="mono" style="font-size:19px">夜</span></div><div class="lbl">44</div></div>
+      <div class="cell"><div class="poster circ" style="width:48px;height:48px;background:linear-gradient(135deg,#6A5ACD,#463A9E)"><span class="mono" style="font-size:20px">周</span></div><div class="lbl">48 圆</div></div>
+    </div>
+    <div class="stage td">
+      <div class="cell"><div class="poster sq12" style="width:72px;height:72px;background:linear-gradient(135deg,#D2694A,#A8443A)"><span class="mono" style="font-size:30px">晴</span></div><div class="lbl">72</div></div>
+      <div class="cell"><div class="poster sq8" style="width:48px;height:48px;background:linear-gradient(135deg,#3F8E7C,#2C6A5C)"><span class="mono" style="font-size:20px">W</span></div><div class="lbl">48</div></div>
+    </div>
+    <table>
+      <tr><td>清晰度</td><td><span class="tag-good">优</span> 单字最清晰，小尺寸也不糊</td></tr>
+      <tr><td>信息量</td><td><span class="tag-good">最高</span> 一眼能认出是哪首歌</td></tr>
+      <tr><td>风险</td><td><span class="tag-bad">高</span> 脱离品牌紫体系，列表五颜六色；且需要引入哈希取色逻辑</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ============ 配色 ============ -->
+<h2>三、配色：跟随主题 vs 固定品牌色</h2>
+<p class="lede">
+  方案 B/C/D 的底色渐变有两条路子。<b>推荐「固定品牌色」</b>：默认海报是品牌资产，应当在浅色 / 深色 / 纯黑三套主题下<b>长得一样</b>，
+  否则同一首歌在不同主题下是不同的「封面」，用户会以为换歌了。
+</p>
+<div class="panel">
+  <div class="opt">
+    <h3>配色 ① 跟随主题（现状逻辑）</h3>
+    <div class="tag">用 <code>colorScheme.primary → tertiary</code>；深色主题渐变偏浅</div>
+    <div class="stage tl">
+      <div class="cell"><div class="poster sq12" style="width:72px;height:72px"><span class="note" style="font-size:26px">♪</span></div><div class="lbl">浅色</div></div>
+      <div class="cell"><div class="poster sq12" style="width:72px;height:72px;background:linear-gradient(135deg,#BFC2F3,#D8C2F5)"><span class="note" style="font-size:26px">♪</span></div><div class="lbl">深色</div></div>
+      <div class="cell"><div class="poster sq12" style="width:72px;height:72px;background:linear-gradient(135deg,#BFC2F3,#D8C2F5)"><span class="note" style="font-size:26px">♪</span></div><div class="lbl">纯黑</div></div>
+    </div>
+    <table>
+      <tr><td>优点</td><td>与播放页现状完全一致，零额外决策</td></tr>
+      <tr><td>缺点</td><td>深色下渐变近乎白色 <code>#BFC2F3</code>，像「高亮卡片」而不是海报</td></tr>
+    </table>
+  </div>
+
+  <div class="opt reco">
+    <h3>配色 ② 固定品牌紫渐变 <span class="badge rec-badge">推荐</span></h3>
+    <div class="tag">恒为 <code>#5E6AD2 → #3A449E</code>，三套主题下完全一致</div>
+    <div class="stage tl">
+      <div class="cell"><div class="poster fixed sq12" style="width:72px;height:72px"><span class="note" style="font-size:26px">♪</span></div><div class="lbl">浅色</div></div>
+      <div class="cell"><div class="poster fixed sq12" style="width:72px;height:72px"><span class="note" style="font-size:26px">♪</span></div><div class="lbl">深色</div></div>
+      <div class="cell"><div class="poster fixed sq12" style="width:72px;height:72px"><span class="note" style="font-size:26px">♪</span></div><div class="lbl">纯黑</div></div>
+    </div>
+    <table>
+      <tr><td>优点</td><td>品牌资产恒定；深色/纯黑下仍是「品牌紫海报」，不刺眼</td></tr>
+      <tr><td>代价</td><td>播放页大封面需一并改用固定色（否则两处不一致）</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ============ 落点 ============ -->
+<h2>四、落点清单（确认后逐处替换）</h2>
+<div class="note-block">
+  <h3>11 个落点 · 分 3 类</h3>
+  <table>
+    <tr><th>落点</th><th>文件:行</th><th>尺寸</th><th>形状</th><th>现状</th><th>改后</th></tr>
+    <tr><td>队列项封面</td><td>PlayerComposables.kt:157</td><td>48dp</td><td>圆角 8</td><td>MusicNote 图标</td><td>默认海报（退化档）</td></tr>
+    <tr><td>队列预览行</td><td>PlayerComposables.kt:846</td><td>48dp</td><td>圆角 10</td><td>MusicNote 图标</td><td>默认海报（退化档）</td></tr>
+    <tr><td>歌曲列表</td><td>BrowseScreen.kt:700</td><td>48dp</td><td>圆角 8</td><td>MusicNote 图标</td><td>默认海报（退化档）</td></tr>
+    <tr><td>专辑卡</td><td>BrowseScreen.kt:935</td><td>1:1 大</td><td>圆角 10</td><td>MusicNote 36dp</td><td>默认海报（带纹档）</td></tr>
+    <tr><td>歌手列表</td><td>BrowseScreen.kt:995</td><td>48dp</td><td>圆形</td><td>Person 图标</td><td>默认海报（退化档 · 圆）</td></tr>
+    <tr><td>专辑详情头</td><td>GroupDetailScreen.kt:236</td><td>72dp</td><td>圆角 12</td><td>MusicNote 32dp</td><td>默认海报（带纹档）</td></tr>
+    <tr><td>歌手详情头</td><td>GroupDetailScreen.kt:253</td><td>72dp</td><td>圆形</td><td>Person 32dp</td><td>默认海报（带纹档 · 圆）</td></tr>
+    <tr><td><b>歌单详情头</b></td><td>GroupDetailScreen.kt:269</td><td>72dp</td><td>圆角 12</td><td>Folder 图标</td><td>默认海报（带纹档）</td></tr>
+    <tr><td>播放页队列预览</td><td>PlayerScreen.kt:1044</td><td>44dp</td><td>圆角 8</td><td>MusicNote 图标</td><td>默认海报（退化档）</td></tr>
+    <tr><td>歌曲信息弹窗</td><td>SongInfoSheet.kt:150</td><td>64dp</td><td>圆角 10</td><td>MusicNote 图标</td><td>默认海报（带纹档）</td></tr>
+    <tr><td>播放页唱片封面</td><td>PlayerScreen.kt:828</td><td>唱片内圆</td><td>圆形</td><td>已是渐变+黑胶纹+♪</td><td><b>改用同一组件</b>（配色统一为固定品牌色）</td></tr>
+  </table>
+  <p style="margin:10px 0 0">
+    <b>歌单场景说明：</b>歌单详情头走的 <code>else</code> 分支，<code>coverUri</code> 恒为 <code>null</code>（歌单本身无封面字段），
+    现状显示的是 <code>Icons.Rounded.Folder</code>；「我的」页歌单卡片（MeScreen.kt:186）则<b>连封面位都没有</b>，只有文字标题。
+    建议：歌单详情头用默认海报 + <b>歌单符号（列表/唱片）</b>而非纯音符，以区分「这是歌单不是单曲」；
+    「我的」页歌单卡片<b>本次不动</b>（加封面位属新功能，超出「默认海报」范围，需另行确认）。
+  </p>
+</div>
+
+<h2>五、实施要点（确认后执行）</h2>
+<div class="note-block">
+  <ol style="margin:4px 0 0;padding-left:20px">
+    <li><b>新增组件</b> <code>ui/components/DefaultCover.kt</code>：<code>DefaultCover(modifier, shape, glyph)</code>，内部按 <code>LocalDensity</code> 取 dp 判断档位（≥64dp 画双环，否则只画渐变+音符）。</li>
+    <li><b>档位常量</b>：<code>DefaultCover.RICH_MIN_SIZE_DP = 64f</code>；≥64dp → 渐变 + 双同心环 + ♪；&lt;64dp → 渐变 + ♪（无环）。</li>
+    <li><b>配色</b>：固定 <code>PureToneBrand.Primary(#5E6AD2) → PrimaryDark(#3A449E)</code> 135° 线性渐变；前景白色。</li>
+    <li><b>性能</b>：渐变用 <code>Brush.linearGradient</code>（不分配位图）；圆环用 <code>Canvas</code> 的 <code>drawCircle(stroke)</code>；禁止 <code>remember</code> 缓存 Bitmap。</li>
+    <li><b>无障碍</b>：默认海报与真封面同为装饰，<code>contentDescription = null</code>，与现状一致（不改 TalkBack 朗读）。</li>
+    <li><b>小部件</b>：<code>PureToneWidget.kt</code> 的 <code>CoverArt</code> 用 Glance <code>Image</code>，无封面时当前已走独立分支（<code>ImageProvider(resId)</code>），<b>本次不动</b>（跨进程 RemoteViews 不能用 Compose 绘制），仅在文档中记录该差异。</li>
+    <li><b>门禁</b>：新增文件需过 detekt（<code>MaxLineLength</code> 130、<code>LongParameterList</code>）、lint、<code>check-file-size.sh</code>（新增文件远低于 1200 行）；新增字符串（如有）走 <code>pt_</code> 前缀并写进 <code>strings.xml</code>。</li>
+  </ol>
+</div>
+
+</body>
+</html>

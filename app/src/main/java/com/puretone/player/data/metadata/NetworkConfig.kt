@@ -33,4 +33,10 @@ object NetworkConfig {
 
     /** LRCLIB 搜索兜底接口 */
     const val LRCLIB_SEARCH_URL: String = "https://lrclib.net/api/search"
+
+    /** AMLL TTML 词库搜索接口（开源、免鉴权；华语/日语覆盖好） */
+    const val AMLL_SEARCH_URL: String = "https://api.amll.dev/v1/lyrics/search"
+
+    /** AMLL TTML 词库取全文接口（按 id 取 TTML，需再转 LRC） */
+    const val AMLL_GET_URL: String = "https://api.amll.dev/v1/lyrics/get"
 }
