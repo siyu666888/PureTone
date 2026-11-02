@@ -81,6 +81,8 @@ data class PlaybackUiState(
     val sleepRemainingMs: Long = 0L,
     val queue: List<QueueEntry> = emptyList(),
     val queueIndex: Int = -1,
+    /** 完整 UI 队列中对应「播放器 mediaItemIndex==0」的绝对索引；淡化收尾会 prepend 回已播前缀使播放器恢复完整队列，故恒为 0，播放器索引与 UI 绝对索引始终对齐 */
+    val queueOffset: Int = 0,
     val error: String? = null
 ) {
     val currentEntry: QueueEntry?
@@ -224,6 +226,17 @@ class PlaybackManager @Inject constructor(
             override fun onFinalize(newPrimary: CrossfadePlayer, outgoing: CrossfadePlayer, nextIndex: Int) {
                 val sec = (newPrimary as? ExoCrossfadePlayer)?.exo ?: return
                 val out = (outgoing as? ExoCrossfadePlayer)?.exo ?: return
+                // 恢复完整队列：淡出方仍持有「当前曲之前」的全部已播项（从未被移除，
+                // 仅「下一首」在 maybeStart 时被摘下），prepend 回新主；否则新主只持剩余尾部，
+                // 播放器索引会与 UI 完整队列绝对索引错位（UI 高亮跑偏、第二次淡化 APE 门控取错歌）。
+                // prepend 后新主当前曲索引自动顺移到 nextIndex，播放不中断。
+                val prefixCount = minOf(nextIndex, out.mediaItemCount)
+                if (prefixCount > 0) {
+                    val prefix = (0 until prefixCount).mapNotNull { i ->
+                        runCatching { out.getMediaItemAt(i) }.getOrNull()
+                    }
+                    if (prefix.isNotEmpty()) runCatching { sec.addMediaItems(0, prefix) }
+                }
                 // MediaSession 指向新主
                 runCatching { session?.setPlayer(sec) }
                 // 交换监听器：新主挂完整监听器，旧主（现为备援）挂轻量 secondaryListener。
@@ -248,6 +261,7 @@ class PlaybackManager @Inject constructor(
                     state.copy(
                         currentSongId = sec.currentMediaItem?.mediaId?.toLongOrNull(),
                         queueIndex = nextIndex,
+                        queueOffset = 0,
                         durationMs = sec.duration.coerceAtLeast(0L)
                     )
                 }

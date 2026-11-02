@@ -93,6 +93,8 @@ class CrossfadeCoordinatorTest {
         override var settings: PureToneSettings = PureToneSettings(crossfadeMs = 6_000),
         override var queue: List<QueueEntry> = emptyList(),
         override var isCasting: Boolean = false,
+        /** 模拟「播放器只持有剩余尾部、完整队列绝对索引需偏移」的场景（生产中恒为 0） */
+        override var queueOffset: Int = 0,
         val callLog: MutableList<String>? = null
     ) : CrossfadeCoordinator.Host {
 
@@ -417,5 +419,31 @@ class CrossfadeCoordinatorTest {
         // 正常收尾时下一首已经由备援承载，不能再插回旧主（否则重复一首）
         assertEquals(0, primary.insertCount)
         assertEquals(2, secondary.itemCount)
+    }
+
+    // ---------- 队列索引对齐（交叉淡化后 UI 选中项与播放项错位的修复） ----------
+
+    @Test
+    fun `maybeStart 用 queueOffset 换算绝对下标，收尾回调收到完整队列绝对索引`() = runTest {
+        // 模拟第二次淡化：播放器只持有剩余尾部 [s2,s3,s4]（player 空间 0,1,2），
+        // 完整 UI 队列为 [s0,s1,s2,s3,s4]，queueOffset=2。当前曲 s2 在 player 空间是 0、
+        // 绝对是 2；下一首绝对索引 = (0+1) + 2 = 3（s3）。若错误地用 player 空间 1 去完整
+        // 队列取，会取到 s1——这正是淡化后 APE 门控取错歌、UI 选中项错位的来源。
+        val queue = listOf(entry(0), entry(1), entry(2), entry(3), entry(4))
+        val host = FakeHost(queueOffset = 2, queue = queue)
+        val (coordinator, _) = coordinator(host = host, queue = queue)
+        coordinator.attach(FakePlayer(), ReplayGainAudioProcessor())
+        val primary = FakePlayer(
+            durationMs = 30_000L,
+            positionMs = 25_000L,
+            items = mutableListOf(item(2), item(3), item(4)),
+            currentIndex = 0
+        )
+
+        coordinator.maybeStart(primary)
+        advanceUntilIdle()
+
+        // onFinalize 收到的必须是绝对索引 3，而不是 player 空间索引 1
+        assertEquals(listOf(3), host.finalized)
     }
 }

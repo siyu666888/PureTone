@@ -153,6 +153,15 @@ internal class CrossfadeCoordinator(
         /** 当前队列（判定下一首是否需异步转码） */
         val queue: List<QueueEntry>
 
+        /**
+         * 完整 UI 队列中、对应「播放器 mediaItemIndex == 0」的绝对索引。
+         *
+         * 淡化收尾后 [PlaybackManager.onFinalize] 会把已播前缀重新 prepend 回新主，
+         * 使播放器恢复完整队列，故该值恒为 0；此处暴露出来供 [maybeStart] 正确换算
+         * 「下一首」在完整队列里的绝对下标（避免用播放器空间的相对索引去取 UI 完整队列）。
+         */
+        val queueOffset: Int get() = 0
+
         /** 投屏进行中：本地播放器已暂停，不得触发淡化 */
         val isCasting: Boolean
 
@@ -176,6 +185,8 @@ internal class CrossfadeCoordinator(
     /** 淡化开始被从主播放器摘下的「下一首」；取消淡化时原样还回去（否则队列永久少一首） */
     private var removedItem: MediaItem? = null
     private var nextIndex: Int = -1
+    /** 下一首在完整 UI 队列里的绝对下标（= 播放器空间索引 + queueOffset） */
+    private var absNextIndex: Int = -1
     private var outgoing: CrossfadePlayer? = null
 
     /** 是否处于淡化中（宿主据此跳过常规切歌等命令） */
@@ -214,8 +225,10 @@ internal class CrossfadeCoordinator(
         if (crossfading) return
         val crossfadeMs = host.settings.crossfadeMs
         val duration = primary.durationMs.takeIf { it > 0 } ?: return
-        val nextIndex = primary.currentIndex + 1
-        val nextEntry = host.queue.getOrNull(nextIndex) ?: return
+        // 播放器空间的下一首下标；换算成完整 UI 队列里的绝对下标再去取判定项，
+        // 否则第二次淡化起播放器只持有剩余尾部，用相对索引取 UI 完整队列会取错歌（APE 门控失效）。
+        val playerSpaceNext = primary.currentIndex + 1
+        val nextEntry = host.queue.getOrNull(playerSpaceNext + host.queueOffset) ?: return
         if (!CrossfadePolicy.shouldTrigger(
                 durationMs = duration,
                 positionMs = primary.positionMs,
@@ -224,7 +237,7 @@ internal class CrossfadeCoordinator(
                 isApe = nextEntry.isApe
             )
         ) return
-        start(primary, nextIndex, nextEntry, duration - primary.positionMs)
+        start(primary, playerSpaceNext, nextEntry, duration - primary.positionMs)
     }
 
     private fun start(primary: CrossfadePlayer, index: Int, nextEntry: QueueEntry, remainMs: Long) {
@@ -250,6 +263,7 @@ internal class CrossfadeCoordinator(
         crossfading = true
         outgoing = primary
         nextIndex = index
+        absNextIndex = index + host.queueOffset
         pendingRemaining = remaining.drop(1)
         PlaybackEventLog.record(
             "crossfade-start",
@@ -278,7 +292,6 @@ internal class CrossfadeCoordinator(
         if (!crossfading) return
         val outgoingPlayer = outgoing ?: run { reset(); return }
         val sec = secondary ?: run { reset(); return }
-        val index = nextIndex
         // 把剩余曲目补全到新主，维持「主播放器持有完整剩余队列」不变式
         if (pendingRemaining.isNotEmpty()) {
             sec.addItems(pendingRemaining)
@@ -293,14 +306,14 @@ internal class CrossfadeCoordinator(
         // （把刚成为新主的那一路又从途中值拉回去），而且再也没人能取消它。
         job?.cancel()
         job = null
-        PlaybackEventLog.record("crossfade-finalize", "idx=$index")
+        PlaybackEventLog.record("crossfade-finalize", "idx=$absNextIndex")
         // ---- 顺序至关重要 ----
         // 先把所有权交给宿主（player 引用 / MediaSession / 监听器全部换位），再复位旧主。
         // 反过来（先 pauseAndClear 再交权）那 40ms 里旧主仍是宿主眼中的「当前播放器」：
         // pause() + clearMediaItems() 会让它落到「队列已空且不在播」的空闲判定上，
         // 触发 stopServiceIfIdle → 整个服务被停掉（连带 release 两个播放器与会话），
         // 表现为「开了交叉淡化后一首播完就整体停止，随后前台服务超时崩溃」。
-        host.onFinalize(newPrimary = sec, outgoing = outgoingPlayer, nextIndex = index)
+        host.onFinalize(newPrimary = sec, outgoing = outgoingPlayer, nextIndex = absNextIndex)
         // 此时 crossfade.attach() 已把旧主重新注入为备援，secondaryGain 指向旧主的处理器
         outgoingPlayer.setVolume(1f)
         secondaryGain?.setGainLinear(1f)
@@ -339,6 +352,7 @@ internal class CrossfadeCoordinator(
         outgoing = null
         removedItem = null
         nextIndex = -1
+        absNextIndex = -1
         pendingRemaining = emptyList()
     }
 }

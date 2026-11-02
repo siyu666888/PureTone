@@ -1,0 +1,20 @@
+11-02 01:09:44.530 crossfade-start | idx=1 cf=4000ms remain=4126ms
+11-02 01:09:50.679 crossfade-finalize | idx=1
+11-02 01:10:14.183 crossfade-start | idx=2 cf=4000ms remain=4342ms
+11-02 01:10:19.445 crossfade-finalize | idx=2
+11-02 01:10:44.269 crossfade-start | idx=3 cf=4000ms remain=3942ms
+11-02 01:10:51.633 crossfade-finalize | idx=3
+11-02 01:11:15.542 crossfade-start | idx=4 cf=4000ms remain=4219ms
+11-02 01:11:20.466 crossfade-finalize | idx=4
+11-02 01:11:20.496 playback-ended | idx=4 count=5 cf=false
+11-02 01:12:20.914 crossfade-start | idx=1 cf=4000ms remain=4167ms
+11-02 01:12:26.223 crossfade-finalize | idx=1
+11-02 01:12:51.274 crossfade-start | idx=2 cf=4000ms remain=4250ms
+11-02 01:12:58.267 crossfade-finalize | idx=2
+11-02 01:13:22.696 crossfade-start | idx=3 cf=4000ms remain=4044ms
+11-02 01:13:28.229 crossfade-finalize | idx=3
+11-02 01:13:52.791 crossfade-start | idx=4 cf=4000ms remain=4219ms
+11-02 01:13:57.426 crossfade-finalize | idx=4
+11-02 01:13:57.498 playback-ended | idx=4 count=5 cf=false
+11-02 01:14:55.992 crossfade-start | idx=1 cf=4000ms remain=4306ms
+11-02 01:15:00.809 crossfade-finalize | idx=1

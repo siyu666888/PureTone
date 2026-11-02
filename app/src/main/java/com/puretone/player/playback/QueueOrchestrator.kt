@@ -130,6 +130,7 @@ internal class QueueOrchestrator(
             it.copy(
                 queue = entries,
                 queueIndex = startIndex,
+                queueOffset = 0,
                 currentSongId = startSong.id,
                 durationMs = startSong.duration,
                 error = null
@@ -278,6 +279,7 @@ internal class QueueOrchestrator(
             state.copy(
                 queue = emptyList(),
                 queueIndex = -1,
+                queueOffset = 0,
                 currentSongId = null,
                 positionMs = 0L,
                 durationMs = 0L,
