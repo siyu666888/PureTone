@@ -85,8 +85,9 @@ internal class AudioFocusController(
     /**
      * 申请焦点（已持有则直接返回 true）。
      *
-     * @return 是否获得焦点；未获得时会立刻发 [Command.PAUSE]——宁可不出声，
-     *         也不要在别人正在播/通话中硬放。
+     * @return 是否获得焦点。注意：未获得焦点时**不再**自行暂停——
+     *         本地播放策略改为「不被其他软件打断」，宁可不持焦点也继续播；
+     *         「焦点丢失是否暂停」统一交由 [PlaybackAudioFocus.handle] 在编排层决定。
      */
     fun request(): Boolean {
         if (holding) return true
@@ -95,7 +96,6 @@ internal class AudioFocusController(
             .onFailure { Log.w(TAG, "requestAudioFocus failed", it) }
             .getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
         holding = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        if (!holding) onCommand(Command.PAUSE)
         return holding
     }
 

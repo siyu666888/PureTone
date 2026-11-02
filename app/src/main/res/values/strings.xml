@@ -286,6 +286,8 @@
     <string name="pt_player_032" formatted="false">且设备已开启 DLNA/投屏接收。</string>
     <!-- 重新搜索 -->
     <string name="pt_player_033" formatted="false">重新搜索</string>
+    <!-- 投屏设备发现需要权限（Android 13+ 为「附近设备」，低版本为「位置」）： -->
+    <string name="pt_player_034" formatted="false">投屏需「附近设备」/「位置」权限以发现局域网设备。请在系统设置中授予后点「重新搜索」。</string>
     <!-- 歌单 -->
     <string name="pt_playlist_001" formatted="false">歌单</string>
     <!-- 返回 -->
@@ -628,4 +630,18 @@
     <string name="pt_diag_022" formatted="false">(无播放事件记录)</string>
     <!-- 播放事件记录读取异常时的占位 -->
     <string name="pt_diag_023" formatted="false">(播放事件读取失败)</string>
+    <!-- 智能歌单 功能入口图标描述 -->
+    <string name="pt_smart_playlist_000" formatted="false">智能歌单</string>
+    <!-- 智能歌单分区标题右侧标签：表示由系统自动聚合生成 -->
+    <string name="pt_smart_playlist_001" formatted="false">自动生成</string>
+    <!-- 播放进度条：无障碍内容描述 -->
+    <string name="pt_progress_000" formatted="false">播放进度</string>
+    <!-- 进度条播放状态：准备中（解码/缓冲） -->
+    <string name="pt_progress_001" formatted="false">准备中</string>
+    <!-- 进度条播放状态：播放中 -->
+    <string name="pt_progress_002" formatted="false">播放中</string>
+    <!-- 进度条播放状态：已暂停 -->
+    <string name="pt_progress_003" formatted="false">已暂停</string>
+    <!-- 进度条播放状态：已结束（本曲播完） -->
+    <string name="pt_progress_004" formatted="false">已结束</string>
 </resources>

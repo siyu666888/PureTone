@@ -161,10 +161,8 @@ class PlaybackManager @Inject constructor(
         scope = scope,
         playerProvider = { player?.let(::ExoGapPlayer) }
     )
-
     /** 连续「播放失败自动跳过」的计数（防止整条队列都是坏文件时无限空转） */
     private var consecutiveErrorSkips: Int = 0
-
     /**
      * 应用级音频焦点（双实例必须单点持有，见 [AudioFocusController]）：两个 ExoPlayer 都以
      * `handleAudioFocus = false` 构建，否则备援在淡化起点申请焦点会把主播放器打成 LOSS。
@@ -173,8 +171,7 @@ class PlaybackManager @Inject constructor(
         context = appContext,
         playerProvider = { player },
         isCrossfading = { crossfade.isCrossfading },
-        onPlayingFlagChanged = { playing -> _uiState.update { it.copy(isPlaying = playing) } },
-        onSessionChanged = { saveSessionDebounced() }
+        isCasting = { dlnaCast.state.value.isCasting }
     )
 
     /**
@@ -1048,6 +1045,8 @@ class PlaybackManager @Inject constructor(
     fun startCast(device: CastDevice, song: SongEntity) {
         scope.launch {
             if (_uiState.value.isPlaying) pause()
+            // 投屏态释放手机侧音频焦点（声音走电视，焦点无关且不应占用）
+            playbackFocus.abandon()
             dlnaCast.selectDevice(device)
             when (val result = dlnaCast.castSong(song)) {
                 is CastResult.Success -> Unit

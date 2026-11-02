@@ -56,7 +56,6 @@ import androidx.compose.material.icons.outlined.Equalizer
 import androidx.compose.material.icons.rounded.AddCircleOutline
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.RemoveCircleOutline
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -100,9 +99,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
 import com.puretone.player.lyrics.ParsedLyrics
-import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.playback.QueueEntry
-import com.puretone.player.playback.cast.CastDevice
 import com.puretone.player.playback.toPlayMode
 import com.puretone.player.ui.MetadataViewModel
 import com.puretone.player.ui.PlayerViewModel
@@ -112,7 +109,8 @@ import com.puretone.player.ui.components.ControlIcons
 import com.puretone.player.ui.components.FavoriteButton
 import com.puretone.player.ui.components.PlayModeIconButton
 import com.puretone.player.ui.components.PlayPauseButton
-import com.puretone.player.ui.components.PlayerProgressBar
+import com.puretone.player.ui.components.PlaybackProgressBar
+import com.puretone.player.ui.components.derivePlaybackState
 import com.puretone.player.ui.components.SongRow
 import com.puretone.player.ui.components.formatTime
 import kotlinx.coroutines.Job
@@ -399,7 +397,7 @@ fun PlayerScreen(
 
     // M1：投屏设备选择对话框（与播放队列浮层同级，覆盖在播放页之上）
     if (showCastPicker) {
-        CastPickerDialog(
+        CastDevicePickerDialog(
             vm = vm,
             currentSong = currentSong,
             onDismiss = { showCastPicker = false },
@@ -524,10 +522,19 @@ fun PlayerScreen(
 @Composable
 private fun ProgressSection(vm: PlayerViewModel, durationMs: Long) {
     val positionMs by vm.positionMs.collectAsStateWithLifecycle()
+    val discrete by vm.discreteState.collectAsStateWithLifecycle()
+    val duration = durationMs.coerceAtLeast(1L)
     val position = positionMs.coerceAtMost(durationMs)
-    PlayerProgressBar(
+    val playbackState = derivePlaybackState(
+        isPlaying = discrete.isPlaying,
+        isPreparing = discrete.isBuffering || discrete.isTranscoding,
         positionMs = position,
+        durationMs = durationMs
+    )
+    PlaybackProgressBar(
+        playedFraction = (position.toFloat() / duration).coerceIn(0f, 1f),
         durationMs = durationMs,
+        playbackState = playbackState,
         onSeek = vm::seek,
         modifier = Modifier.fillMaxWidth()
     )
@@ -1102,111 +1109,3 @@ private fun QueueRow(
     }
 }
 
-/**
- * 投屏设备选择对话框（M1）。
- *
- * 打开即发起一次 SSDP 设备发现（[PlayerViewModel.searchCastDevices]），展示局域网内
- * 渲染器列表；点击设备即选中并发起当前歌曲投屏（[onSelect]）。空列表/失败给出明确引导，
- * 「重新搜索」按钮可再次发现。设备名/地址来自 [CastDevice]，第三方类型不泄漏到此处以外。
- */
-@Composable
-private fun CastPickerDialog(
-    vm: PlayerViewModel,
-    currentSong: SongEntity?,
-    onDismiss: () -> Unit,
-    onSelect: (CastDevice) -> Unit
-) {
-    var devices by remember { mutableStateOf<List<CastDevice>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-
-    fun doSearch() {
-        scope.launch {
-            loading = true
-            error = null
-            try {
-                devices = vm.searchCastDevices()
-            } catch (e: Exception) {
-                error = e.message ?: e.javaClass.simpleName
-            } finally {
-                loading = false
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) { doSearch() }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.pt_player_028)) },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
-                when {
-                    loading -> {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Text(stringResource(R.string.pt_player_029), style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                    error != null -> {
-                        Text(
-                            stringResource(R.string.pt_player_030, error ?: ""),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                    devices.isEmpty() -> {
-                        Text(
-                            stringResource(R.string.pt_player_031) +
-                                stringResource(R.string.pt_player_032),
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                    else -> {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            items(devices) { d ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onSelect(d) }
-                                        .padding(vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Icon(
-                                        if (d.isTV) Icons.Filled.CastConnected else Icons.Outlined.Cast,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            d.name,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            d.address,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { doSearch() }) { Text(stringResource(R.string.pt_player_033)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.pt_player_010)) }
-        }
-    )
-}

@@ -15,6 +15,17 @@
     <!-- DLNA 投屏：取本机局域网 IP / 监听 SSDP 组播（UPnPCast 库自身也声明了，
          此处显式声明确保合并后一定存在） -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- 投屏设备发现（问题1 修复）：Android 13+ 用 NEARBY_WIFI_DEVICES 且不取定位；
+         Android 12 及以下 SSDP/mDNS 扫描硬性要求 ACCESS_FINE_LOCATION，否则在
+         targetSdk≥29 上 DLNACast.search() 会静默返回空列表 → UI 显示「未发现可投屏设备」。 -->
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="tiramisu" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="32" />
+    <!-- lint 的 CoarseFineLocation 规则要求：声明 FINE 必须同时声明 COARSE（仅需配对，运行时仍只申请 FINE） -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"
+        android:maxSdkVersion="32" />
 
     <!-- 媒体库读取（API 33+ 细化权限；低版本向下兼容） -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />

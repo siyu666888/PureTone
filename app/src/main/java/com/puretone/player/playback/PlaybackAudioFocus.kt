@@ -22,10 +22,8 @@ internal class PlaybackAudioFocus(
     context: Context,
     private val playerProvider: () -> ExoPlayer?,
     private val isCrossfading: () -> Boolean,
-    /** 宿主的播放态刷新（焦点丢失时暂停，UI/小部件要跟着变） */
-    private val onPlayingFlagChanged: (Boolean) -> Unit,
-    /** 宿主的会话存档（焦点丢失同样要落盘，否则冷启动会把「已被打断」恢复成正在播） */
-    private val onSessionChanged: () -> Unit
+    /** 投屏态：声音在电视上，手机侧不参与焦点（问题2 修复） */
+    private val isCasting: () -> Boolean
 ) {
 
     private val controller = AudioFocusController(context, ::handle)
@@ -43,6 +41,10 @@ internal class PlaybackAudioFocus(
      * 因此不必在每个命令里各申请一次。
      */
     fun onIsPlayingChanged(isPlaying: Boolean) {
+        // 投屏态：声音在电视上，手机侧不应申请/持有焦点（否则占着焦点会让其他 App
+        // 在手机上静音，或被其他 App 抢焦点误暂停本地播放器、进而经 CastPlaybackPlayer
+        // 把电视上的投屏也停掉）。焦点由 startCast 在投屏开始时统一 abandon。
+        if (isCasting()) return
         if (isPlaying) {
             controller.request()
             return
@@ -53,29 +55,33 @@ internal class PlaybackAudioFocus(
     }
 
     private fun handle(command: AudioFocusController.Command) {
-        val p = playerProvider() ?: return
+        // 投屏态：手机侧焦点事件一律忽略，投屏播放不受手机上其他软件干扰（问题2 修复）。
+        if (isCasting()) return
         when (command) {
+            // 本地播放：被其他软件抢占/丢失焦点时**不再暂停**——用户要求本地播放不被打断。
+            // （导航播报等瞬态仍走 DUCK 压低音量，属于「非暂停」的软降级；若希望连音量
+            //  变化也消除，把这一支也 early-return 即可。）
             AudioFocusController.Command.PAUSE -> {
                 PlaybackEventLog.record(
-                    "audio-focus-pause",
-                    "crossfading=${isCrossfading()} idx=${p.currentMediaItemIndex}"
+                    "audio-focus-pause-skipped",
+                    "reason=local-keep-playing idx=${playerProvider()?.currentMediaItemIndex ?: -1}"
                 )
-                p.pause()
-                onPlayingFlagChanged(false)
-                onSessionChanged()
             }
 
             AudioFocusController.Command.RESUME -> {
+                val p = playerProvider() ?: return
                 if (isCrossfading() || p.mediaItemCount == 0) return
                 p.volume = 1f
                 p.play()
             }
 
             AudioFocusController.Command.DUCK -> {
+                val p = playerProvider() ?: return
                 if (!isCrossfading()) p.volume = DUCK_VOLUME
             }
 
             AudioFocusController.Command.UNDUCK -> {
+                val p = playerProvider() ?: return
                 if (!isCrossfading()) p.volume = 1f
             }
         }
