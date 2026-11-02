@@ -1,7 +1,9 @@
 package com.puretone.player.ui.screens
+import androidx.compose.foundation.background
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
+import com.puretone.player.ui.components.SmartPlaylistBrandIcon
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -121,6 +123,40 @@ private data class SmartPlaylist(
  * - 最近播放：play_history 倒序去重。
  * 列表为空时卡片禁用（暂无数据）。
  */
+/**
+ * 「智能歌单」分区标题：品牌图标 + 标题文字 + 右侧「自动生成」标签。
+ * 仅作视觉分区，不响应点击；图标与文字随深浅主题自动适配。
+ */
+@Composable
+private fun SmartPlaylistSectionHeader(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        SmartPlaylistBrandIcon(modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            stringResource(R.string.pt_smart_playlist_000),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            stringResource(R.string.pt_smart_playlist_001),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .background(
+                    MaterialTheme.colorScheme.primaryContainer,
+                    RoundedCornerShape(999.dp)
+                )
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+        )
+    }
+}
+
 @Composable
 private fun SmartPlaylistsRow(
     recentlyAdded: List<SongEntity>,
@@ -403,6 +439,7 @@ fun BrowseScreen(
 
         // P1：智能歌单快捷入口（仅歌曲页签、非搜索态）
         if (tab == MusicTab.SONGS && !searching) {
+            SmartPlaylistSectionHeader()
             SmartPlaylistsRow(
                 recentlyAdded = recentlyAdded,
                 topSongs = topSongs,

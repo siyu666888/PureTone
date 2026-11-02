@@ -2,6 +2,7 @@ package com.puretone.player.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -11,7 +12,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.puretone.player.R
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -156,4 +160,24 @@ private fun DrawScope.drawCircularArrow(
     val rx = oE.x + px * ah * 0.7f; val ry = oE.y + py * ah * 0.7f
     val tri = Path().apply { moveTo(tipX, tipY); lineTo(lx, ly); lineTo(rx, ry); close() }
     drawPath(tri, color)
+}
+
+/**
+ * 「智能歌单」整体功能图标（区别于三个子类型 最近添加 / 我的最爱 / 最近播放）。
+ *
+ * 符号语义：左侧竖播放条 + 三条曲目横线 = 播放列表（歌单）；右上 + 右下一大一小四角星火花
+ * = 智能 / 自动生成。双含义清晰，单色面性，符合 Material 24 网格规范。
+ *
+ * 资源为矢量 XML（res/drawable/ic_smart_playlist.xml，24×24，单色占位黑可被 tint），
+ * 自适应前景层见 ic_smart_playlist_foreground.xml（108×108，内容落在 66dp 安全区内）。
+ * tint 复用品牌 primary，深浅三套主题自动适配，与既有 SmartPlaylistGlyph 风格一致。
+ */
+@Composable
+fun SmartPlaylistBrandIcon(modifier: Modifier = Modifier) {
+    Icon(
+        painter = painterResource(R.drawable.ic_smart_playlist),
+        contentDescription = stringResource(R.string.pt_smart_playlist_000),
+        tint = MaterialTheme.colorScheme.primary,
+        modifier = modifier
+    )
 }
