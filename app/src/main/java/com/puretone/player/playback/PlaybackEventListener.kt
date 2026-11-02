@@ -68,12 +68,13 @@ internal class PlaybackEventListener(
             if (playbackState == Player.STATE_ENDED) {
                 // 「谁结束了」必须在收尾换主之前取，否则记到的是刚接上的那一首
                 val endedSongId = currentSongIdProvider()
-                // 主播放器自然播到结尾：淡出兜底收尾 + 末首完成去重 + 末首收尾处理。
-                sink.finalizeCrossfadeIfOutgoing(owner)
+                // 淡出兜底收尾（若本实例正是淡出方）：返回 true 表示「这是一场淡化收尾」——
+                // 收尾后下一首仍在播，不应走「播放结束」语义（否则误消费「播完本曲停止」并 pause 下一首）。
+                val finalized = sink.finalizeCrossfadeIfOutgoing(owner)
                 endedSongId?.let { id ->
                     completionRecorder.record(id)?.let { sink.recordCompletion(it) }
                 }
-                sink.onPlaybackEnded()
+                if (!finalized) sink.onPlaybackEnded()
             }
             if (playbackState == Player.STATE_IDLE && owner.mediaItemCount == 0) {
                 sink.onIdleCleared()
@@ -228,8 +229,8 @@ internal interface PlaybackEventSink {
     /** 末首自然播完的收尾：睡眠定时归零 + 立即存档 + 空闲停服（不含完成去重） */
     fun onPlaybackEnded()
 
-    /** 主播放器自然播到结尾的淡化兜底收尾 */
-    fun finalizeCrossfadeIfOutgoing(player: ExoPlayer)
+    /** 主播放器自然播到结尾的淡化兜底收尾；返回 true 表示本次确实执行了淡化收尾（本实例正是当前淡出方） */
+    fun finalizeCrossfadeIfOutgoing(player: ExoPlayer): Boolean
 
     /** 播放器 IDLE 且队列空：空闲停服 */
     fun onIdleCleared()

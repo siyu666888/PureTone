@@ -444,8 +444,10 @@ class PlaybackManager @Inject constructor(
      * 只有「淡出方就是当前主播放器」时才收尾：[CrossfadeCoordinator.finalize] 自带幂等守卫，
      * 渐变协程与本回调谁先到谁收尾，后到者直接返回。
      */
-    override fun finalizeCrossfadeIfOutgoing(player: ExoPlayer) {
-        if (crossfade.isCrossfading && crossfade.isOutgoing(player)) crossfade.finalize()
+    override fun finalizeCrossfadeIfOutgoing(player: ExoPlayer): Boolean {
+        val hit = crossfade.isCrossfading && crossfade.isOutgoing(player)
+        if (hit) crossfade.finalize()
+        return hit
     }
 
     /** 由 [PlaybackService] 在 onCreate 注入主/备播放器、媒体会话与各自的 ReplayGain 处理器 */
