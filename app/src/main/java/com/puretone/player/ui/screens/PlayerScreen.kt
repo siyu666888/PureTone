@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.DragHandle
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -54,7 +55,6 @@ import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.outlined.Cast
 import androidx.compose.material.icons.outlined.Equalizer
 import androidx.compose.material.icons.rounded.AddCircleOutline
-import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.RemoveCircleOutline
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -83,7 +83,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -113,6 +112,8 @@ import com.puretone.player.ui.components.PlaybackProgressBar
 import com.puretone.player.ui.components.derivePlaybackState
 import com.puretone.player.ui.components.SongRow
 import com.puretone.player.ui.components.formatTime
+import com.puretone.player.ui.components.DefaultCover
+import com.puretone.player.ui.components.VinylCenterLabel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -804,6 +805,9 @@ private fun CoverFace(
     ) {
         // CD 唱片：深色盘体外圈 + 圆形封面 + 中心孔；播放时整体随 discAngle 匀速旋转
         val scheme = MaterialTheme.colorScheme
+        // 圆形专辑封面（优先 Room 实时封面——P0-8）。
+        // 提到旋转层之外，因为下方不旋转的中心标签需要判断「有无封面」来决定是否印音符。
+        val coverModel = coverOverride ?: entry.coverUri
         Box(
             modifier = Modifier
                 .fillMaxSize(0.96f)
@@ -825,7 +829,6 @@ private fun CoverFace(
                     .border(1.dp, Color.White.copy(alpha = 0.10f), CircleShape)
             )
             // 圆形专辑封面（优先 Room 实时封面——P0-8）
-            val coverModel = coverOverride ?: entry.coverUri
             if (coverModel != null) {
                 AsyncImage(
                     model = coverModel,
@@ -835,50 +838,30 @@ private fun CoverFace(
                 )
             } else {
                 // P2-4：无封面时旧实现渲染纯灰圆盘 + 小黑点，观感像加载失败。
-                // 改为品牌渐变盘体 + 黑胶纹路 + 音符，任何主题下都像"设计如此"。
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize(0.86f)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                listOf(scheme.primary, scheme.tertiary)
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    // 黑胶纹路：两圈同心圆描边
-                    Box(
-                        Modifier
-                            .fillMaxSize(0.72f)
-                            .clip(CircleShape)
-                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
-                    )
-                    Box(
-                        Modifier
-                            .fillMaxSize(0.5f)
-                            .clip(CircleShape)
-                            .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
-                    )
-                    Text(
-                        "♪",
-                        style = MaterialTheme.typography.displayMedium,
-                        color = Color.White
-                    )
-                }
+                // 改为品牌渐变盘体 + 黑胶纹路，任何主题下都像"设计如此"。
+                // 2026-11-02：统一改为 DefaultCover 组件（固定品牌紫渐变，与其余
+                // 10 处无封面回退完全一致）；vinyl 模式只画旋转对称的盘面，
+                // 中心标签（带音符）另画在下方不旋转的图层上。
+                DefaultCover(
+                    modifier = Modifier.fillMaxSize(0.86f),
+                    shape = CircleShape,
+                    vinyl = true,
+                )
             }
-            // 中心孔（用页面底色模拟"打通"）
-            Box(
-                modifier = Modifier
-                    .fillMaxSize(0.16f)
-                    .clip(CircleShape)
-                    .background(scheme.background)
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize(0.05f)
-                    .clip(CircleShape)
-                    .background(Color(0xFF161616))
+        }
+
+        // 中心标签（深色贴纸 + 轴孔 + 音符）。
+        //
+        // 必须画在**不随唱片旋转**的图层上：唱片播放时持续旋转，若标签跟着转，
+        // 偏心的音符会转到任意角度，看着像渲染 bug。固定标签、只转盘面最稳。
+        // 真封面时也用同一套标签（glyph = null），与无封面时观感一致。
+        Box(
+            modifier = Modifier.fillMaxSize(0.22f),
+            contentAlignment = Alignment.Center,
+        ) {
+            VinylCenterLabel(
+                modifier = Modifier.fillMaxSize(),
+                glyph = if (coverModel == null) Icons.Rounded.MusicNote else null,
             )
         }
     }
@@ -1049,10 +1032,10 @@ private fun QueueRow(
                     contentScale = ContentScale.Crop
                 )
             } else {
-                Icon(
-                    Icons.Rounded.MusicNote,
-                    contentDescription = null,
-                    tint = scheme.onSurfaceVariant
+                // 无封面：显示默认海报
+                DefaultCover(
+                    modifier = Modifier.fillMaxSize(),
+                    shape = RoundedCornerShape(8.dp),
                 )
             }
         }

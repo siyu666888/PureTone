@@ -53,7 +53,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
-import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -162,10 +161,10 @@ fun SongRow(
                     contentScale = ContentScale.Crop
                 )
             } else {
-                Icon(
-                    Icons.Rounded.MusicNote,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                // 无封面：显示默认海报（品牌紫渐变 + 音符），不再用灰色裸图标
+                DefaultCover(
+                    modifier = Modifier.fillMaxSize(),
+                    shape = RoundedCornerShape(8.dp),
                 )
             }
         }
@@ -851,10 +850,10 @@ fun MiniPlayer(
                             contentScale = ContentScale.Crop
                         )
                     } else {
-                        Icon(
-                            Icons.Rounded.MusicNote,
-                            contentDescription = null,
-                            tint = scheme.onSurfaceVariant
+                        // 无封面：显示默认海报
+                        DefaultCover(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = RoundedCornerShape(10.dp),
                         )
                     }
                 }

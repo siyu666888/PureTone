@@ -20,9 +20,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Folder
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -52,6 +49,8 @@ import com.puretone.player.ui.LibraryViewModel
 import com.puretone.player.ui.MetadataViewModel
 import com.puretone.player.ui.PlayerViewModel
 import com.puretone.player.ui.components.SongRow
+import com.puretone.player.ui.components.DefaultCover
+import com.puretone.player.ui.components.DefaultCoverGlyph
 
 /**
  * 分组二级详情页（专辑 / 歌手 / 文件夹通用）。
@@ -241,11 +240,10 @@ private fun GroupDetailHeader(
                             contentScale = ContentScale.Crop
                         )
                     } else {
-                        Icon(
-                            Icons.Rounded.MusicNote,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(32.dp)
+                        // 无封面：显示默认海报
+                        DefaultCover(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = RoundedCornerShape(12.dp),
                         )
                     }
                 }
@@ -258,20 +256,21 @@ private fun GroupDetailHeader(
                             contentScale = ContentScale.Crop
                         )
                     } else {
-                        Icon(
-                            Icons.Rounded.Person,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(32.dp)
+                        // 无封面：显示默认海报（歌手用人物符号）
+                        DefaultCover(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = CircleShape,
+                            glyph = DefaultCoverGlyph.PERSON,
                         )
                     }
                 }
                 else -> {
-                    Icon(
-                        Icons.Rounded.Folder,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(36.dp)
+                    // 歌单 / 文件夹：歌单本身无封面字段（coverUri 恒为 null），
+                    // 必然走默认海报，用歌单专属符号以区分「这是歌单不是单曲」
+                    DefaultCover(
+                        modifier = Modifier.fillMaxSize(),
+                        shape = RoundedCornerShape(12.dp),
+                        glyph = DefaultCoverGlyph.PLAYLIST,
                     )
                 }
             }

@@ -1,8 +1,20 @@
-# 默认海报设计方案（待确认，未实施）
+# 默认海报设计方案（已确认并实施）
 
-> 日期：2026-11-02｜状态：**仅方案，等用户确认后再动代码**
+> 日期：2026-11-02｜状态：**已按确认方案实施完毕**
 > 需求原文：「设计默认海报，在歌曲无海报时显示默认海报，包括歌单和播放时，先出设计方案，确认后再实施。」
 > 可视化预览：`dist/default_cover_preview_2026-11-02.html`
+> 落地组件：`app/src/main/java/com/puretone/player/ui/components/DefaultCover.kt`
+> 验证截图：`dist/verify_cover/`
+
+---
+
+## 0. 最终确认结论（2026-11-02 用户确认）
+
+| 决策项 | 确认结果 |
+|---|---|
+| 前景图案 | **方案 B · 黑胶纹 + 音符** |
+| 底色渐变 | **固定品牌紫渐变**（不随主题变化） |
+| 歌单符号 | **歌单专属符号**（列表 + 播放箭头），与单曲的 ♪ 区分 |
 
 ---
 
@@ -83,16 +95,64 @@
 
 ---
 
-## 5. 实施要点（确认后执行）
+## 5. 实施结果（2026-11-03 完成）
 
-1. **新增组件** `ui/components/DefaultCover.kt`：`DefaultCover(modifier, shape, glyph)`；内部按 dp 判断档位。
-2. **档位常量** `DefaultCover.RICH_MIN_SIZE_DP = 64f`。
-3. **配色**：固定 `PureToneBrand.Primary → PrimaryDark`，前景白。
-4. **性能**：渐变用 `Brush.linearGradient`（不分配位图）；圆环用 `Canvas.drawCircle(stroke)`；**禁止** `remember` 缓存 Bitmap。
-5. **无障碍**：默认海报与真封面同为装饰，`contentDescription = null`，与现状一致（不改 TalkBack 朗读）。
-6. **小部件**：`PureToneWidget.kt` 的 `CoverArt` 走 Glance `Image`，无封面时已走独立分支（`ImageProvider(resId)`）。Glance 的 `RemoteViews` 跨进程、**不能用 Compose 绘制**，本次不动，仅记录该差异。
-7. **门禁**：新增文件远低于 1200 行；detekt（`MaxLineLength` 130）、lint、`check-file-size.sh` 全绿为准。
+### 5.1 新增组件
 
-### 明确不做（超出「默认海报」范围，需另行确认）
-- 「我的」页歌单卡片（`MeScreen.kt:186`）目前**连封面位都没有**，只有文字标题。加封面位属新功能，不在本次范围。
-- 小部件默认海报（跨进程渲染限制）。
+| 组件 | 说明 |
+|---|---|
+| `DefaultCover(modifier, shape, glyph, vinyl)` | 默认海报本体。固定品牌紫渐变 + 白色符号；≥64dp 额外画双同心圆（黑胶纹）；`vinyl=true` 时只画旋转对称的盘面（符号交给 `VinylCenterLabel`） |
+| `VinylCenterLabel(modifier, glyph)` | 唱片中心标签：深色贴纸 + 白色描边 + 轴孔，可选印符号。**画在不随唱片旋转的图层上** |
+| `defaultCoverIsRich(minSizeDp)` / `defaultCoverIconSize(minSizeDp, rich)` | 档位判定纯函数（抽出来是为了能写普通 JUnit 单测，项目无 Compose UI 测试基建） |
+
+### 5.2 11 处落点全部替换
+
+| 落点 | 尺寸 | 档位 | 符号 |
+|---|---|---|---|
+| 队列项封面 `PlayerComposables.kt` | 48dp | 退化 | ♪ |
+| 队列预览行 `PlayerComposables.kt` | 48dp | 退化 | ♪ |
+| 歌曲列表 `BrowseScreen.kt` | 48dp | 退化 | ♪ |
+| 专辑卡 `BrowseScreen.kt` | 1:1 | 带纹 | ♪ |
+| 歌手列表 `BrowseScreen.kt` | 48dp 圆 | 退化 | 人像 |
+| 专辑详情头 `GroupDetailScreen.kt` | 72dp | 带纹 | ♪ |
+| 歌手详情头 `GroupDetailScreen.kt` | 72dp 圆 | 带纹 | 人像 |
+| **歌单/文件夹详情头** `GroupDetailScreen.kt` | 72dp | 带纹 | **歌单符号** |
+| 播放页队列预览 `PlayerScreen.kt` | 44dp | 退化 | ♪ |
+| 歌曲信息弹窗 `SongInfoSheet.kt` | 64dp | 带纹 | ♪ |
+| 播放页唱片封面 `PlayerScreen.kt` | 唱片 | 带纹 | ♪（在标签上） |
+
+### 5.3 实施中发现并修掉的两个隐藏问题
+
+**① 播放页的音符从来没真正显示过（P2-4 历史遗留）**
+旧实现把居中的 `Text("♪")` 画在中心孔**之下**，而中心孔直径是盘面的 16%、
+`♪` 用 displayMedium 字号（约 45dp）——两者叠加后音符被中心孔**完全盖住**。
+截图复现确认：旧版播放页唱片中心只有一个白点，看不到任何音符。
+
+**② 偏心元素在旋转的唱片上必然出问题**
+第一版把音符上移来避开中心孔，但播放页唱片会随 `discAngle` **持续旋转**，
+偏心元素会转到任意角度——实测截图里音符跑到了唱片中心的右侧，像渲染 bug。
+最终方案按物理逻辑重做：唱片中心做成一张**深色标签盘**（真实黑胶的中心贴纸），
+标签画在**不随唱片旋转**的图层上，符号印在标签上、轴孔留在正中。
+真封面与无封面共用同一套中心标签，观感统一。
+
+### 5.4 真机验证（模拟器 Pixel_API34，Android 14）
+
+| 验证点 | 结论 |
+|---|---|
+| 歌曲列表 48dp | ✅ 品牌紫渐变方块 + 白色音符（退化档，无黑胶纹） |
+| 专辑大卡 1:1 | ✅ 品牌紫渐变 + 双同心圆黑胶纹 + 白色音符（带纹档） |
+| 歌单详情头 72dp | ✅ 带纹档 + 白色歌单符号（列表+播放箭头），与单曲 ♪ 明确区分 |
+| 播放页唱片 | ✅ 深色标签盘 + 白色音符 + 轴孔，音符不随盘旋转、不偏心 |
+| 智能歌单图标 | ✅ 时钟（描边）/ 红心 / 环形箭头三枚均正常显示 |
+
+截图存于 `dist/verify_cover/`。
+
+### 5.5 门禁
+
+`detekt`（0 code smells）/ `lintDebug` / `testDebugUnitTest`（含新增 `DefaultCoverStyleTest` 4 例）/ `check-file-size.sh` 全部通过。
+
+### 5.6 明确不做（超出「默认海报」范围，需另行确认）
+- 「我的」页歌单卡片（`MeScreen.kt`）目前**连封面位都没有**，只有文字标题。加封面位属新功能。
+- 小部件默认海报（Glance `RemoteViews` 跨进程，不能用 Compose 绘制）。
+- 浏览页「文件夹」列表项的 Folder 图标（那是文件夹图标，不属于「无封面回退」）。
+

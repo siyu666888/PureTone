@@ -43,9 +43,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Folder
-import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SwapVert
@@ -103,6 +101,8 @@ import com.puretone.player.ui.components.FavoriteRed
 import com.puretone.player.ui.components.SmartPlaylistGlyph
 import com.puretone.player.ui.components.SmartPlaylistKind
 import com.puretone.player.ui.components.SongRow
+import com.puretone.player.ui.components.DefaultCover
+import com.puretone.player.ui.components.DefaultCoverGlyph
 import com.puretone.player.ui.Routes
 import kotlinx.coroutines.delay
 
@@ -705,10 +705,10 @@ fun SongActionSheet(
                             contentScale = ContentScale.Crop
                         )
                     } else {
-                        Icon(
-                            Icons.Rounded.MusicNote,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        // 无封面：显示默认海报
+                        DefaultCover(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = RoundedCornerShape(8.dp),
                         )
                     }
                 }
@@ -940,11 +940,10 @@ private fun AlbumCard(album: AlbumSummary, onClick: () -> Unit) {
                     contentScale = ContentScale.Crop
                 )
             } else {
-                Icon(
-                    Icons.Rounded.MusicNote,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(36.dp)
+                // 无封面：显示默认海报（此处为 1:1 大卡，走「带黑胶纹」档位）
+                DefaultCover(
+                    modifier = Modifier.fillMaxSize(),
+                    shape = RoundedCornerShape(10.dp),
                 )
             }
         }
@@ -1000,10 +999,11 @@ private fun ArtistsTabContent(
                             contentScale = ContentScale.Crop
                         )
                     } else {
-                        Icon(
-                            Icons.Rounded.Person,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        // 无封面：显示默认海报（歌手用人物符号）
+                        DefaultCover(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = CircleShape,
+                            glyph = DefaultCoverGlyph.PERSON,
                         )
                     }
                 }

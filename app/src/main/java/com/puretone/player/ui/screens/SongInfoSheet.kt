@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -17,7 +18,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -51,6 +51,7 @@ import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.ui.MetadataViewModel
 import com.puretone.player.ui.PlayerViewModel
 import com.puretone.player.ui.components.formatTime
+import com.puretone.player.ui.components.DefaultCover
 import com.puretone.player.util.ChineseText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -155,10 +156,10 @@ fun SongInfoSheet(
                             contentScale = ContentScale.Crop
                         )
                     } else {
-                        Icon(
-                            Icons.Rounded.MusicNote,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        // 无封面：显示默认海报
+                        DefaultCover(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = RoundedCornerShape(10.dp),
                         )
                     }
                 }
