@@ -64,8 +64,14 @@ class AmllLyricsProvider @Inject constructor() {
             }
             if (candidates.isEmpty()) return@withContext null
 
-            // 3) 按匹配度排序后逐个尝试取全文（第一个能转出 LRC 的即采用）
-            val ranked = candidates.entries.sortedByDescending { matchScore(it.value, t, a) }
+            // 3) 按匹配度排序后逐个尝试取全文。
+            //    **必须先过滤掉曲名对不上的候选**：歌手名兜底检索会捞回同一歌手的
+            //    其他歌曲（如给《晴天》捞到《告白气球》），给错歌词比找不到更糟。
+            val ranked = candidates.entries
+                .filter { LyricsTitleMatch.isAcceptable(it.value, t) }
+                .sortedByDescending { matchScore(it.value, t, a) }
+            if (ranked.isEmpty()) return@withContext null
+
             for ((id, _) in ranked.take(MAX_CANDIDATES)) {
                 val ttml = fetchById(id) ?: continue
                 val lrc = TtmlToLrc.convert(ttml) ?: continue
@@ -138,21 +144,19 @@ class AmllLyricsProvider @Inject constructor() {
     }
 
     /**
-     * 匹配度打分：曲名完全相同最高，包含次之，不含最低。
+     * 匹配度打分：曲名完全相同最高，包含次之。
      *
      * 词库里同一首歌常有多个版本（Live / 伴奏 / 翻唱），文件名可能是
      * 「晴天 (Live)」这类带后缀的变体，故用「包含」而非「完全相等」判定。
+     *
+     * 注意：曲名**完全对不上**的候选一律判 0 分（[LyricsTitleMatch.SCORE_NONE]），
+     * 会被上一层的过滤直接剔除——歌手名兜底检索必然带回同歌手的其他歌曲，
+     * 放行就等于给错歌词。
      */
     private fun matchScore(musicName: String, title: String, artist: String): Int {
-        if (musicName.isBlank()) return 0
-        val norm = musicName.trim().lowercase()
-        val t = title.trim().lowercase()
-        var score = when {
-            norm == t -> 100
-            norm.contains(t) -> 60
-            t.contains(norm) -> 40
-            else -> 10
-        }
+        val base = LyricsTitleMatch.score(musicName, title)
+        if (base == LyricsTitleMatch.SCORE_NONE) return LyricsTitleMatch.SCORE_NONE
+        var score = base
         if (artist.isNotBlank() && musicName.contains(artist, ignoreCase = true)) score += 5
         return score
     }

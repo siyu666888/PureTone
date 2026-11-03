@@ -57,24 +57,49 @@ class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
             // 2) 搜索兜底：先找同步，再找纯文本
             val arr = runCatching { getJsonArray(buildSearchUrl(t, a)) }.getOrNull()
             if (arr != null) {
-                for (pass in 0..1) {
-                    for (i in 0 until arr.length()) {
-                        val obj = arr.optJSONObject(i) ?: continue
-                        val synced = obj.optLyrics("syncedLyrics")
-                        if (pass == 0 && synced != null) {
-                            lastMatch = Match.SEARCH
-                            return@withContext synced
-                        }
-                        val plain = obj.optLyrics("plainLyrics")
-                        if (pass == 1 && plain != null) {
-                            lastMatch = Match.SEARCH
-                            return@withContext plainToLrc(plain, durationMs)
-                        }
-                    }
+                val synced = pickSynced(arr, t)
+                if (synced != null) {
+                    lastMatch = Match.SEARCH
+                    return@withContext synced
+                }
+                val plain = pickPlain(arr, t)
+                if (plain != null) {
+                    lastMatch = Match.SEARCH
+                    return@withContext plainToLrc(plain, durationMs)
                 }
             }
             null
         }
+
+    /**
+     * 从搜索结果里挑出第一条**曲名对得上**的同步歌词。
+     *
+     * 曲名一致性校验是必须的：LRCLIB 的搜索是模糊的，曲名/歌手任一对不上
+     * 都会返回一串别的歌，直接取第一条就会给用户错歌词（真机实测踩过：
+     * 给《晴天》捞到了同歌手的《告白气球》）。
+     */
+    private fun pickSynced(arr: JSONArray, title: String): String? {
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            if (!titleMatches(obj, title)) continue
+            obj.optLyrics("syncedLyrics")?.let { return it }
+        }
+        return null
+    }
+
+    /** 从搜索结果里挑出第一条曲名对得上的纯文本歌词 */
+    private fun pickPlain(arr: JSONArray, title: String): String? {
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            if (!titleMatches(obj, title)) continue
+            obj.optLyrics("plainLyrics")?.let { return it }
+        }
+        return null
+    }
+
+    /** 搜索结果的曲名是否与请求曲名一致（一致或为同曲变体） */
+    private fun titleMatches(obj: JSONObject, title: String): Boolean =
+        LyricsTitleMatch.isAcceptable(obj.optString("trackName"), title)
 
     private fun pickFrom(obj: JSONObject?, durationMs: Long): String? {
         if (obj == null) return null
