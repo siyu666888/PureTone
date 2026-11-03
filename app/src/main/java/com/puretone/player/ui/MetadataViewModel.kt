@@ -222,8 +222,16 @@ class MetadataViewModel @Inject constructor(
             _lyricsDownloading.value = false
             _message.value = when (outcome) {
                 DownloadLyricsUseCase.Outcome.SAVED -> UiMessage.Res(R.string.pt_meta_008)
-                DownloadLyricsUseCase.Outcome.NO_LYRICS ->
-                    UiMessage.Res(R.string.pt_meta_009, listOf<Any>(lyricsProvider.sourceName))
+                DownloadLyricsUseCase.Outcome.NO_LYRICS -> {
+                    // 多渠道实现能给出尝试轨迹——直接告诉用户试过哪些路，
+                    // 避免用户以为是歌名打错而反复重试。
+                    val attempted = lyricsProvider.lastAttemptSummary()
+                    if (attempted.isNullOrBlank()) {
+                        UiMessage.Res(R.string.pt_meta_009, listOf<Any>(lyricsProvider.sourceName))
+                    } else {
+                        UiMessage.Res(R.string.pt_meta_013, listOf<Any>(attempted))
+                    }
+                }
                 DownloadLyricsUseCase.Outcome.SAVE_FAILED -> UiMessage.Res(R.string.pt_meta_010)
                 // P2-4：联网总开关已关闭——明确告知是开关拦下的，
                 // 否则用户会误以为「这首歌就是没歌词」而去反复重试。

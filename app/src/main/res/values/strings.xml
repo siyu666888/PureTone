@@ -618,6 +618,8 @@
     <string name="pt_meta_008" formatted="false">歌词已下载并保存</string>
     <!-- 未找到歌词，%1$s 为歌词源名 -->
     <string name="pt_meta_009" formatted="true">未找到歌词（%1$s）</string>
+    <!-- 未找到歌词且已试过多渠道，%1$s 为尝试过的渠道列表 -->
+    <string name="pt_meta_013" formatted="true">未找到歌词（已尝试：%1$s）</string>
     <!-- 歌词保存失败 -->
     <string name="pt_meta_010" formatted="false">歌词保存失败</string>
     <!-- 封面补全：无待补全歌曲 -->

@@ -36,4 +36,13 @@ interface LyricsProvider {
         title: String,
         durationMs: Long
     ): String? = fetch(artist, title, durationMs)
+
+    /**
+     * 上次取词尝试过的渠道摘要（UI 展示用）。
+     *
+     * 用户反馈「歌词有时候会下载失败」时，只说「未找到歌词」会让人以为是歌名打错；
+     * 列出实际试过的渠道，能把排查方向直接指出来（本地没文件 / 内嵌没有 / 词库确实没有）。
+     * 单渠道实现没有这个概念，返回 null（不展示）。
+     */
+    fun lastAttemptSummary(): String? = null
 }

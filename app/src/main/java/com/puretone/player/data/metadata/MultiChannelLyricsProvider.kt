@@ -61,6 +61,30 @@ class MultiChannelLyricsProvider @Inject constructor(
     var lastHitChannel: Channel? = null
         private set
 
+    /**
+     * 本次尝试过的渠道（按顺序），供失败提示展示。
+     *
+     * 用户反馈「歌词有时候会下载失败」时，最需要知道的是**到底试过哪些路**——
+     * 只说「未找到歌词」会让用户以为是歌名打错，而实际可能是本地没文件、
+     * 内嵌没有、词库确实没有。列出尝试轨迹能把排查方向直接指出来。
+     */
+    @Volatile
+    var lastAttemptedChannels: List<Channel> = emptyList()
+        private set
+
+    /** 渠道的简短中文名（UI 展示用） */
+    fun Channel.displayName(): String = when (this) {
+        Channel.SIDECAR_LRC -> "本地 LRC"
+        Channel.EMBEDDED -> "内嵌歌词"
+        Channel.AMLL -> "AMLL"
+        Channel.LRCLIB_EXACT -> "LRCLIB"
+        Channel.LRCLIB_SEARCH -> "LRCLIB 搜索"
+    }
+
+    /** 尝试轨迹摘要（UI 展示用）：「本地 LRC、内嵌歌词、AMLL、LRCLIB」 */
+    override fun lastAttemptSummary(): String? =
+        lastAttemptedChannels.joinToString("、") { it.displayName() }.ifBlank { null }
+
     /** 歌词渠道枚举 */
     enum class Channel {
         /** 同目录同名 .lrc */
@@ -104,34 +128,48 @@ class MultiChannelLyricsProvider @Inject constructor(
     ): String? {
         if (title.isBlank()) {
             lastHitChannel = null
+            lastAttemptedChannels = emptyList()
             return null
         }
         lastHitChannel = null
+        // 记录本次尝试过的渠道（顺序即优先级），失败时用于提示用户
+        val attempted = mutableListOf<Channel>()
 
         // 1) 本地：同目录 .lrc + 内嵌歌词（不联网，最快最准）
         if (!audioPath.isNullOrBlank()) {
             localProvider.fetch(audioPath, durationMs)?.let {
                 // 本地渠道内部有两条：先判断到底是 .lrc 还是内嵌，便于诊断
-                lastHitChannel = if (hasSidecarLrc(audioPath)) Channel.SIDECAR_LRC else Channel.EMBEDDED
+                val hit = if (hasSidecarLrc(audioPath)) Channel.SIDECAR_LRC else Channel.EMBEDDED
+                lastHitChannel = hit
+                lastAttemptedChannels = attempted + hit
                 return it
             }
+            // 本地没命中：两条本地渠道都算试过了
+            attempted.add(Channel.SIDECAR_LRC)
+            attempted.add(Channel.EMBEDDED)
         }
 
         // 2) AMLL 词库（华语/日语覆盖好）
+        attempted.add(Channel.AMLL)
         amllProvider.fetch(artist, title, durationMs)?.let {
             lastHitChannel = Channel.AMLL
+            lastAttemptedChannels = attempted
             return it
         }
 
         // 3) LRCLIB（精确 + 搜索兜底）
+        attempted.add(Channel.LRCLIB_EXACT)
         lrcLibProvider.fetch(artist, title, durationMs)?.let {
             lastHitChannel = when (lrcLibProvider.lastMatch) {
                 LrcLibLyricsProvider.Match.EXACT -> Channel.LRCLIB_EXACT
                 else -> Channel.LRCLIB_SEARCH
             }
+            lastAttemptedChannels = attempted
             return it
         }
+        attempted.add(Channel.LRCLIB_SEARCH)
 
+        lastAttemptedChannels = attempted
         return null
     }
 
