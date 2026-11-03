@@ -29,7 +29,11 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
@@ -185,6 +189,17 @@ class DlnaCastManager @Inject constructor(
     /** 上次成功搜到设备的时刻：连续空结果时用来判断「近期列表还能不能沿用」 */
     private var lastDevicesAt: Long = 0L
 
+    /**
+     * 历史设备地址 → 设备对象的缓存（按 IP 索引）。
+     *
+     * 用途：SSDP 组播首搜经常空手（电视刚唤醒时对 M-SEARCH 的响应不稳，真机上
+     * 出现过连续多轮 0 设备），但一旦搜到过一次，它的 IP 就记在这里。后续再空结果时，
+     * 直接对这些已知 IP 发 **unicast M-SEARCH**（点对点，绕过组播抑制），电视对单播
+     * 的应答率远高于组播，往往能「唤醒」它重新出现在列表里。
+     * 仅在进程内存中保存（跨会话的沿用走 [recentDevices] 的 10 分钟窗口）。
+     */
+    private val knownDevices = mutableMapOf<String, CastDevice>()
+
     /** 当前投送通道：库优先，库失败后切自有通道 */
     private enum class CastEngine { LIBRARY, OWN }
 
@@ -323,10 +338,13 @@ class DlnaCastManager @Inject constructor(
             } else {
                 // 单轮 SSDP 只有 5 秒窗口，不少电视（含本次的 QQLiveTV 实现）会对同一来源
                 // 的重复 M-SEARCH 做抑制或随机延迟应答，真机上出现过连续多轮 0 设备。
-                // 空结果再补一轮（短窗口），仍空则沿用近期列表——「设备列表突然消失」
+                // 空结果先补一轮（短窗口）组播；仍空则对历史地址发 **unicast M-SEARCH**
+                // 点对点唤醒（绕过组播抑制）；最后才沿用近期列表——「设备列表突然消失」
                 // 比「列表里有一台已关机的设备」更容易让人以为功能坏了。
                 CastNetworkLog.log("search 首轮空结果，补搜一轮（${RETRY_TIMEOUT_MS}ms）")
-                searchOnce(RETRY_TIMEOUT_MS).ifEmpty { recentDevices() }
+                searchOnce(RETRY_TIMEOUT_MS).ifEmpty {
+                    unicastProbe().ifEmpty { recentDevices() }
+                }
             }
             CastNetworkLog.logDevices(result)
             if (result.isEmpty()) {
@@ -362,8 +380,19 @@ class DlnaCastManager @Inject constructor(
         if (result.isNotEmpty()) {
             lastDevices = raw
             lastDevicesAt = System.currentTimeMillis()
+            recordKnown(result)
         }
         return result
+    }
+
+    /**
+     * 把成功发现的设备记入 [knownDevices]（按 IP 索引），供后续空结果时做 unicast 唤醒。
+     * 同名/同 IP 设备以最新一次为准（电视换了端口或 friendlyName 也能更新）。
+     */
+    private fun recordKnown(devices: List<CastDevice>) {
+        for (d in devices) {
+            if (d.address.isNotBlank()) knownDevices[d.address] = d
+        }
     }
 
     /**
@@ -378,6 +407,76 @@ class DlnaCastManager @Inject constructor(
         CastNetworkLog.log("search 沿用 ${age / 1000}s 前的设备列表（count=${lastDevices.size}）")
         return lastDevices.map { CastDevice(it.id, it.name, it.address, it.isTV) }
     }
+
+    /**
+     * 对历史上发现过的设备 IP 发 **unicast M-SEARCH**，点对点唤醒。
+     *
+     * ## 为什么要这一步
+     *
+     * SSDP 发现收不到设备，最常见的不是「设备不在」，而是「组播被抑制」：电视刚唤醒、
+     * 或对同一来源的重复 M-SEARCH 做了随机延迟/抑制，组播窗口（5s）内没回包就判空。
+     * 既然我们曾经搜到过它、知道它的 IP，就不必再靠组播碰运气——直接往那个 IP 的
+     * 1900 端口发 M-SEARCH，电视对 **unicast** 的应答率通常远高于组播。
+     *
+     * ## 实现要点
+     * - 一次性把请求发给所有已知 IP，再统一收包（不让每台各等一轮超时，否则 N 台 = N 倍耗时）。
+     * - 用 `pkt.address`（应答方源 IP）回查缓存，命中即把对应的 [CastDevice] 重新放进列表，
+     *   不依赖 LOCATION 解析（电视的 friendlyName 仍用缓存里的，准确且省一次 HTTP）。
+     * - 套接字绑定到 Wi-Fi 的 IPv4，双网卡设备上保证请求从 wlan0 发出、应答能回到本机。
+     * - 放在 IO 线程（UDP receive 阻塞），搜索窗口内不占主线程。
+     */
+    private suspend fun unicastProbe(timeoutMs: Long = 1500): List<CastDevice> = withContext(Dispatchers.IO) {
+        if (knownDevices.isEmpty()) {
+            CastNetworkLog.log("probe-unicast 无历史设备地址，跳过")
+            return@withContext emptyList()
+        }
+        val srcIp = wifiIpv4()
+        CastNetworkLog.log("probe-unicast 历史地址=[${knownDevices.keys.joinToString()}] src=$srcIp")
+        val requestTemplate = buildUnicastSearch("%HOST%")
+        val results = mutableListOf<CastDevice>()
+        val responded = mutableSetOf<String>()
+        runCatching {
+            DatagramSocket().use { socket ->
+                socket.soTimeout = 500
+                socket.reuseAddress = true
+                if (srcIp != null) {
+                    runCatching { socket.bind(InetSocketAddress(InetAddress.getByName(srcIp), 0)) }
+                }
+                for (addr in knownDevices.keys) {
+                    runCatching {
+                        val target = InetSocketAddress(InetAddress.getByName(addr), 1900)
+                        val data = requestTemplate.replace("%HOST%", addr).toByteArray(Charsets.UTF_8)
+                        repeat(2) { socket.send(DatagramPacket(data, data.size, target)) }
+                    }.onFailure { CastNetworkLog.log("probe-unicast send error addr=$addr ${it.message}") }
+                }
+                val buf = ByteArray(4096)
+                val deadline = System.currentTimeMillis() + timeoutMs
+                while (System.currentTimeMillis() < deadline) {
+                    runCatching {
+                        val pkt = DatagramPacket(buf, buf.size)
+                        socket.receive(pkt)
+                        val src = (pkt.address as? Inet4Address)?.hostAddress ?: return@runCatching
+                        val hit = knownDevices[src]
+                        if (hit != null && responded.add(src)) {
+                            results.add(hit)
+                            CastNetworkLog.log("probe-unicast hit addr=$src name=${hit.name} http=200")
+                        }
+                    }.onFailure { /* 超时即跳出去看下一轮/截止 */ }
+                }
+            }
+        }.onFailure { CastNetworkLog.log("probe-unicast socket error ${it.message}") }
+        CastNetworkLog.log("probe-unicast 命中 ${results.size} 台")
+        results
+    }
+
+    /** 构造一条点对点 M-SEARCH 报文模板（HOST 占位符由调用方按目标 IP 替换）。 */
+    private fun buildUnicastSearch(hostPlaceholder: String): String =
+        "M-SEARCH * HTTP/1.1\r\n" +
+            "HOST: $hostPlaceholder:1900\r\n" +
+            "MAN: \"ssdp:discover\"\r\n" +
+            "MX: 1\r\n" +
+            "ST: ssdp:rootdevice\r\n" +
+            "\r\n"
 
     /**
      * 取得组播锁（Wi-Fi 省电过滤组播包的直接对策）。
@@ -718,6 +817,7 @@ class DlnaCastManager @Inject constructor(
         }
         startPolling()
         CastNetworkLog.log("cast-ok device=${device.name} mime=$mimeType engine=$engineName")
+        recordKnown(listOf(CastDevice(device.id, device.name, device.address, device.isTV)))
     }
 
     /**

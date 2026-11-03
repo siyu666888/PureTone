@@ -162,31 +162,26 @@ jobs:
             && echo "baseline.prof OK" \
             || { echo "::error::assets/dexopt/baseline.prof 缺失"; exit 1; }
 
-      # 16KB 页大小兼容性（P0-3 第一步实测结论，详见 dist/v1.7.24 交付文档）。
+      # 16KB 页大小兼容性（P0-3 实测结论，详见 dist/v1.7.24 交付文档）。
       #
-      # 实测结论：ffmpeg-kit 6.0-2.LTS 的全部 .so 是 **4KB 页**编译
-      # （PT_LOAD p_align=4096），在 16KB 页设备上无法加载；
-      # 而 APK 内 .so 全部为 Stored（未压缩），故 zip 条目层**必须**16KB 对齐。
+      # 历史：ffmpeg-kit 6.0-2.LTS 的全部 .so 是 4KB 页编译（PT_LOAD p_align=4096），
+      # 在 16KB 页设备上无法加载；对应 APK 内 .so 又全部 Stored（未压缩），
+      # 故 zip 条目层也必须 16KB 对齐。
+      # 自 v1.9.2（commit 9eff959）起已换用维护版 **ffmpeg-kit-min 6.0.3**，
+      # 该构建的 .so 全部按 16KB 页对齐编译，问题在设备层已闭环。
       #
-      # 两层实测结果：
-      #   ZIP  层（zipalign -c -P 16）→ 5 个 APK 全部 EXIT=0，零不对齐条目
-      #                            （AGP 8.6 打包已正确处理）
-      #   ELF 层（PT_LOAD p_align）  → 52 个 .so 中 44 个不合规，全为 ffmpeg-kit 系
+      # 两层实测结果（v1.9.2 universal 包，本地 `check_16kb_alignment.py` 实测）：
+      #   ZIP  层（zipalign -c -P 16）→ 全部 EXIT=0，零不对齐条目（AGP 8.6 打包已正确处理）
+      #   ELF 层（PT_LOAD p_align）  → 26 个 .so 全部合规，不合规 0 个
       #
-      # 为什么现在**不**阻塞：本项目走**自分发**（不上 Google Play），Play 的 16KB 硬要求不适用；
-      # 16KB 仍是 ffmpeg-kit 在 16KB 页设备上的**已知设备兼容问题**（与上架政策无关，属设备层）。
-      # 强行阻塞只会让 CI 永久变红、掩盖其它真实失败。
-      # 升级为真门禁的时机：ffmpeg-kit 换成 16KB 构建之后——
-      # 届时删掉本步的 continue-on-error: true 即可。
-      - name: 检查 16KB 页大小对齐（当前已知不合规，仅报告不阻塞）
-        continue-on-error: true
+      # 因此本步已升级为**真门禁**：不合格（含 .so 解析失败无法判定）直接让 CI 失败。
+      - name: 检查 16KB 页大小对齐（ELF LOAD 段，当前已合规）
         run: |
           set -e
           # 只查 universal 包：它一个就覆盖 arm64-v8a / armeabi-v7a / x86 / x86_64 四个 ABI
           APK=$(ls app/build/outputs/apk/release/*universal-release.apk | head -1)
           echo "checking $APK"
-          python3 tools/check_16kb_alignment.py "$APK" > /tmp/16kb.txt 2>&1 || true
-          cat /tmp/16kb.txt
+          python3 tools/check_16kb_alignment.py "$APK" | tee /tmp/16kb.txt
           {
             echo "### 16KB 页大小对齐检查（ELF LOAD 段）"
             echo ""
