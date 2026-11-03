@@ -208,6 +208,16 @@ class PlayerViewModel @Inject constructor(
      */
     fun stopCast() = playback.stopCast()
 
+    /**
+     * 投射音量（M3）：调整渲染器输出音量，0~100。
+     *
+     * [DlnaCastManager.setVolume] 是挂起调用（库内部走网络），故包在 [viewModelScope]
+     * 里发；失败只回写旧值，UI 滑块不会跳错。
+     */
+    fun setCastVolume(volume: Int) {
+        viewModelScope.launch { dlnaCast.setVolume(volume) }
+    }
+
     fun setRepeatMode(mode: RepeatMode) = playback.setRepeatMode(mode)
     fun setShuffle(enabled: Boolean) = playback.setShuffle(enabled)
 

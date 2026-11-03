@@ -90,7 +90,15 @@ data class CastState(
      * 这与「进度真的是 0」是两回事——判定「播完」时必须区分，否则会把
      * 「进度未知」误判成「渲染器播完后把进度复位为 0」。
      */
-    val hasProgressInfo: Boolean = false
+    val hasProgressInfo: Boolean = false,
+    /**
+     * 投射音量（M3，0~100，默认 100）。
+     *
+     * 由 [DlnaCastManager.setVolume] 回写；投屏态下经 [DLNACast.setVolume] 下发给渲染器。
+     * 属**会话内**状态：一首播完由 M3 自动续播下一首时（[castSong] 成功处会把它
+     * 重新下发给新渲染器会话）继续沿用，[DlnaCastManager.stopCast] 整体重置后才归 100。
+     */
+    val castVolume: Int = 100
 )
 
 /**
@@ -374,6 +382,11 @@ class DlnaCastManager @Inject constructor(
 
         return try {
             DLNACast.castLocalFile(target.absolutePath, device, title)
+            // M3 投射音量：重新投送（含自动续播下一首）时把当前会话音量重新下发，
+            // 否则渲染器会回到默认 100，用户调过的音量在切歌后丢失。
+            val v = _state.value.castVolume
+            if (v != 100) runCatching { DLNACast.setVolume(v) }
+                .onFailure { Log.w(TAG, "re-apply cast volume failed", it) }
             _state.update {
                 it.copy(
                     isCasting = true,
@@ -400,8 +413,24 @@ class DlnaCastManager @Inject constructor(
     suspend fun stop(): Boolean = try { DLNACast.stop() } catch (e: Exception) { Log.w(TAG, "stop failed", e); false }
     suspend fun seek(positionMs: Long): Boolean =
         try { DLNACast.seek(positionMs) } catch (e: Exception) { Log.w(TAG, "seek failed", e); false }
-    suspend fun setVolume(volume: Int): Boolean =
-        try { DLNACast.setVolume(volume.coerceIn(0, 100)) } catch (e: Exception) { Log.w(TAG, "setVolume failed", e); false }
+    /**
+     * 设置渲染器输出音量（M3 投射音量，0~100）。
+     *
+     * 下发 [DLNACast.setVolume] 成功才回写 [CastState.castVolume]，失败则保持旧值
+     * （避免 UI 滑块跳到错误位置）。调用方无需关心渲染器是否支持——不支持时
+     * 库会失败，这里静默吞掉并回 false，不影响本地播放链路。
+     */
+    suspend fun setVolume(volume: Int): Boolean {
+        val clamped = volume.coerceIn(0, 100)
+        val ok = try {
+            DLNACast.setVolume(clamped)
+        } catch (e: Exception) {
+            Log.w(TAG, "setVolume failed", e)
+            false
+        }
+        if (ok) _state.update { it.copy(castVolume = clamped) }
+        return ok
+    }
 
     /**
      * 停止投屏：停止渲染器、清空状态（本地播放恢复由上层负责）。

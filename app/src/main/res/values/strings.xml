@@ -288,6 +288,8 @@
     <string name="pt_player_033" formatted="false">重新搜索</string>
     <!-- 投屏设备发现需要权限（Android 13+ 为「附近设备」，低版本为「位置」）： -->
     <string name="pt_player_034" formatted="false">投屏需「附近设备」/「位置」权限以发现局域网设备。请在系统设置中授予后点「重新搜索」。</string>
+    <!-- 投屏：投射音量（M3） -->
+    <string name="pt_player_035" formatted="false">投射音量 %1$d%%</string>
     <!-- 歌单 -->
     <string name="pt_playlist_001" formatted="false">歌单</string>
     <!-- 返回 -->

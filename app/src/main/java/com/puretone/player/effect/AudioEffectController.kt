@@ -262,11 +262,6 @@ class AudioEffectController @Inject constructor() {
     }
 
     @Synchronized
-    private fun applyEnabled() {
-        effects.values.forEach { applyEnabled(it) }
-    }
-
-    @Synchronized
     private fun applyBands(holder: EffectsHolder) {
         val eq = holder.equalizer ?: return
         val levels = deviceBandLevels(eq) ?: return

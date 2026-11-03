@@ -52,6 +52,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.filled.CastConnected
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.Cast
 import androidx.compose.material.icons.outlined.Equalizer
 import androidx.compose.material.icons.rounded.AddCircleOutline
@@ -65,6 +67,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -118,6 +121,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.tanh
 
 /** 全屏播放页（Item 1/2/3：布局重构 + 封面翻转歌词 + 视差切歌） */
@@ -243,7 +247,13 @@ fun PlayerScreen(
             // M2 补充：APE 等需转码的格式在真正投出去之前有一段时间 isCasting 仍为 false
             // （isPreparing=true），此阶段同样要显示状态条，否则用户会以为点了没反应。
             if (castState.isCasting || castState.isPreparing) {
+                // 投射音量（M3）：仅真正投出去后（isCasting）才允许调；转码准备期渲染器尚无媒体。
+                // 本地 castVol 与 castState.castVolume 双向同步：拖动写本地并下发，
+                // 渲染器回写状态后（LaunchedEffect）再同步回来，避免二者分叉。
+                var castVol by remember { mutableFloatStateOf(castState.castVolume / 100f) }
+                LaunchedEffect(castState.castVolume) { castVol = castState.castVolume / 100f }
                 Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -288,6 +298,36 @@ fun PlayerScreen(
                                     if (castState.isPreparing) stringResource(R.string.pt_player_010)
                                     else stringResource(R.string.pt_player_011)
                                 )
+                        }
+                    }
+                        if (castState.isCasting) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth()
+                                    .padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    if (castVol <= 0f) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Slider(
+                                    value = castVol,
+                                    onValueChange = {
+                                        castVol = it
+                                        vm.setCastVolume((it * 100).roundToInt())
+                                    },
+                                    valueRange = 0f..1f,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    stringResource(R.string.pt_player_035, (castVol * 100).roundToInt()),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
