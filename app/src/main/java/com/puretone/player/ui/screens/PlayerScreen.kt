@@ -300,7 +300,18 @@ fun PlayerScreen(
                                 )
                         }
                     }
-                        if (castState.isCasting) {
+                        if (castState.isCasting && castState.volumeSupported == false) {
+                            // 渲染器没有 RenderingControl 服务（或回读证明设了不生效）：
+                            // 给一个拖了没反应的滑块比不给更糟，改为如实提示用遥控器。
+                            Text(
+                                stringResource(R.string.pt_player_036),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.fillMaxWidth()
+                                    .padding(start = 16.dp, end = 16.dp, bottom = 10.dp)
+                            )
+                        }
+                        if (castState.isCasting && castState.volumeSupported != false) {
                             Row(
                                 modifier = Modifier.fillMaxWidth()
                                     .padding(start = 16.dp, end = 16.dp, bottom = 10.dp),

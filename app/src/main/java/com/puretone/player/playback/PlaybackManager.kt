@@ -19,9 +19,7 @@ import com.puretone.player.effect.AudioEffectController
 import com.puretone.player.playback.cast.CastDevice
 import com.puretone.player.playback.cast.CastQueueCoordinator
 import com.puretone.player.playback.cast.CastQueueInfo
-import com.puretone.player.playback.cast.CastQueueSink
 import com.puretone.player.playback.cast.CastResult
-import com.puretone.player.playback.cast.CastState
 import com.puretone.player.playback.cast.DlnaCastManager
 import com.puretone.player.widget.WidgetUpdater
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -110,7 +108,7 @@ class PlaybackManager @Inject constructor(
     private val widgetUpdater: WidgetUpdater,
     private val dlnaCast: DlnaCastManager,
     private val serviceLauncher: PlaybackServiceLauncher
-) : CastCommandSink, PlaybackEventSink, PlaybackControlSink, PlaybackQueueSink, CastQueueSink {
+) : PlaybackEventSink, PlaybackControlSink, PlaybackQueueSink {
 
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
@@ -150,7 +148,6 @@ class PlaybackManager @Inject constructor(
             }
     )
 
-    private var sleepTimerJob: Job? = null
     private var settingsJob: Job? = null
 
     /**
@@ -161,8 +158,6 @@ class PlaybackManager @Inject constructor(
         scope = scope,
         playerProvider = { player?.let(::ExoGapPlayer) }
     )
-    /** 连续「播放失败自动跳过」的计数（防止整条队列都是坏文件时无限空转） */
-    private var consecutiveErrorSkips: Int = 0
     /**
      * 应用级音频焦点（双实例必须单点持有，见 [AudioFocusController]）：两个 ExoPlayer 都以
      * `handleAudioFocus = false` 构建，否则备援在淡化起点申请焦点会把主播放器打成 LOSS。
@@ -320,6 +315,31 @@ class PlaybackManager @Inject constructor(
     )
 
     /**
+     * 睡眠定时控制器（P1-1 收尾抽取）：MINUTES 倒计时 / END_OF_TRACK 播完本曲停止 / OFF。
+     * 状态机与 job 全部归它，主类只保留「设置变化 / ticker / 自然播完」三处一行转发。
+     */
+    private val sleepTimer = SleepTimerController(
+        settings = settings,
+        uiState = _uiState,
+        scope = scope,
+        pause = { this@PlaybackManager.pause() }
+    )
+
+    /**
+     * 播放错误自愈处理器（P1-1 收尾抽取）：APE 重试 / 错误自愈 / 连续跳过计数。
+     * 由 onError / onIsPlayingChanged 经 errorHandler 字段转发。
+     */
+    private val errorHandler = PlaybackErrorHandler(
+        playerProvider = { player },
+        uiState = _uiState,
+        gate = gate,
+        apeResolver = apeResolver,
+        queueOrchestrator = queueOrchestrator,
+        scope = scope,
+        stop = { this@PlaybackManager.stop() }
+    )
+
+    /**
      * 投屏队列协调器（M3）。
      *
      * DLNA 是一次性 push，渲染器不会自动接着播下一首；而投屏态下本地播放器是暂停的
@@ -330,6 +350,25 @@ class PlaybackManager @Inject constructor(
      * 判定与状态机都在协调器内部（可用纯 JVM 单测逐条锁定），主类只提供
      * 「队列快照」与「落地动作」两件事。
      */
+    /**
+     * 投屏会话控制器（P1-1 收尾抽取）：CastCommandSink / CastQueueSink 实现、路由状态、
+     * startCast / stopCast / fallback 全归它；[castQueueCoordinator] 的 sink 指向它。
+     * recastCurrentIfCasting 与 warmUpFollowingApe 仍属 PlaybackQueueSink 留在主类。
+     */
+    private val cast = CastSessionController(
+        dlnaCast = dlnaCast,
+        playbackFocus = playbackFocus,
+        uiState = _uiState,
+        scope = scope,
+        playerProvider = { player },
+        sessionProvider = { session },
+        pause = { this@PlaybackManager.pause() },
+        play = { this@PlaybackManager.play() },
+        next = { this@PlaybackManager.next() },
+        previous = { this@PlaybackManager.previous() },
+        playAtIndex = { i -> this@PlaybackManager.playAtIndex(i) }
+    )
+
     private val castQueueCoordinator = CastQueueCoordinator(
         scope = scope,
         castState = dlnaCast.state,
@@ -343,7 +382,7 @@ class PlaybackManager @Inject constructor(
                 currentDurationMs = queue.getOrNull(index)?.durationMs ?: 0L
             )
         },
-        sink = this
+        sink = cast
     )
 
     /**
@@ -357,12 +396,6 @@ class PlaybackManager @Inject constructor(
         currentSongIdProvider = { _uiState.value.currentSongId },
         sink = this
     )
-
-    /** 投屏态的 MediaSession 门面。在 [bind] 时按当前 player 重建（player 换了就要换包装） */
-    private var castPlayer: CastPlaybackPlayer? = null
-    /** MediaSession 当前是否挂在门面上（避免每次状态刷新都重复 setPlayer） */
-    private var routedToCast = false
-    private var castRoutingJob: Job? = null
 
     // 服务拉起 / 兜底 controller 已下沉到 PlaybackServiceLauncher（P1-1 拆分第二刀）：
     // 那里装的是 Android 8+ 后台启动禁令的绕行逻辑，不属于播放编排。
@@ -388,21 +421,13 @@ class PlaybackManager @Inject constructor(
                 }
             }
             // 睡眠定时剩余时间随 ticker 刷新，UI 才能显示「剩余 12:34」
-            refreshSleepRemaining()
+            sleepTimer.refreshRemaining()
             // 交叉淡化：主播放器临近本曲结尾（且存在下一首、未处于淡化中、已开启）时，
             // 提前起播备援播放器承载下一首，两路音量此消彼长形成真重叠淡化。
             if (p != null && p.isPlaying) maybeStartCrossfade(p)
             // P3-18：暂停时不需要 500ms 粒度（睡眠定时剩余也只需秒级），
             // 拉长到 2s，减少空转唤醒
             delay(if (p?.isPlaying == true) 500 else 2_000)
-        }
-    }
-
-    /** 重算睡眠定时剩余时间；到期则由 job 负责暂停与清零 */
-    private fun refreshSleepRemaining() {
-        val remaining = settings.sleepRemainingMs(lastSettings)
-        if (remaining != _uiState.value.sleepRemainingMs) {
-            _uiState.update { it.copy(sleepRemainingMs = remaining) }
         }
     }
 
@@ -478,20 +503,12 @@ class PlaybackManager @Inject constructor(
         settingsJob = scope.launch {
             settings.settings.collect { applySettings(it) }
         }
-        // 投屏路由（M1 收尾）：门面必须包住**当前**这个 player，故每次 bind 重建
-        castPlayer = CastPlaybackPlayer(player, this)
-        castRoutingJob?.cancel()
-        castRoutingJob = scope.launch {
-            dlnaCast.state.collect { st ->
-                // 投屏期本地 ExoPlayer 是暂停的，onIsPlayingChanged 只会推 false；
-                // UI 的播放态镜像改跟渲染器，否则手机显示「暂停」而电视在播。
-                if (st.isCasting) _uiState.update { it.copy(isPlaying = st.isPlaying) }
-                routeSessionToCast(st.isCasting)
-            }
-        }
+        // 投屏路由（M1 收尾）：门面必须包住**当前**这个 player，故每次 bind 重建；
+        // 路由状态与订阅已下沉到 CastSessionController（P1-1 收尾抽取）。
+        cast.bind(player)
         // 投屏队列推进（M3）：渲染器播完自动投下一首 / 投屏失联回退本地。
-        // 与 castRoutingJob 是两件事——那个只管 UI 镜像与 MediaSession 切换，
-        // 这个管「队列要不要继续往前走」，两者各自独立订阅同一份状态流。
+        // 与上面 CastSessionController 的路由订阅是两件事——那个只管 UI 镜像与
+        // MediaSession 切换，这个管「队列要不要继续往前走」，两者各自独立订阅同一份状态流。
         castQueueCoordinator.start()
         // 执行挂起请求：一次性取走全部（重放期间新来的命令会留在槽里，不被这次重放吞掉）
         val pending = gate.drain()
@@ -534,29 +551,10 @@ class PlaybackManager @Inject constructor(
         // 解绑只作废「追加」与「续播」（依赖当前会话的队列/设置），
         // 保留 pendingPlay——用户显式点的歌在服务重建后仍应执行。
         gate.clearSessionBoundPending()
-        // session/player 都将被释放：停掉路由订阅，避免对已死对象调 setPlayer
-        castRoutingJob?.cancel()
-        castRoutingJob = null
-        castPlayer = null
-        routedToCast = false
+        // 投屏路由状态与订阅（CastSessionController）随解绑释放，避免对已死对象调 setPlayer
+        cast.unbind()
         // 投屏队列协调器同样停掉：它回调宿主推进队列，而队列已随播放器一起释放
         castQueueCoordinator.stop()
-    }
-
-    /**
-     * 把 MediaSession 的 player 在「本地 ExoPlayer」与「投屏门面」之间切换。
-     *
-     * 只在跨越投屏边界时调用：频繁 setPlayer 会让 Media3 反复重建通知与内部控制器。
-     * 切换失败（session 已释放等）只记日志——投屏是附加能力，不能因此崩掉播放链路。
-     */
-    private fun routeSessionToCast(toCast: Boolean) {
-        if (toCast == routedToCast) return
-        val target = if (toCast) castPlayer else player
-        val s = session
-        if (target == null || s == null) return
-        runCatching { s.setPlayer(target) }
-            .onFailure { Log.w(TAG, "session.setPlayer failed (toCast=$toCast)", it) }
-            .onSuccess { routedToCast = toCast }
     }
 
     /**
@@ -572,7 +570,7 @@ class PlaybackManager @Inject constructor(
         gaplessEnabled = s.gapless
         setSpeed(s.playbackSpeed)
         applyPlayOrder(s)
-        applySleepTimer(s)
+        sleepTimer.applySettings(s)
         audioEffectController.applySettings(s)
         // ReplayGain：开关 / 模式 / preamp 变化时刷新当前曲目的增益
         applyReplayGainForCurrent()
@@ -606,87 +604,6 @@ class PlaybackManager @Inject constructor(
             }
             p.shuffleModeEnabled = s.shuffle
         }
-    }
-
-    /**
-     * 睡眠定时：按模式分派。
-     *
-     * 三种模式（2026-10-30 细粒度定时）共用同一份持久化状态，由 [SettingsRepository.resolveSleepTimerMode]
-     * 统一判定，避免「UI 选的模式」与「播放器实际执行的模式」出现两套解释：
-     * - [SleepTimerMode.MINUTES]：按「到期时刻」恢复倒计时；已过期则收尾并清零；
-     * - [SleepTimerMode.END_OF_TRACK]：不排倒计时 job，结束时机由播放器回调决定（见 [finishEndOfTrackSleepTimer]）；
-     * - [SleepTimerMode.OFF]：取消 job 并清理残留。
-     *
-     * MINUTES 到期后要把定时四字段（模式 + 分钟数 + 两个到期时刻）全部清零——
-     * 否则进程重启后既会按完整时长重新倒计时（旧「定时复活」bug），设置页时段也
-     * 不会回到「关」。另见 [SettingsRepository] 读取层的过期归一化。
-     */
-    private fun applySleepTimer(s: PureToneSettings) {
-        when (settings.resolveSleepTimerMode(s)) {
-            SleepTimerMode.MINUTES -> applyMinutesSleepTimer(s, settings.sleepRemainingMs(s))
-            SleepTimerMode.END_OF_TRACK -> applyEndOfTrackSleepTimer()
-            SleepTimerMode.OFF -> cancelSleepTimer(s)
-        }
-    }
-
-    /** 倒计时型定时：以「到期时刻」为准恢复/取消（进程重建后仍准确） */
-    private fun applyMinutesSleepTimer(s: PureToneSettings, remaining: Long) {
-        if (remaining <= 0L) {
-            // 到期时刻已过（例如到期瞬间进程被杀）→ 收尾并把残留写回全关
-            clearSleepTimerJob()
-            if (settings.hasSleepTimer(s)) {
-                scope.launch { settings.clearSleepTimer() }
-            }
-            _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.OFF, sleepRemainingMs = 0L) }
-            return
-        }
-        clearSleepTimerJob()
-        sleepTimerJob = scope.launch {
-            delay(remaining)
-            PlaybackEventLog.record("sleep-timer", "MINUTES 倒计时到点 → 暂停（剩余 $remaining ms 已走完）")
-            pause()
-            // 关键：触发后清零，防止重启后再次倒计时
-            scope.launch { settings.clearSleepTimer() }
-            _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.OFF, sleepRemainingMs = 0L) }
-        }
-        _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.MINUTES, sleepRemainingMs = remaining) }
-    }
-
-    /**
-     * 「播完本曲停止」：没有时间上限，只登记模式，真正的暂停时机由
-     * [finishEndOfTrackSleepTimer] 在自然切歌 / 末首播完时执行。
-     */
-    private fun applyEndOfTrackSleepTimer() {
-        clearSleepTimerJob()
-        _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.END_OF_TRACK, sleepRemainingMs = 0L) }
-    }
-
-    /** 关：取消倒计时并清理持久化残留 */
-    private fun cancelSleepTimer(s: PureToneSettings) {
-        clearSleepTimerJob()
-        if (settings.hasSleepTimer(s) || s.sleepTimerMinutes > 0) {
-            scope.launch { settings.clearSleepTimer() }
-        }
-        _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.OFF, sleepRemainingMs = 0L) }
-    }
-
-    private fun clearSleepTimerJob() {
-        sleepTimerJob?.cancel()
-        sleepTimerJob = null
-    }
-
-    /**
-     * 「播完本曲停止」到点：暂停播放并把定时归零。
-     *
-     * 幂等：重复调用（自动切歌回调与 STATE_ENDED 回调可能同时到达）时，
-     * 第二次 [PlaybackUiState.sleepTimerMode] 已是 OFF，直接返回。
-     */
-    private fun finishEndOfTrackSleepTimer() {
-        if (_uiState.value.sleepTimerMode != SleepTimerMode.END_OF_TRACK) return
-        PlaybackEventLog.record("sleep-timer", "END_OF_TRACK 到点 → 暂停")
-        pause()
-        _uiState.update { it.copy(sleepTimerMode = SleepTimerMode.OFF, sleepRemainingMs = 0L) }
-        scope.launch { settings.clearSleepTimer() }
     }
 
     // ---------- 队列命令（逻辑下沉至 QueueOrchestrator，此处仅转发） ----------
@@ -807,80 +724,8 @@ class PlaybackManager @Inject constructor(
     private fun currentDuration(): Long = player?.duration?.takeIf { it > 0 } ?: 0L
 
     // ---------- 内部 ----------
-
-    private fun handlePlayerError(error: PlaybackException) {
-        val p = player ?: return
-        val index = p.currentMediaItemIndex
-        val entry = _uiState.value.queue.getOrNull(index)
-        PlaybackEventLog.record(
-            "player-error",
-            "code=${error.errorCodeName} idx=$index song=${entry?.songId ?: -1} isApe=${entry?.isApe} " +
-                "msg=${error.message}"
-        )
-        // 按队列内索引记忆重试资格：同一索引只自动转码重试一次，防止
-        // 「出错 → 转码 → 再出错 → 再转码」死循环。写法保持「判断 + 占位」原子完成。
-        if (entry != null && entry.isApe && gate.tryAcquireApeRetry(index)) {
-            scope.launch {
-                // P0-2：转码失败/取消的语义统一由 apeResolver 处理（finally 复位标记，
-                // 异常收敛为 null，取消原样抛出），此处只负责结果分支。
-                val wav = apeResolver.transcodeToFile(entry.songId, entry.filePath)
-                if (wav != null) {
-                    queueOrchestrator.replaceMediaItemUri(index, wav)
-                    p.prepare()
-                    p.play()
-                } else {
-                    _uiState.update { it.copy(error = "「${entry.title}」APE 转码失败，已跳过") }
-                    if (p.hasNextMediaItem()) p.seekToNextMediaItem() else stop()
-                }
-            }
-            return
-        }
-        _uiState.update { it.copy(error = error.errorCodeName + ": " + (error.message ?: "播放失败")) }
-        // 关键修复：非 APE 错误（文件被删/移动、MediaStore URI 失效、编码不支持、
-        // 读盘瞬时 IO 失败…）原实现只写一条错误文案就结束，ExoPlayer 已落 IDLE，
-        // 整条队列就此停住——用户看到的就是「播着播着自动停了」，而且只在
-        // 恰好轮到那一首时出现，所以听起来像「一定概率」。
-        // 正确做法与主流播放器一致：坏一首跳一首，继续往下放。
-        skipAfterPlaybackError(p, entry)
-    }
-
-    /**
-     * 单曲播放失败后的自愈：跳过这一首继续放，而不是让整条队列停在这里。
-     *
-     * 防死循环：连续跳过超过 [MAX_CONSECUTIVE_ERROR_SKIPS] 首就判定「队列不可用」，
-     * 暂停但**保留队列**（用户还能手动挑别的歌），并在 UI 上留下错误文案。
-     * 计数由 [onIsPlayingChanged] 在真正播起来时归零。
-     */
-    private fun skipAfterPlaybackError(p: ExoPlayer, failed: QueueEntry?) {
-        consecutiveErrorSkips++
-        PlaybackEventLog.record(
-            "error-skip",
-            "consecutive=$consecutiveErrorSkips failedSong=${failed?.songId ?: -1} " +
-                "hasNext=${p.hasNextMediaItem()}"
-        )
-        if (consecutiveErrorSkips > MAX_CONSECUTIVE_ERROR_SKIPS) {
-            consecutiveErrorSkips = 0
-            PlaybackEventLog.record("error-give-up", "连续失败超过上限，暂停并保留队列")
-            p.pause()
-            return
-        }
-        when {
-            p.hasNextMediaItem() -> {
-                p.seekToNextMediaItem()
-                p.prepare()
-                p.play()
-            }
-            // 已到队列末尾：列表循环（ALL / ONE，ONE 时 hasNext 恒 true 走不到这里）
-            // 情况下回绕到第一首再试，否则正常结束。
-            p.mediaItemCount > 0 && _uiState.value.repeatMode != RepeatMode.OFF -> {
-                val first = p.currentTimeline.getFirstWindowIndex(p.shuffleModeEnabled)
-                p.seekTo(if (first >= 0) first else 0, 0L)
-                p.prepare()
-                p.play()
-            }
-            else -> p.pause()
-        }
-    }
+    // 播放错误处理（APE 重试 / 错误自愈 / 连续跳过计数）已下沉到 PlaybackErrorHandler
+    // （P1-1 收尾抽取），由 onError / onIsPlayingChanged 经 errorHandler 字段转发。
 
     // ---------- 播放事件副作用（PlaybackEventSink 实现） ----------
     //
@@ -900,7 +745,7 @@ class PlaybackManager @Inject constructor(
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         _uiState.update { it.copy(isPlaying = isPlaying) }
         // 正常播起来了：连续失败计数归零（只有「一直在失败」才判定为坏队列）
-        if (isPlaying) consecutiveErrorSkips = 0
+        if (isPlaying) errorHandler.onPlaying()
         else PlaybackEventLog.recordPauseWithQueueIfAny(player, _uiState.value.currentSongId)
         // 焦点跟着「真的在发声」走：起播即申请、真正停住才放弃（判据见 PlaybackAudioFocus）
         playbackFocus.onIsPlayingChanged(isPlaying)
@@ -943,7 +788,7 @@ class PlaybackManager @Inject constructor(
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
             reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
         ) {
-            finishEndOfTrackSleepTimer()
+            sleepTimer.finishEndOfTrack()
         }
         // 曲目变化（含清空队列导致切到空）→ 同步桌面小部件
         widgetUpdater.requestUpdate()
@@ -962,7 +807,7 @@ class PlaybackManager @Inject constructor(
         // 末首自然播完（无 AUTO/REPEAT 过渡）的收尾。完成去重已由事件层
         // [CompletionRecorder] 在触发处负责，此处只做：睡眠定时归零 + 立即存档 + 空闲停服。
         PlaybackEventLog.record("playback-ended", endedSnapshot())
-        finishEndOfTrackSleepTimer()
+        sleepTimer.finishEndOfTrack()
         saveSessionNow()
         // 判定一律交给 stopServiceIfIdle（它同时看主/备两个实例，交叉淡化收尾时不会误停）
         stopServiceIfIdle()
@@ -979,7 +824,7 @@ class PlaybackManager @Inject constructor(
             "cf=${crossfade.isCrossfading}"
 
     override fun onError(error: PlaybackException) {
-        handlePlayerError(error)
+        errorHandler.handle(error)
     }
 
     override fun onSecondaryError(error: PlaybackException) {
@@ -1023,9 +868,6 @@ class PlaybackManager @Inject constructor(
 
     private companion object {
         const val TAG = "PlaybackManager"
-
-        /** 连续失败跳过上限：超过就判定队列不可用，暂停但保留队列 */
-        const val MAX_CONSECUTIVE_ERROR_SKIPS = 3
     }
 
     // 媒体项 / URI / 队列项构造已抽到 PlaybackMediaItems（P1-1 拆分第一刀）：
@@ -1034,48 +876,11 @@ class PlaybackManager @Inject constructor(
 
     // ---------- 投屏（M1 收尾：MediaSession 切换 + 命令路由） ----------
 
-    /**
-     * 开始投屏：暂停本地 → 选定设备 → 投送当前曲。
-     *
-     * 路由语义与 ViewModel 时期一致：投屏失败（设备拒绝/网络异常/APE 转码失败）时
-     * **恢复本地播放**——否则用户点了投屏却两头都没声音，且看不出发生了什么。
-     * 若另一次投送仍在进行（已投屏或正在准备），说明是并发/过期场景，由它接管，
-     * 本次不抢回本地播放。
-     */
-    fun startCast(device: CastDevice, song: SongEntity) {
-        scope.launch {
-            if (_uiState.value.isPlaying) pause()
-            // 投屏态释放手机侧音频焦点（声音走电视，焦点无关且不应占用）
-            playbackFocus.abandon()
-            dlnaCast.selectDevice(device)
-            when (val result = dlnaCast.castSong(song)) {
-                is CastResult.Success -> Unit
-                // 首投失败 → 恢复本地播放，否则用户点了投屏却两头都没声音。
-                // 「已过期」不恢复：那是期间用户自己停了投屏或改了目标，
-                // 本地播放已由那条路径恢复，这里再拉一次会把新一轮投送也打断。
-                is CastResult.Failed -> {
-                    val st = dlnaCast.state.value
-                    if (!st.isCasting && !st.isPreparing) play()
-                }
-                is CastResult.Superseded -> Unit
-            }
-        }
-    }
+    /** 开始投屏：暂停本地 → 选定设备 → 投送当前曲（实现见 [CastSessionController]） */
+    fun startCast(device: CastDevice, song: SongEntity) = cast.startCast(device, song)
 
-    /**
-     * 停止投屏：停渲染器 → MediaSession 切回本地 → 本地从原位置续播。
-     *
-     * 无条件续播而非「若本地非播放才播」：投屏期本地必然是暂停的，停止投屏的意图就是
-     * 回到手机上继续听。若按 uiState 判断会误判——投屏期 uiState.isPlaying 跟随的是
-     * 渲染器（见 bind 里的投屏状态订阅），停止后它仍是 true，会被读成「正在播放」而
-     * 不恢复，用户就既听不到电视也听不到手机。
-     */
-    fun stopCast() {
-        scope.launch {
-            dlnaCast.stopCast()
-            play()
-        }
-    }
+    /** 停止投屏：停渲染器 → MediaSession 切回本地 → 本地从原位置续播（实现见 [CastSessionController]） */
+    fun stopCast() = cast.stopCast()
 
     /**
      * 投屏期本地切歌后，把「当前曲」重新投给渲染器。
@@ -1093,84 +898,14 @@ class PlaybackManager @Inject constructor(
         scope.launch {
             val result = dlnaCast.castSong(entry.songId, entry.title, entry.filePath)
             if (result is CastResult.Failed) {
-                fallbackToLocalPlayback("投屏中断，已切回本地播放")
+                cast.fallbackToLocalPlayback("投屏中断，已切回本地播放")
             }
         }
     }
 
-    // ---------- CastQueueSink：投屏队列推进（M3） ----------
-
-    /**
-     * 渲染器自然播完当前这一首 → 推进队列并重新投送下一首。
-     *
-     * 走 [next] 而非自己推进索引，是为了**复用本地播放模式**（循环/随机）——
-     * 投屏的队列推进与本地切歌必须是同一套语义，否则会出现「本地按顺序、
-     * 投屏按另一套」的分叉。
-     *
-     * [next] 内部已带重投（本地推进后调 [recastCurrentIfCasting]），故这里
-     * 不再单独投送。
-     */
-    override fun onCastTrackEnded() {
-        next()
-    }
-
-    /**
-     * 投屏连接失效（设备离线 / 流错误）→ 停止投屏并把播放回退到本地。
-     *
-     * 与用户主动「停止投屏」走同一条路径：停渲染器 → MediaSession 切回本地 →
-     * 本地续播。区别只在于多给一条提示——用户是**被动**失去投屏的，
-     * 不提示就会以为手机静音了。
-     */
-    override fun onCastConnectionLost(reason: String) {
-        scope.launch { fallbackToLocalPlayback(reason) }
-    }
-
-    /**
-     * 投屏不可用时的统一回退：停投屏 → 本地续播 → 给出提示。
-     *
-     * 顺序不能颠倒：[dlnaCast.stopCast] 会把 [CastState] 整体重置（isCasting 归 false），
-     * 只有在它之后调 [play]，本地播放才会真的起播——否则 [play] 会按「仍在投屏」
-     * 分支去命令渲染器播放，而渲染器已经不可用了。
-     */
-    private suspend fun fallbackToLocalPlayback(reason: String) {
-        try {
-            dlnaCast.stopCast()
-        } catch (e: Exception) {
-            Log.w(TAG, "stopCast during fallback failed", e)
-        }
-        _uiState.update { it.copy(error = reason) }
-        play()
-    }
-
-    // ---------- CastCommandSink：门面回调 ----------
-
-    override val castState: CastState
-        get() = dlnaCast.state.value
-
-    override fun playOnRenderer() {
-        scope.launch { dlnaCast.play() }
-    }
-
-    override fun pauseOnRenderer() {
-        scope.launch { dlnaCast.pause() }
-    }
-
-    override fun seekOnRenderer(positionMs: Long) {
-        scope.launch { dlnaCast.seek(positionMs) }
-    }
-
-    /** 门面收到的是「切到第 N 首」：走常规点播路径，末尾会自动重投 */
-    override fun skipToIndex(index: Int) {
-        playAtIndex(index)
-    }
-
-    override fun skipToNext() {
-        next()
-    }
-
-    override fun skipToPrevious() {
-        previous()
-    }
+    // 投屏的 CastCommandSink / CastQueueSink 实现、路由状态与 startCast / stopCast /
+    // fallback 已下沉到 CastSessionController（P1-1 收尾抽取）；recastCurrentIfCasting
+    // 与 warmUpFollowingApe 属 PlaybackQueueSink 留在下方。
 
     /**
      * 预热「下一首 APE」的转码（只一首：整队预转会拖慢切片切换、

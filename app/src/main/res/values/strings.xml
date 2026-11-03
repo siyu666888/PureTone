@@ -290,6 +290,8 @@
     <string name="pt_player_034" formatted="false">投屏需「附近设备」/「位置」权限以发现局域网设备。请在系统设置中授予后点「重新搜索」。</string>
     <!-- 投屏：投射音量（M3） -->
     <string name="pt_player_035" formatted="false">投射音量 %1$d%%</string>
+    <!-- 投屏：该渲染器未暴露 RenderingControl 服务，DLNA 无法调它的音量（如部分多屏互动接收端） -->
+    <string name="pt_player_036" formatted="false">该设备不支持音量调节，请用电视遥控器</string>
     <!-- 歌单 -->
     <string name="pt_playlist_001" formatted="false">歌单</string>
     <!-- 返回 -->

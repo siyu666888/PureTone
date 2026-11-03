@@ -214,8 +214,15 @@ class PlayerViewModel @Inject constructor(
      * [DlnaCastManager.setVolume] 是挂起调用（库内部走网络），故包在 [viewModelScope]
      * 里发；失败只回写旧值，UI 滑块不会跳错。
      */
+    /**
+     * 投射音量（0~100）。
+     *
+     * 不再 `viewModelScope.launch`：滑块 `onValueChange` 每像素触发一次，
+     * 逐次开协程会让一次拖动产生十几路并发请求。合并与去抖在
+     * [com.puretone.player.playback.cast.DlnaCastManager] 内部做（只保留最新值）。
+     */
     fun setCastVolume(volume: Int) {
-        viewModelScope.launch { dlnaCast.setVolume(volume) }
+        dlnaCast.setVolume(volume)
     }
 
     fun setRepeatMode(mode: RepeatMode) = playback.setRepeatMode(mode)

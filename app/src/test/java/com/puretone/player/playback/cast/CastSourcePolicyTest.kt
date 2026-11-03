@@ -101,4 +101,38 @@ class CastSourcePolicyTest {
     fun `文件名含多个点时取最后一段`() {
         assertEquals("flac", CastSourcePolicy.extensionOf("/sdcard/Music/01 - song (live).Take 2.flac"))
     }
+
+    // -------------------------------------------- 投送 MIME / UPnP class（回归防护）
+
+    @Test
+    fun `音频扩展名映射到正确的 MIME`() {
+        assertEquals("audio/mpeg", CastSourcePolicy.mimeTypeOf("song.mp3"))
+        assertEquals("audio/flac", CastSourcePolicy.mimeTypeOf("song.flac"))
+        assertEquals("audio/x-wav", CastSourcePolicy.mimeTypeOf("ape_42.wav"))
+        assertEquals("audio/mp4", CastSourcePolicy.mimeTypeOf("song.m4a"))
+        assertEquals("audio/mp4", CastSourcePolicy.mimeTypeOf("song.aac"))
+        assertEquals("audio/ogg", CastSourcePolicy.mimeTypeOf("song.ogg"))
+        assertEquals("video/mp4", CastSourcePolicy.mimeTypeOf("clip.mp4"))
+    }
+
+    @Test
+    fun `无扩展名的投送文件名兜底为音频而非 video-mp4`() {
+        // UPnPCast 对无扩展名 URL 一律判 video/mp4，正是「音频被当视频、电视 SOAP 拒收、
+        // 回退本地」的根因。我们的兜底必须是音频 MIME，绝不能再落到 video/*。
+        assertEquals("audio/mpeg", CastSourcePolicy.mimeTypeOf("noext"))
+        assertFalse(CastSourcePolicy.mimeTypeOf("noext").startsWith("video"))
+    }
+
+    @Test
+    fun `音频 MIME 对应 audioItem-musicTrack 而视频对应 videoItem`() {
+        assertEquals(
+            "object.item.audioItem.musicTrack",
+            CastSourcePolicy.upnpClassOf("audio/mpeg")
+        )
+        assertEquals(
+            "object.item.audioItem.musicTrack",
+            CastSourcePolicy.upnpClassOf("audio/x-wav")
+        )
+        assertEquals("object.item.videoItem", CastSourcePolicy.upnpClassOf("video/mp4"))
+    }
 }

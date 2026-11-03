@@ -225,6 +225,26 @@ object CastNetworkLog {
         NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp }
     }.getOrDefault(emptyList())
 
+    /**
+     * 按 [NetworkInterface] 枚举顺序返回所有非回环 IPv4（`网卡:地址`）。
+     *
+     * UPnPCast 的本地文件服务 URL 取「**第一个**非回环 IPv4」作为主机名，遍历顺序与
+     * 这里一致。把顺序落盘，就能一眼看出它会不会误选蜂窝/虚拟网卡（双网卡设备上
+     * 表现为：URL 指到 10.x 蜂窝地址，电视同网段也拉不到流）。
+     */
+    fun ipCandidates(): String = runCatching {
+        NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+            .filter { it.isUp && !it.isLoopback }
+            .flatMap { nic ->
+                nic.inetAddresses.toList()
+                    .filterIsInstance<Inet4Address>()
+                    .filter { !it.isLoopbackAddress }
+                    .map { "${nic.name}:${it.hostAddress}" }
+            }
+            .joinToString(",")
+            .ifEmpty { "none" }
+    }.getOrDefault("error")
+
     /** 记录一次 M-SEARCH 探测（与库内 SSDP 行为对齐：库发几次我们就记几次） */
     fun logSearch(target: String, timeoutMs: Long, deviceCount: Int, elapsedMs: Long) {
         log("search target=$target timeout=${timeoutMs}ms elapsed=${elapsedMs}ms devices=$deviceCount")

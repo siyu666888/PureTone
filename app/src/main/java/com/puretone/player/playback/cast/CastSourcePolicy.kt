@@ -55,4 +55,44 @@ object CastSourcePolicy {
         val ext = extensionOf(path) ?: return true
         return ext !in DIRECT_EXTENSIONS
     }
+
+    /**
+     * 由**实际被投送的文件名**推断上报给渲染器的 MIME。
+     *
+     * ## 为什么必须由我们自己算
+     *
+     * UPnPCast v1.3.0 的 `MetadataBuilder.detectMimeType(mediaUrl)` 只看 **URL 字符串**
+     * 里有没有 `.mp4/.mkv/.m3u8/.mp3`，其余一律 `video/mp4`（已反编译核实）。
+     * 而本地投送的 URL 形如 `http://192.168.x.y:8081/file/<base64token>`——**没有扩展名**，
+     * 于是每一首音频都会被写成：
+     *
+     *     protocolInfo="http-get:*:video/mp4:*"  upnp:class=object.item.videoItem
+     *
+     * 严格一点的电视（如极光TV）会直接 SOAP 拒绝（非 200），
+     * `castLocalFile` 抛 `DeviceError`，上层于是「退回手机播放器」。
+     * 通过 `CastOptions(mimeType=…)` 显式覆盖即可修复，无需改库。
+     *
+     * @param fileName 被投送文件的文件名（转码产物是 `ape_<id>.wav`，故取 `.wav`）
+     */
+    fun mimeTypeOf(fileName: String): String = when (extensionOf(fileName)) {
+        "mp3" -> "audio/mpeg"
+        "flac" -> "audio/flac"
+        "wav" -> "audio/x-wav"
+        "m4a", "aac" -> "audio/mp4"
+        "mp4" -> "video/mp4"
+        "ogg", "oga" -> "audio/ogg"
+        // 走到这里理论上不可达：非白名单扩展名已在 CastFilePreparer 里被转成 wav。
+        // 兜底用 audio/mpeg 而非 application/octet-stream——后者必被渲染器拒绝。
+        else -> "audio/mpeg"
+    }
+
+    /**
+     * 由 MIME 推断 UPnP object class（DIDL-Lite 的 `<upnp:class>`）。
+     *
+     * 音频必须报 `object.item.audioItem.musicTrack`；报成 videoItem 会让只处理音频的
+     * 渲染器拒收（与 [mimeTypeOf] 是同一条链上的两个字段，必须一起给对）。
+     */
+    fun upnpClassOf(mimeType: String): String =
+        if (mimeType.startsWith("video")) "object.item.videoItem"
+        else "object.item.audioItem.musicTrack"
 }
