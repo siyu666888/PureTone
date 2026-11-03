@@ -51,6 +51,26 @@ object CastNetworkLog {
     @Volatile
     private var logFile: File? = null
 
+    /**
+     * 上一次搜索是否**真的**成功 acquire 了组播锁。
+     *
+     * 为什么不用「能否建出锁对象」来代替：`createMulticastLock()` 在所有设备上都能建出来，
+     * 那个探测恒为 true，会在报告里给出一个**假绿灯**——用户看到「multicast_lock=true」
+     * 就会排除掉「没持锁」这个最可能的根因，转而去查别处，白白绕远路。
+     * 所以这里老老实实记录 acquire 的真实结果。
+     */
+    @Volatile
+    private var lastLockAcquired: Boolean = false
+
+    @Volatile
+    private var lastLockAt: Long = 0L
+
+    /** 记录一次组播锁的真实获取结果（由 [DlnaCastManager] 在 acquire 后调用） */
+    fun markLockAcquired(acquired: Boolean) {
+        lastLockAcquired = acquired
+        lastLockAt = System.currentTimeMillis()
+    }
+
     /** 初始化落盘位置（Application.onCreate 调用一次） */
     fun init(filesDir: File) {
         logFile = File(filesDir, FILE_NAME)
@@ -129,20 +149,27 @@ object CastNetworkLog {
             }
             sb.appendLine()
 
-            // MulticastLock：Android 会在无锁时丢弃 Wi-Fi 组播包，这是 SSDP 收不到包的头号原因
-            sb.append("multicast_lock_acquired=").append(multicastLockHeld(context))
+            // MulticastLock：Android 会在无锁时丢弃 Wi-Fi 组播包，这是 SSDP 收不到包的头号原因。
+            // 这里报的是**上一次搜索的真实持锁结果**，不是「能否建出锁对象」——
+            // 后者恒为 true，会给出假绿灯，把用户引向错误的排查方向。
+            sb.append("multicast_lock_last=").append(if (lastLockAcquired) "acquired" else "not_acquired")
+            sb.append(" at=").append(if (lastLockAt == 0L) "never" else lastLockAt)
+            sb.appendLine()
+            sb.append("multicast_lock_capable=").append(multicastLockCapable(context))
             sb.appendLine()
         }.onFailure { sb.append("snapshot_error=").append(it.message) }
         return sb.toString()
     }
 
     /**
-     * 当前应用是否正持有组播锁（反映上一次搜索是否成功拿到锁）。
+     * 系统是否**支持**组播锁（仅代表能力，不代表当前持锁）。
      *
      * 注：`WifiManager.isMulticastLockSupported()` 是 @hide 的非公开 API，
      * 不能调用；这里改为「能建出锁对象」即视为系统支持（所有设备均可建）。
+     * 这个值只说明「这台机器有 Wi-Fi 能力、锁机制可用」，**不能**用来判断
+     * 「上次搜索有没有持锁」——那件事看 [markLockAcquired] 记录的结果。
      */
-    private fun multicastLockHeld(context: Context): Boolean = runCatching {
+    private fun multicastLockCapable(context: Context): Boolean = runCatching {
         val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         wm != null && runCatching { wm.createMulticastLock("probe") }.isSuccess
     }.getOrDefault(false)

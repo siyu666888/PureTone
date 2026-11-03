@@ -210,9 +210,11 @@ class DlnaCastManager @Inject constructor(
      */
     suspend fun searchDevices(timeoutMs: Long = 5000): List<CastDevice> {
         CastNetworkLog.log("=== 开始设备发现 ===")
-        CastNetworkLog.log(CastNetworkLog.snapshot(appContext).trimEnd())
 
         val lock = acquireMulticastLock()
+        // 快照放在持锁**之后**：这样 multicast_lock_last 反映的是本次搜索的真实状态，
+        // 而不是上一次（用户第一次打开投屏时会是 never，白白多跑一轮排查）。
+        CastNetworkLog.log(CastNetworkLog.snapshot(appContext).trimEnd())
         val started = System.currentTimeMillis()
         return try {
             val raw = DLNACast.search(timeout = timeoutMs)
@@ -260,7 +262,10 @@ class DlnaCastManager @Inject constructor(
         }
     }.onFailure {
         CastNetworkLog.log("multicast_lock=error ${it.message}")
-    }.getOrNull()
+    }.getOrNull().also { lock ->
+        // 把**真实**持锁结果写进诊断日志：这是判断「真机收不到组播包」的第一现场证据。
+        CastNetworkLog.markLockAcquired(lock != null)
+    }
 
     private fun releaseMulticastLock(lock: WifiManager.MulticastLock?) {
         runCatching {
