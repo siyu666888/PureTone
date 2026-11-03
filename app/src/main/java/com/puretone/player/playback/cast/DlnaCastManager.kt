@@ -338,6 +338,11 @@ class DlnaCastManager @Inject constructor(
             )
             val result = if (own.devices.isNotEmpty()) {
                 recordKnown(own.devices)
+                // 自建发现的结果也要回填 lastDevices：selectDevice() 按 id 反查底层 Device，
+                // 投送链路（库通道与自有通道）拿的都是这个对象。只填 CastDevice 列表会导致
+                // currentDevice 为 null，投送直接报「未选择投屏设备」。
+                lastDevices = own.devices.map { Device(it.id, it.name, it.address, it.isTV) }
+                lastDevicesAt = System.currentTimeMillis()
                 own.devices
             } else {
                 // 兜底：仍然问一次库。少数设备的应答形态（例如只回 NOTIFY 不回 200 OK）
@@ -531,9 +536,10 @@ class DlnaCastManager @Inject constructor(
             ?.address?.hostAddress
     }.getOrNull()
 
-    /** 选定投屏设备（按 id 反查底层 [Device]） */
+    /** 选定投屏设备（按 id 反查底层 [Device]；查不到就按 UI 传来的字段现造一个） */
     fun selectDevice(device: CastDevice) {
         currentDevice = lastDevices.firstOrNull { it.id == device.id }
+            ?: Device(device.id, device.name, device.address, device.isTV)
     }
 
     /**
