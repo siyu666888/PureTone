@@ -9,6 +9,7 @@ import com.yinnho.upnpcast.DLNACast
 import com.yinnho.upnpcast.DLNACast.Device
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -207,6 +209,10 @@ class DlnaCastManager @Inject constructor(
      *   但回包可能对不上；我们把实际发现数落盘，便于判断是「没发出去」还是「回不来」。
      * - **手机未连 Wi-Fi / 连的是访客网络（AP 隔离）**：这两设备天然发现不到，
      *   且用户无从判断，故把网络快照落盘到诊断报告。
+     *
+     * 线程：`DLNACast.search()` 是**阻塞**调用（内部等 SSDP 回包直到超时），
+     * 必须放到 IO 线程，否则整个搜索期间主线程被占住 5 秒——UI 冻结、
+     * 点击无响应，用户会以为 App 崩了。故此处用 `withContext(Dispatchers.IO)` 包住。
      */
     suspend fun searchDevices(timeoutMs: Long = 5000): List<CastDevice> {
         CastNetworkLog.log("=== 开始设备发现 ===")
@@ -217,7 +223,7 @@ class DlnaCastManager @Inject constructor(
         CastNetworkLog.log(CastNetworkLog.snapshot(appContext).trimEnd())
         val started = System.currentTimeMillis()
         return try {
-            val raw = DLNACast.search(timeout = timeoutMs)
+            val raw = withContext(Dispatchers.IO) { DLNACast.search(timeout = timeoutMs) }
             val elapsed = System.currentTimeMillis() - started
             val result = raw
                 .also { lastDevices = it }
@@ -231,6 +237,11 @@ class DlnaCastManager @Inject constructor(
                 )
             }
             result
+        } catch (e: CancellationException) {
+            // 协程被取消（用户关掉弹窗 / 组合离开）**不是**搜索失败：
+            // 必须原样抛出，否则协程的取消信号被吞掉，父作用域会继续跑后续逻辑。
+            CastNetworkLog.log("search 已取消（用户关闭弹窗）")
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "DLNA search failed", e)
             CastNetworkLog.log("search 异常：${e.javaClass.simpleName} ${e.message}")

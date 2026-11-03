@@ -40,6 +40,7 @@ import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.playback.cast.CastDevice
 import com.puretone.player.playback.cast.CastNetworkLog
 import com.puretone.player.ui.PlayerViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -87,6 +88,10 @@ fun CastDevicePickerDialog(
             error = null
             try {
                 devices = vm.searchCastDevices()
+            } catch (e: CancellationException) {
+                // 弹窗被关闭导致协程取消：不是错误，别把它显示成「搜索失败」。
+                // 但也不能静默吞掉——取消必须继续向上传播，否则协程取消语义被破坏。
+                throw e
             } catch (e: Exception) {
                 error = e.message ?: e.javaClass.simpleName
             } finally {
