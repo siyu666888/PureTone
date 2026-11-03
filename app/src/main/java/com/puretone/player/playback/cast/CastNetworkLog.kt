@@ -65,6 +65,25 @@ object CastNetworkLog {
     @Volatile
     private var lastLockAt: Long = 0L
 
+    /**
+     * 上一次搜索是否成功把进程绑定到 Wi-Fi 网络（双网卡设备上 SSDP 收不到的关键修复点）。
+     *
+     * 与组播锁同理：这个值记录**真实成败**，不是「能不能调」——`bindProcessToNetwork`
+     * 在缺少 [android.Manifest.permission.CHANGE_NETWORK_STATE] 或 Wi-Fi 不可用时
+     * 会静默失败，必须落真实结果，否则报告里给假绿灯。null=本次未尝试绑定。
+     */
+    @Volatile
+    private var lastWifiBound: Boolean? = null
+
+    @Volatile
+    private var lastWifiIp: String? = null
+
+    /** 记录本次搜索是否成功把进程绑定到 Wi-Fi 网络（由 [DlnaCastManager] 调用） */
+    fun markWifiBound(bound: Boolean, ip: String?) {
+        lastWifiBound = bound
+        lastWifiIp = ip
+    }
+
     /** 记录一次组播锁的真实获取结果（由 [DlnaCastManager] 在 acquire 后调用） */
     fun markLockAcquired(acquired: Boolean) {
         lastLockAcquired = acquired
@@ -126,6 +145,22 @@ object CastNetworkLog {
             sb.append(" validated=").append(caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true)
             sb.appendLine()
 
+            // 所有处于「已连接」状态的网络传输类型：双网卡（Wi-Fi+蜂窝）共存时，
+            // SSDP 组播很可能被路由到蜂窝接口，从而收不到回包——这行一眼暴露该风险。
+            val transports = cm?.allNetworks?.mapNotNull { net ->
+                cm.getNetworkCapabilities(net)?.let { c ->
+                    when {
+                        c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+                        c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+                        c.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+                        c.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "vpn"
+                        else -> null
+                    }
+                }
+            }?.distinct().orEmpty()
+            sb.append("active_transports=").append(if (transports.isEmpty()) "none" else transports.joinToString(","))
+            sb.appendLine()
+
             // 本机 IPv4：SSDP 回包按本机地址投递，地址族不对（纯 IPv6 / 无地址）就收不到
             val wifiIface: List<NetworkInterface> = wifiInterfaces()
             sb.append("wifi_ifaces=")
@@ -156,6 +191,17 @@ object CastNetworkLog {
             sb.append(" at=").append(if (lastLockAt == 0L) "never" else lastLockAt)
             sb.appendLine()
             sb.append("multicast_lock_capable=").append(multicastLockCapable(context))
+            sb.appendLine()
+
+            // 进程是否成功绑定到 Wi-Fi 网络（双网卡设备 SSDP 修复的核心动作）。
+            sb.append("wifi_net_bound=").append(
+                when (lastWifiBound) {
+                    true -> "yes"
+                    false -> "failed"
+                    null -> "n/a"
+                }
+            )
+            sb.append(" wifi_ip=").append(lastWifiIp ?: "?")
             sb.appendLine()
         }.onFailure { sb.append("snapshot_error=").append(it.message) }
         return sb.toString()

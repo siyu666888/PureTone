@@ -1,6 +1,9 @@
 package com.puretone.player.playback.cast
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.util.Log
 import com.puretone.player.data.local.entity.SongEntity
@@ -21,6 +24,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.Inet4Address
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -212,11 +216,16 @@ class DlnaCastManager @Inject constructor(
      * 但「有权限」不等于「拿了锁」，必须由应用在搜索期间 `acquire()`。
      * 本方法在库搜索的整个窗口内持锁，搜索结束立即释放。
      *
-     * 另有两处真机常见坑，一并处理：
+     * 另有三处真机常见坑，一并处理：
      * - **端口 1900 被占用**：库内部 bind 失败会退化为随机端口，此时 M-SEARCH 仍会发出，
      *   但回包可能对不上；我们把实际发现数落盘，便于判断是「没发出去」还是「回不来」。
      * - **手机未连 Wi-Fi / 连的是访客网络（AP 隔离）**：这两设备天然发现不到，
      *   且用户无从判断，故把网络快照落盘到诊断报告。
+     * - **双网卡路由错乱（最隐蔽）**：UPnPCast 用 `joinGroup(组播地址, null)` 不指定网卡，
+     *   组播走系统默认接口；手机同时开 Wi-Fi+移动数据时，部分厂商（小米/HyperOS 尤甚）
+     *   会把默认组播接口落到蜂窝接口，M-SEARCH 出不了局域网。对策见 [bindToWifiNetwork]：
+     *   搜索期间把进程默认网络 `bindProcessToNetwork(wifi)` 绑到 Wi-Fi，强制组播走 wlan0，
+     *   搜索结束立即还原。
      *
      * 线程：`DLNACast.search()` 是**阻塞**调用（内部等 SSDP 回包直到超时），
      * 必须放到 IO 线程，否则整个搜索期间主线程被占住 5 秒——UI 冻结、
@@ -226,8 +235,11 @@ class DlnaCastManager @Inject constructor(
         CastNetworkLog.log("=== 开始设备发现 ===")
 
         val lock = acquireMulticastLock()
-        // 快照放在持锁**之后**：这样 multicast_lock_last 反映的是本次搜索的真实状态，
-        // 而不是上一次（用户第一次打开投屏时会是 never，白白多跑一轮排查）。
+        // 双网卡设备上把进程默认网络绑定到 Wi-Fi：UPnPCast 用 joinGroup(组播地址, null)，
+        // 不指定网卡，组播默认走系统默认接口；手机同时开 Wi-Fi+移动数据时，部分厂商会把
+        // 组播路由到蜂窝接口，导致 SSDP 收不到回包、永远 0 设备。绑到 Wi-Fi 即修复。
+        val prevNet = bindToWifiNetwork()
+        // 快照放在持锁、**绑定 Wi-Fi 之后**：multicast_lock_last 与 wifi_net_bound 都反映本次。
         CastNetworkLog.log(CastNetworkLog.snapshot(appContext).trimEnd())
         val started = System.currentTimeMillis()
         return try {
@@ -255,6 +267,7 @@ class DlnaCastManager @Inject constructor(
             CastNetworkLog.log("search 异常：${e.javaClass.simpleName} ${e.message}")
             emptyList()
         } finally {
+            restoreNetwork(prevNet)
             releaseMulticastLock(lock)
             CastNetworkLog.log("=== 设备发现结束（耗时 ${System.currentTimeMillis() - started}ms）===")
         }
@@ -294,6 +307,66 @@ class DlnaCastManager @Inject constructor(
             }
         }.onFailure { CastNetworkLog.log("multicast_lock=release_error ${it.message}") }
     }
+
+    /**
+     * 把进程在搜索期间绑定到 Wi-Fi 网络（双网卡设备的 SSDP 修复核心）。
+     *
+     * ## 根因
+     * UPnPCast v1.3.0 的 `SsdpDeviceDiscovery.initializeSocket()` 调用
+     * `MulticastSocket.joinGroup(组播地址, null)`——**不指定网卡**，组播走系统默认接口。
+     * 手机同时开着 Wi-Fi 与移动数据时（常见），部分厂商（小米/HyperOS 尤甚）的默认组播
+     * 接口会落到蜂窝接口，M-SEARCH 出不了局域网，表现就是 MulticastLock 拿了、权限有了、
+     * Wi-Fi 也连了，却永远 0 设备。
+     *
+     * 应用层无法改库内部套接字（它没暴露网卡/网络绑定参数），唯一杠杆是
+     * `ConnectivityManager.bindProcessToNetwork(wifi)`：把进程默认网络切成 Wi-Fi，
+     * 库的 `joinGroup(null)` 就会顺着 wlan0 走（UPnP/SSDP 双网卡收不到的标准 workaround）。
+     * 搜索结束由 [restoreNetwork] 立即还原，不长期劫持 App 网络。
+     *
+     * @return 调用前应还原的网络（null=系统默认）；无法绑定时返回 null 由调用方无操作还原
+     */
+    private fun bindToWifiNetwork(): Network? {
+        val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return null
+        val wifi = findWifiNetwork(cm) ?: run {
+            CastNetworkLog.log("wifi_net=not_found（未找到可用 Wi-Fi 网络，跳过进程绑定）")
+            return null
+        }
+        val previous = cm.boundNetworkForProcess
+        val ok = runCatching { cm.bindProcessToNetwork(wifi) }.getOrDefault(false)
+        val ip = wifiIp(cm, wifi)
+        CastNetworkLog.markWifiBound(ok, ip)
+        CastNetworkLog.log("wifi_net_bound=$ok ip=${ip ?: "?"}")
+        return previous
+    }
+
+    /** 还原进程默认网络（搜索结束后调用，避免长期劫持 App 联网） */
+    private fun restoreNetwork(previous: Network?) {
+        val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        runCatching { cm.bindProcessToNetwork(previous) }
+        CastNetworkLog.log("wifi_net_restored prev=${if (previous == null) "default" else "bound"}")
+    }
+
+    /** 取一个「已连接且能上网」的 Wi-Fi 网络；优先当前 active 网络（通常就是 Wi-Fi） */
+    private fun findWifiNetwork(cm: ConnectivityManager): Network? {
+        val active = cm.activeNetwork
+        val activeCaps = active?.let { cm.getNetworkCapabilities(it) }
+        if (activeCaps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true &&
+            activeCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        ) return active
+        return cm.allNetworks.firstOrNull { net ->
+            cm.getNetworkCapabilities(net)?.let { caps ->
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            } == true
+        }
+    }
+
+    /** 取某网络的 IPv4 地址（用于诊断与确认走的是 Wi-Fi 子网） */
+    private fun wifiIp(cm: ConnectivityManager, net: Network): String? = runCatching {
+        cm.getLinkProperties(net)?.linkAddresses
+            ?.firstOrNull { la -> la.address is Inet4Address }
+            ?.address?.hostAddress
+    }.getOrNull()
 
     /** 选定投屏设备（按 id 反查底层 [Device]） */
     fun selectDevice(device: CastDevice) {

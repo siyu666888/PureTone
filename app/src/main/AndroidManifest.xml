@@ -12,6 +12,9 @@
     <!-- 联网匹配歌曲元数据 / 封面（Item 5） -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 投屏发现修复：双网卡设备（Wi-Fi+移动数据）上把进程默认网络绑定到 Wi-Fi，
+         让 UPnPCast 内部 joinGroup(null) 的 SSDP 组播走 wlan0 而非蜂窝接口。 -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <!-- DLNA 投屏：取本机局域网 IP / 监听 SSDP 组播（UPnPCast 库自身也声明了，
          此处显式声明确保合并后一定存在） -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
