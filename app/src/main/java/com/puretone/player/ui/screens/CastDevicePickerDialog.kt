@@ -3,6 +3,7 @@ package com.puretone.player.ui.screens
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -31,10 +32,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.puretone.player.R
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.playback.cast.CastDevice
@@ -54,7 +56,14 @@ import kotlinx.coroutines.launch
  * 「未发现可投屏设备」——这正是此前投屏失败的根因。故在发起 SSDP 发现前必须先拿到权限。
  *
  * 打开即发起一次发现（授权后），展示局域网内渲染器列表；点击设备即选中并发起当前歌曲投屏。
- * 空列表/失败/未授权给出明确引导，「重新搜索」可再次尝试（含重新申请权限）。
+ *
+ * ## 列表分两段
+ *
+ * - **发现的设备**：本次 SSDP 搜到的（不一定可靠——电视刚唤醒时常常不回 M-SEARCH）；
+ * - **最近投屏**：用户此前投成功过的设备（[PlayerViewModel.castHistory] 持久化）。
+ *
+ * 后者存在的意义就是兜住前者空手的情况：不必反复点「重新搜索」，更不必重启 Wi-Fi
+ * 去「重置网络」，上次投过的那台电视一直在列表里，点一下就能重投。
  */
 @Composable
 fun CastDevicePickerDialog(
@@ -69,6 +78,7 @@ fun CastDevicePickerDialog(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var permissionDenied by remember { mutableStateOf(false) }
+    val history by vm.castHistory.collectAsStateWithLifecycle()
 
     // Android 13+ 用 NEARBY_WIFI_DEVICES；低版本仍依赖 ACCESS_FINE_LOCATION（系统 Wi-Fi 发现要求）
     val neededPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -113,11 +123,16 @@ fun CastDevicePickerDialog(
         if (hasPermission) doSearch() else permissionLauncher.launch(neededPermission)
     }
 
+    // 本次没搜到的历史设备单独成段（搜到的已并入上面，避免同一条目出现两次）
+    val onlineAddresses = remember(devices) { devices.mapTo(HashSet()) { it.address } }
+    val lastUsedByAddress = remember(history) { history.associate { it.address to it.lastUsedAt } }
+    val offlineHistory = history.filter { it.address !in onlineAddresses }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.pt_player_028)) },
         text = {
-            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
                 when {
                     loading -> {
                         Row(
@@ -136,14 +151,14 @@ fun CastDevicePickerDialog(
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
-                    error != null -> {
+                    error != null && devices.isEmpty() && history.isEmpty() -> {
                         Text(
                             stringResource(R.string.pt_player_030, error ?: ""),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.error
                         )
                     }
-                    devices.isEmpty() -> {
+                    devices.isEmpty() && history.isEmpty() -> {
                         Text(
                             stringResource(R.string.pt_player_031) +
                                 stringResource(R.string.pt_player_032),
@@ -151,34 +166,27 @@ fun CastDevicePickerDialog(
                         )
                     }
                     else -> {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            items(devices) { d ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onSelect(d) }
-                                        .padding(vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    androidx.compose.material3.Icon(
-                                        if (d.isTV) Icons.Filled.CastConnected else Icons.Outlined.Cast,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            if (devices.isNotEmpty()) {
+                                item { SectionHeader(stringResource(R.string.pt_player_037)) }
+                                items(devices, key = { "online-${it.address}" }) { d ->
+                                    CastDeviceRow(
+                                        device = d,
+                                        lastUsedAt = lastUsedByAddress[d.address],
+                                        offline = false,
+                                        onClick = { onSelect(d) }
                                     )
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            d.name,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            d.address,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                }
+                            }
+                            if (offlineHistory.isNotEmpty()) {
+                                item { SectionHeader(stringResource(R.string.pt_player_038)) }
+                                items(offlineHistory, key = { "history-${it.address}" }) { h ->
+                                    CastDeviceRow(
+                                        device = h.toDevice(),
+                                        lastUsedAt = h.lastUsedAt,
+                                        offline = true,
+                                        onClick = { onSelect(h.toDevice()) }
+                                    )
                                 }
                             }
                         }
@@ -197,4 +205,78 @@ fun CastDevicePickerDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.pt_player_010)) }
         }
     )
+}
+
+/** 分段小标题（发现列表 / 历史列表），保持低调以免抢走设备行的注意力 */
+@Composable
+private fun SectionHeader(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
+    )
+}
+
+/**
+ * 一行设备。
+ *
+ * @param lastUsedAt 上次投屏成功的时间戳；从没投过（仅被发现）为 null
+ * @param offline 是否属于「本次未发现、只在历史里」的设备——点下去可能失败，必须明说
+ */
+@Composable
+private fun CastDeviceRow(
+    device: CastDevice,
+    lastUsedAt: Long?,
+    offline: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        androidx.compose.material3.Icon(
+            if (device.isTV) Icons.Filled.CastConnected else Icons.Outlined.Cast,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                device.name,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                subtitle(device.address, lastUsedAt),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (offline) {
+                Text(
+                    stringResource(R.string.pt_player_040),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** 副标题：IP +（若投过）上次投屏时间的相对描述 */
+@Composable
+private fun subtitle(address: String, lastUsedAt: Long?): String {
+    if (lastUsedAt == null || lastUsedAt <= 0L) return address
+    val relative = DateUtils.getRelativeTimeSpanString(
+        lastUsedAt,
+        System.currentTimeMillis(),
+        DateUtils.MINUTE_IN_MILLIS
+    ).toString()
+    return "$address · " + stringResource(R.string.pt_player_039, relative)
 }

@@ -16,6 +16,7 @@ import com.puretone.player.playback.PlaybackUiState
 import com.puretone.player.playback.PlayMode
 import com.puretone.player.playback.RepeatMode
 import com.puretone.player.playback.cast.CastDevice
+import com.puretone.player.playback.cast.CastHistoryEntry
 import com.puretone.player.playback.cast.CastState
 import com.puretone.player.playback.cast.DlnaCastManager
 import com.puretone.player.playback.next
@@ -57,6 +58,15 @@ class PlayerViewModel @Inject constructor(
 
     /** 投屏运行时状态（M1）：UI 据此渲染投屏按钮态、投屏中提示与进度 */
     val castState: StateFlow<CastState> = dlnaCast.state
+
+    /**
+     * 历史投屏设备（跨重启持久化，最近使用在前）。
+     *
+     * 投屏弹窗用它兜住「SSDP 首搜空手」：即使一条广播都没回来，也能列出上次投过的电视
+     * 让用户直接点。`WhileSubscribed` 保证弹窗关闭后停止收集，不做无谓的 DataStore 读盘。
+     */
+    val castHistory: StateFlow<List<CastHistoryEntry>> = dlnaCast.history
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
      * 是否持有当前曲目（离散字段，供根部决定迷你条显隐）。

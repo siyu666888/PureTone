@@ -19,11 +19,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -161,11 +163,20 @@ sealed interface CastResult {
 class DlnaCastManager @Inject constructor(
     private val apeTranscoder: ApeTranscoder,
     @ApplicationContext private val appContext: Context,
+    private val castHistory: CastHistoryStore,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(CastState())
     val state: StateFlow<CastState> = _state.asStateFlow()
+
+    /**
+     * 历史投屏设备流（跨会话持久化，最近使用在前）。
+     *
+     * 直接透传 [CastHistoryStore.entries]，UI 自己决定怎么分组展示；
+     * 本管理器只负责在投送**真正成功**后写入，不做任何展示层判断。
+     */
+    val history: Flow<List<CastHistoryEntry>> = castHistory.entries
 
     /**
      * 投屏源准备（M2）：白名单格式直投，其余先转 PCM WAV。
@@ -192,9 +203,11 @@ class DlnaCastManager @Inject constructor(
      * 出现过连续多轮 0 设备），但一旦搜到过一次，它的 IP 就记在这里。后续再空结果时，
      * 直接对这些已知 IP 发 **unicast M-SEARCH**（点对点，绕过组播抑制），电视对单播
      * 的应答率远高于组播，往往能「唤醒」它重新出现在列表里。
-     * 仅在进程内存中保存（跨会话的沿用走 [recentDevices] 的 10 分钟窗口）。
+     * 冷启动时由 [init] 用 [CastHistoryStore] 里「投成功过」的设备预热，因此
+     * 「重装/重启后第一次搜索就空手」也能直接单播唤醒。
+     * 并发：搜索线程读、投送线程与 init 协程写，必须用并发容器。
      */
-    private val knownDevices = mutableMapOf<String, CastDevice>()
+    private val knownDevices = ConcurrentHashMap<String, CastDevice>()
 
     /** 当前投送通道：库优先，库失败后切自有通道 */
     private enum class CastEngine { LIBRARY, OWN }
@@ -268,6 +281,14 @@ class DlnaCastManager @Inject constructor(
         } catch (e: Exception) {
             Log.w(TAG, "DLNACast.init failed", e)
             CastNetworkLog.log("DLNACast.init failed：${e.javaClass.simpleName} ${e.message}")
+        }
+        // 用历史设备预填进程内的 IP 缓存：冷启动后第一次搜索就空手时，
+        // 也能对上次投过的电视发 unicast M-SEARCH，不必先「成功搜到过一次」。
+        scope.launch {
+            val known = runCatching { castHistory.entries.first() }.getOrDefault(emptyList())
+            if (known.isEmpty()) return@launch
+            for (entry in known) knownDevices[entry.address] = entry.toDevice()
+            CastNetworkLog.log("cast-history 预热 knownDevices=${known.size}")
         }
     }
 
@@ -753,7 +774,11 @@ class DlnaCastManager @Inject constructor(
         }
         startPolling()
         CastNetworkLog.log("cast-ok device=${device.name} mime=$mimeType engine=$engineName")
-        recordKnown(listOf(CastDevice(device.id, device.name, device.address, device.isTV)))
+        val castDevice = CastDevice(device.id, device.name, device.address, device.isTV)
+        recordKnown(listOf(castDevice))
+        // 投**成功**才写历史：失败也记的话，历史里会堆满「点了必然失败」的幽灵设备。
+        // 异步写：DataStore 落盘不该挡住投送成功的返回路径（UI 正在等这一下）。
+        scope.launch { castHistory.record(castDevice) }
     }
 
     /**

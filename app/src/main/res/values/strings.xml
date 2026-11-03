@@ -292,6 +292,14 @@
     <string name="pt_player_035" formatted="false">投射音量 %1$d%%</string>
     <!-- 投屏：该渲染器未暴露 RenderingControl 服务，DLNA 无法调它的音量（如部分多屏互动接收端） -->
     <string name="pt_player_036" formatted="false">该设备不支持音量调节，请用电视遥控器</string>
+    <!-- 投屏设备列表分段标题：本次 SSDP 搜到的设备 -->
+    <string name="pt_player_037" formatted="false">发现的设备</string>
+    <!-- 投屏设备列表分段标题：用户此前投成功过的设备（持久化，本次没搜到也会列出） -->
+    <string name="pt_player_038" formatted="false">最近投屏</string>
+    <!-- 投屏设备条目副标题：上次投屏时间（相对时间，如「3 分钟前」） -->
+    <string name="pt_player_039" formatted="false">上次投屏：%1$s</string>
+    <!-- 投屏历史设备提示：本次发现未搜到它，点击仍会尝试投送 -->
+    <string name="pt_player_040" formatted="false">本次未发现，点击仍会尝试投送</string>
     <!-- 歌单 -->
     <string name="pt_playlist_001" formatted="false">歌单</string>
     <!-- 返回 -->
