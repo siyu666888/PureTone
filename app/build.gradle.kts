@@ -67,10 +67,11 @@ android {
         //   ③ 前台服务类型 —— mediaPlayback 已声明且权限齐备；
         //   ④ PendingIntent —— 已带 FLAG_IMMUTABLE。
         //
-        // ⚠️ 已知遗留（不阻塞自分发）：ffmpeg-kit 的 .so 仍为 4KB 页对齐，
-        //    在 **16KB 页设备**上 APE 转码与 ReplayGain 会加载失败。
-        //    注意这是**设备层面的兼容性**问题，与是否上 Play 无关——
-        //    Play 的 16KB 政策只是额外加码。详见 dist/v1.7.24 的实测数据。
+        // 16KB 页设备兼容（P0-3）：原 ffmpeg-kit-min-6.0-2.LTS 的 .so 全为 4KB 页对齐，
+        // arm64-v8a 在 16KB 页设备上加载失败（影响 APE 转码投送 / ReplayGain）。
+        // 已换 dev.ffmpegkit-maintained:ffmpeg-kit-min:6.0.3（仅 arm64-v8a + x86_64、
+        // 全部 16KB 对齐、API 全不变）——代价是**不再支持 armeabi-v7a（32 位手机）与 x86**
+        // （这两类设备本就不支持 16KB 页，4KB 对齐无害；见 dist/ 路线图 §0.三）。
         targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersionName
@@ -133,12 +134,13 @@ android {
         }
     }
 
-    // ffmpeg-kit AAR 含四 ABI 原生库，release 分包控制体积
+    // ffmpeg-kit AAR 含两 ABI 原生库（arm64-v8a / x86_64），release 分包控制体积。
+    // 注：维护版 ffmpeg-kit-min 只发 64 位（16KB 页对齐），故不再构建 armeabi-v7a / x86。
     splits {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+            include("arm64-v8a", "x86_64")
             isUniversalApk = true
         }
     }
@@ -213,7 +215,8 @@ kotlin {
 /**
  * LGPL 许可证随包分发（P0-3 实测修复，2026-11-01）。
  *
- * 背景：ffmpeg-kit-min-6.0-2.LTS.aar 是 LGPL-3.0 许可，它把
+ * 背景：ffmpeg-kit-min-6.0-3-maintained.aar（dev.ffmpegkit-maintained，LGPL-3.0）是
+ *   原 com.arthenica:ffmpeg-kit-min 的社区维护续作，它把
  *   - `res/raw/license.txt`            → LGPL 许可证全文
  *   - `res/raw/license_cpu_features.txt` → CPU features 相关许可
  *   - `res/raw/source.txt`             → **源码获取方式**（LGPL 第 6 条要求）
@@ -234,7 +237,7 @@ kotlin {
  * 且从 AAR **自动提取**而非手工复制——换 16KB 版 ffmpeg-kit 时，
  * 许可证会随 AAR 一起自动换掉，不会出现「库换了、许可证还是旧的」这种漂移。
  */
-val ffmpegKitAar = file("libs/ffmpeg-kit-min-6.0-2.LTS.aar")
+val ffmpegKitAar = file("libs/ffmpeg-kit-min-6.0-3-maintained.aar")
 val ffmpegLicensesDir = layout.buildDirectory.dir("generated/ffmpegLicenses")
 
 val extractFfmpegLicenses = tasks.register<Copy>("extractFfmpegLicenses") {
@@ -341,8 +344,9 @@ dependencies {
     // 协程
     implementation(libs.kotlinx.coroutines.android)
 
-    // APE 解码：本地 AAR（Maven Central 已下架）+ 其传递依赖（files() 方式不解析 AAR 的 POM，须显式声明）
-    implementation(files("libs/ffmpeg-kit-min-6.0-2.LTS.aar"))
+    // APE 解码：社区维护版 ffmpeg-kit-min（dev.ffmpegkit-maintained:ffmpeg-kit-min:6.0.3，
+    // 16KB 页对齐、API 同原 com.arthenica 版）+ 其传递依赖（files() 不解析 AAR 的 POM，须显式声明）
+    implementation(files("libs/ffmpeg-kit-min-6.0-3-maintained.aar"))
     implementation(libs.smart.exception.java)
 
     // 单元测试
