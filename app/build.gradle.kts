@@ -201,7 +201,15 @@ android {
             // 门禁变成随机失败的噪音源，反而掩盖真正的代码问题。依赖升级另行跟进。
             "AndroidGradlePluginVersion",
             "GradleDependency",
-            "NewerVersionAvailable"
+            "NewerVersionAvailable",
+            // 「未面向最新 Android 版本」提示，判定基准是**当前机器上已安装的 SDK platform 最高版本**：
+            // 本地只装到 android-35 → targetSdk 35 不报；CI runner 镜像预装了更新的 platform →
+            // 同一份 targetSdk 35 就报 Error。2026-11-04 删掉 lint-baseline 里的 OldTargetApi 后
+            // CI 首次暴露这个差异（本地 lintDebug 始终 0 errors）。它与代码质量无关、随镜像漂移，
+            // 与上面四项同属环境噪声；且 targetSdk 35 是 2026-11-01 评估后的主动选择（自分发路线，
+            // 详见 dist/v1.7.25_targetSdk35_2026-11-01.md），不是疏漏。升 compileSdk/targetSdk 36
+            // 属独立的大版本任务，届时再重新启用本检查。
+            "OldTargetApi"
         )
     }
 }
