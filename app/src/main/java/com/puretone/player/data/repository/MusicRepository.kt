@@ -15,6 +15,7 @@ import com.puretone.player.data.media.isNonMusicPath
 import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.playback.ReplayGainExtractor
 import com.puretone.player.util.UnknownText
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -329,7 +330,22 @@ class MusicRepository @Inject constructor(
 
     // ---------- 播放历史 ----------
 
+    /**
+     * 听歌数据统计开关（隐私）。两个写库收口每次写入前实时读取，不缓存——
+     * 用户在设置页关掉即刻生效，无需重启 App。读取异常按「允许」处理：
+     * DataStore 偶发失败不该让统计悄悄停摆，更不该让播放链路报错。
+     */
+    private suspend fun listeningStatsEnabled(): Boolean = try {
+        settings.settings.firstOrNull()?.listeningStatsEnabled ?: true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        true
+    }
+
     override suspend fun recordPlay(songId: Long) {
+        // 隐私开关关闭：连清理动作也不做，保证「不再产生/改动任何统计数据」
+        if (!listeningStatsEnabled()) return
         // 取歌曲时长，供"累计听歌时长"估算（找不到则不记历史）
         val song = songDao.getById(songId)
         if (song != null) {
@@ -355,6 +371,7 @@ class MusicRepository @Inject constructor(
      * 这是「最爱歌手 / 最爱歌曲」排行榜的唯一计数来源。
      */
     override suspend fun recordCompletion(songId: Long) {
+        if (!listeningStatsEnabled()) return
         songDao.incrementPlayCount(songId, System.currentTimeMillis())
     }
 

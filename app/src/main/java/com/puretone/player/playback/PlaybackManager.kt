@@ -373,7 +373,8 @@ class PlaybackManager @Inject constructor(
         play = { this@PlaybackManager.play() },
         next = { this@PlaybackManager.next() },
         previous = { this@PlaybackManager.previous() },
-        playAtIndex = { i -> this@PlaybackManager.playAtIndex(i) }
+        playAtIndex = { i -> this@PlaybackManager.playAtIndex(i) },
+        followPhoneVolume = { lastSettings.castVolumeFollowPhone }
     )
 
     private val castQueueCoordinator = CastQueueCoordinator(
@@ -725,13 +726,21 @@ class PlaybackManager @Inject constructor(
         }
     }
 
-    /** 投屏队列推进所需的队列快照（末曲不推进：投完这一首就停，回绕交给本地播放模式） */
+    /**
+     * 投屏队列推进所需的队列快照。
+     *
+     * `hasNext` 必须与本地 [PlaybackController.next] 的语义一致：Media3 的
+     * `hasNextMediaItem()` 在 REPEAT_ALL / REPEAT_ONE 下同样为 true（回绕 / 重播当前曲）。
+     * 旧实现只按 `queueIndex < queue.lastIndex` 判断，于是「末曲 + 列表循环」时本地能
+     * 接着播、投屏却按设计停在末曲——投屏与本地出现两套队列语义。
+     */
     private fun buildCastQueueInfo(): CastQueueInfo {
         val state = _uiState.value
         val index = state.queueIndex
         val queue = state.queue
+        val repeatAllowsMore = state.repeatMode != RepeatMode.OFF && queue.isNotEmpty()
         return CastQueueInfo(
-            hasNext = index >= 0 && index < queue.lastIndex,
+            hasNext = index >= 0 && (index < queue.lastIndex || repeatAllowsMore),
             currentDurationMs = queue.getOrNull(index)?.durationMs ?: 0L
         )
     }

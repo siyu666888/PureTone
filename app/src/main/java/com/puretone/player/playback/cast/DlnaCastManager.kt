@@ -257,6 +257,14 @@ class DlnaCastManager @Inject constructor(
      */
     private val requestedVolume = MutableStateFlow<Int?>(null)
 
+    /** 用户本会话是否已主动调过音量：为真时不再用设备回读值覆盖 UI 初始值 */
+    @Volatile
+    private var volumeTouchedByUser = false
+
+    /** 最近一次投送开始时刻：换曲窗口内渲染器短暂不应答不应判失联 */
+    @Volatile
+    private var lastCastStartMs = 0L
+
     init {
         // 音量下发通道常驻：合并连发的请求，并对最终值做一次回读校验
         scope.launch { drainVolumeRequests() }
@@ -598,6 +606,7 @@ class DlnaCastManager @Inject constructor(
             return CastResult.Failed("未选择投屏设备")
         }
         val epoch = castEpoch.incrementAndGet()
+        lastCastStartMs = System.currentTimeMillis()
         val needsTranscode = CastSourcePolicy.requiresTranscode(path)
 
         if (needsTranscode) {
@@ -733,6 +742,7 @@ class DlnaCastManager @Inject constructor(
         if (error == null) {
             engine = CastEngine.LIBRARY
             transport = null
+            syncInitialVolumeNow()
             reapplyVolume(_state.value.castVolume)
             onCastSucceeded(device, mimeType, "library")
             if (probedDevices.add(device.id)) launchProbe(device)
@@ -755,6 +765,7 @@ class DlnaCastManager @Inject constructor(
     ): String? {
         if (!tryOwnCast(device, target, title, mimeType, upnpClass)) return "自有通道投送失败"
         engine = CastEngine.OWN
+        syncInitialVolumeNow()
         reapplyVolume(_state.value.castVolume)
         onCastSucceeded(device, mimeType, "own")
         return null
@@ -833,6 +844,33 @@ class DlnaCastManager @Inject constructor(
         return wifiIp(cm, net)
     }
 
+    /**
+     * 投送链路内**同步**回读渲染器真实音量，必须在 `isCasting=true` 之前完成：
+     * 否则 MediaSession 建 `VolumeProviderCompat` 时读到的仍是假 100，按一下音量键
+     * 就把电视从 15 拉到 100 —— 跳变更严重。放在投送末尾只多一次 SOAP。
+     */
+    private suspend fun syncInitialVolumeNow() {
+        val actual = try {
+            val client = transport
+            if (client != null) client.volume() else DLNACast.getVolume()?.first
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "initial volume read failed", e)
+            null
+        }
+        if (actual != null) {
+            applyInitialVolume(actual)
+            CastNetworkLog.log("cast-vol init actual=$actual")
+        }
+    }
+
+    /** 同步设备真实音量到状态；用户已调过音量则不再覆盖（避免把用户的选择冲掉） */
+    private fun applyInitialVolume(volume: Int?) {
+        if (volume == null || volumeTouchedByUser) return
+        _state.update { it.copy(castVolume = volume.coerceIn(0, 100)) }
+    }
+
     /** 让新渲染器会话沿用当前音量（投送成功时调用） */
     private suspend fun reapplyVolume(volume: Int) {
         if (volume == 100) return
@@ -862,6 +900,8 @@ class DlnaCastManager @Inject constructor(
                 val report = CastProbe.inspect(device.id, device.name)
                 if (report.descriptionOk) {
                     _state.update { it.copy(volumeSupported = report.hasRenderingControl) }
+                    // 库通道没有自己的 GetVolume 回读，用探针读到的当前音量校准初值
+                    applyInitialVolume(report.currentVolume)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -956,6 +996,7 @@ class DlnaCastManager @Inject constructor(
      * @return 恒为 true（已受理）。真实是否生效由回读结果写进 [CastState.volumeSupported]。
      */
     fun setVolume(volume: Int): Boolean {
+        volumeTouchedByUser = true
         requestedVolume.value = volume.coerceIn(0, 100)
         return true
     }
@@ -979,6 +1020,7 @@ class DlnaCastManager @Inject constructor(
         // 会话结束：撤掉进程级 Wi-Fi 绑定，避免 App 的其它联网长期被限制在局域网
         releaseCastNetwork()
         requestedVolume.value = null
+        volumeTouchedByUser = false
         transport = null
         engine = CastEngine.LIBRARY
         currentDevice = null
@@ -1006,14 +1048,23 @@ class DlnaCastManager @Inject constructor(
         var consecutiveFailures = 0
         // 只记状态「变化」：1Hz 轮询如果每次都写一行，诊断文件会被刷爆
         var lastState: String? = null
+        var lastPositionAvailable: Boolean? = null
         while (consecutiveFailures < CastQueuePolicy.MAX_CONSECUTIVE_POLL_FAILURES) {
             val state = client.transportState()
             if (state == null) {
-                consecutiveFailures++
+                // 换曲窗口内渲染器在 SetAVTransportURI/Play 之间常短暂无应答，
+                // 此时计失败会在 3 秒后误判失联、把投屏整个退回本地。
+                if (System.currentTimeMillis() - lastCastStartMs > 12_000L) consecutiveFailures++
             } else {
                 consecutiveFailures = 0
                 val position = client.position()
+                val posAvailable = position != null
                 val mapped = DlnaTransport.stateName(state)
+                // 进度不可得正是「播完」判定的关键证据：仅在变化时落一行，避免 1Hz 刷屏
+                if (posAvailable != lastPositionAvailable) {
+                    CastNetworkLog.log("own-pos available=$posAvailable state=$state")
+                    lastPositionAvailable = posAvailable
+                }
                 // 落盘状态迁移：这是「电视到底播没播」唯一的一手证据，
                 // 用户报「没声音」时先看这一行有没有 PLAYING。
                 if (mapped != lastState) {

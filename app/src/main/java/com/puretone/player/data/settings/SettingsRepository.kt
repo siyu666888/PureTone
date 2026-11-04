@@ -84,6 +84,14 @@ data class PureToneSettings(
      * 不参与淡入淡出（转码是异步挂起操作，无法在边界精确对齐）。
      */
     val crossfadeMs: Int = 0,
+    /**
+     * 投屏音量是否跟随手机音量键（默认开）。
+     *
+     * DLNA 投屏时手机本地不发声，`STREAM_MUSIC` 是一路「空转」的输入；开启后把
+     * MediaSession 声明为远程播放，音量键 / 系统音量条 / 线控会直接调到电视上，
+     * 且起点取自电视当前音量，不会出现「一调就突然变大」。关闭则回到 App 内滑块。
+     */
+    val castVolumeFollowPhone: Boolean = true,
 
     // ---------- replaygain_ ----------
     /** ReplayGain 总开关 */
@@ -131,7 +139,16 @@ data class PureToneSettings(
      * 默认 **true**：保留现有功能与用户体验不变，用户主动关闭。
      * （若产品改为默认关闭，需注意老用户升级后行为突变会显得像「功能坏了」。）
      */
-    val networkMetadataEnabled: Boolean = true
+    val networkMetadataEnabled: Boolean = true,
+
+    /**
+     * 听歌数据统计开关（隐私，默认开以保持既有统计可用）。
+     *
+     * 关闭后不再写入播放历史（`play_history`）与播放次数（`songs.play_count`），
+     * 收藏 / 歌单 / 曲库等与统计无关的数据照常。已有数据不自动删除，
+     * 用户可在「听歌数据 → 清空历史」显式清除。
+     */
+    val listeningStatsEnabled: Boolean = true
 ) {
     companion object {
         const val THEME_SYSTEM = "SYSTEM"
@@ -198,6 +215,7 @@ class SettingsRepository @Inject constructor(
         val repeatMode = stringPreferencesKey("playback_repeat_mode")
         val shuffle = booleanPreferencesKey("playback_shuffle")
         val crossfadeMs = intPreferencesKey("playback_crossfade_ms")
+        val castVolumeFollowPhone = booleanPreferencesKey("playback_cast_volume_follow_phone")
         // replaygain_
         val replayGainEnabled = booleanPreferencesKey("replaygain_enabled")
         val replayGainMode = stringPreferencesKey("replaygain_mode")
@@ -214,6 +232,7 @@ class SettingsRepository @Inject constructor(
         val labEnabled = booleanPreferencesKey("lab_enabled")
         // privacy_
         val networkMetadataEnabled = booleanPreferencesKey("privacy_network_metadata_enabled")
+        val listeningStatsEnabled = booleanPreferencesKey("privacy_listening_stats_enabled")
     }
 
     /**
@@ -246,6 +265,8 @@ class SettingsRepository @Inject constructor(
                 repeatMode = prefs[Keys.repeatMode] ?: defaults.repeatMode,
                 shuffle = prefs[Keys.shuffle] ?: defaults.shuffle,
                 crossfadeMs = prefs[Keys.crossfadeMs] ?: defaults.crossfadeMs,
+                castVolumeFollowPhone = prefs[Keys.castVolumeFollowPhone]
+                    ?: defaults.castVolumeFollowPhone,
                 replayGainEnabled = prefs[Keys.replayGainEnabled] ?: defaults.replayGainEnabled,
                 replayGainMode = prefs[Keys.replayGainMode] ?: defaults.replayGainMode,
                 replayGainPreampDb = prefs[Keys.replayGainPreamp] ?: defaults.replayGainPreampDb,
@@ -257,7 +278,9 @@ class SettingsRepository @Inject constructor(
                 eqCustomPresets = decodeCustomPresets(prefs[Keys.eqCustomPresets]),
                 labEnabled = prefs[Keys.labEnabled] ?: defaults.labEnabled,
                 networkMetadataEnabled = prefs[Keys.networkMetadataEnabled]
-                    ?: defaults.networkMetadataEnabled
+                    ?: defaults.networkMetadataEnabled,
+                listeningStatsEnabled = prefs[Keys.listeningStatsEnabled]
+                    ?: defaults.listeningStatsEnabled
             ).let { s ->
                 // 定时状态归一化（此前只处理 MINUTES 的过期，现在多一种 END_OF_TRACK）：
                 // 1) 倒计时型定时已过期 → 四个字段全部归零。老数据中「到期时刻还在、
@@ -373,6 +396,10 @@ class SettingsRepository @Inject constructor(
         it[Keys.crossfadeMs] = ms.coerceIn(PureToneSettings.CROSSFADE_MIN_MS, PureToneSettings.CROSSFADE_MAX_MS)
     }
 
+    /** 投屏音量跟随手机音量键（立即生效，下一次投屏切换 MediaSession 路由时应用） */
+    suspend fun setCastVolumeFollowPhone(enabled: Boolean) =
+        edit { it[Keys.castVolumeFollowPhone] = enabled }
+
     // ---------- lab_ ----------
     suspend fun setLabEnabled(enabled: Boolean) = edit { it[Keys.labEnabled] = enabled }
 
@@ -384,6 +411,13 @@ class SettingsRepository @Inject constructor(
      */
     suspend fun setNetworkMetadataEnabled(enabled: Boolean) =
         edit { it[Keys.networkMetadataEnabled] = enabled }
+
+    /**
+     * 听歌数据统计开关。关闭即刻生效：两个写库收口（recordPlay / recordCompletion）
+     * 每次写入前读取本值，不缓存、不需要重启 App。已有数据不自动删除。
+     */
+    suspend fun setListeningStatsEnabled(enabled: Boolean) =
+        edit { it[Keys.listeningStatsEnabled] = enabled }
 
     // ---------- replaygain_ ----------
     suspend fun setReplayGainEnabled(enabled: Boolean) = edit { it[Keys.replayGainEnabled] = enabled }

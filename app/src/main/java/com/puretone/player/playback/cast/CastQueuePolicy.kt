@@ -18,12 +18,20 @@ package com.puretone.player.playback.cast
  * 1. **状态跃迁**：曾经观测到渲染器在播（[wasPlaying]），现在不在播（[isPlaying] 为 false）。
  *    单看当前状态不够——渲染器暂停时也是「不在播」，从未播起过也是「不在播」。
  * 2. **终止态**：渲染器进入停止态或暂停态（[STATE_STOPPED] / [STATE_PAUSED]）。
- *    用户中途暂停同样落在 PAUSED，所以这一条必须与第 3 条合用，单独用会误判。
- * 3. **进度到末尾**：上报进度已接近总时长（允许 [END_TOLERANCE_MS] 容差）。
- *    用户中途暂停时进度远不到末尾，会被这一条排除。
+ * 3. **进度佐证**：`STOPPED` 是渲染器对「本条 URI 已终止」的明确表态，与用户中途暂停
+ *    （`PAUSED_PLAYBACK` → [STATE_PAUSED]）天然分开，故不再要求进度可验证；
+ *    `PAUSED` 则必须靠「进度已到末尾 / 已归零」排除用户按暂停的误判。
  *
- * 三者缺一不可：只留 1+2 会把「用户按了暂停」当成「播完了」而擅自跳歌；
- * 只留 3 会把「正在播到一半、进度恰好接近末尾」误判（虽然罕见但存在）。
+ * ## 为什么 STOPPED 要放宽（v1.9.2 真机故障）
+ *
+ * DLNA 自有通道用 `GetPositionInfo` 取进度，但不少电视在**曲目结束后**直接对该动作
+ * 返回 500，于是 [hasProgressInfo] 为 false、进度与时长都是 0。旧判据把「进度未知」
+ * 一票否决，协调器便永远等不到 `onCastTrackEnded()`：投屏停在曲末，而手动点下一首
+ * 因为**完全不经过本判据**（`next()` → `recastCurrentIfCasting()`）反而能续投。
+ * 这正是「播完就退出投屏、手动下一首却继续投」的根因。
+ *
+ * 放宽只在 `STOPPED` 生效，且保留「有明确进度且落在曲中 → 不推进」的保守分支；
+ * `PAUSED` 的严格判据一字未动，用户按暂停仍不会擅自跳歌。
  */
 internal object CastQueuePolicy {
 
@@ -65,12 +73,12 @@ internal object CastQueuePolicy {
      * @param isPlaying 本次观测渲染器是否仍在播
      * @param playbackState 渲染器本次上报的播放态名（[STATE_STOPPED] 等）
      * @param progressMs 渲染器上报的播放进度（毫秒）
-     * @param hasProgressInfo 渲染器是否**提供了**进度信息（`getProgress` 返回非 null）。
-     *        false 表示进度未知——此时绝不能把「未知」当成「进度为 0 → 已到末尾」。
+     * @param hasProgressInfo 渲染器是否**提供了**进度信息（`GetPositionInfo` 返回非 null）。
+     *        `STOPPED` 下不再作为前置条件；`PAUSED` 下仍严格区分「未知」与「真的是 0」。
      * @param rendererDurationMs 渲染器上报的总时长（毫秒，0 = 未知）
      * @param localDurationMs 本地歌曲记录的总时长（毫秒，0 = 未知）。
      *        渲染器不上报时长时用它兜底——App 自己知道这首歌有多长。
-     * @param hasNext 队列是否还有下一首（最后一首不推进，停在原地）
+     * @param hasNext 队列是否还有下一首（与本地 `next()` 的循环语义对齐后传入）
      */
     fun shouldAutoAdvance(
         wasPlaying: Boolean,
@@ -82,7 +90,7 @@ internal object CastQueuePolicy {
         localDurationMs: Long,
         hasNext: Boolean
     ): Boolean {
-        // 队列已到头：投完这一首就停，不推进（也不回绕——回绕交给本地播放模式）
+        // 队列已到头：投完这一首就停，不推进（回绕与否由宿主按 repeatMode 判定）
         if (!hasNext) return false
         // 必须经历「在播 → 不在播」的跃迁：从未播起过（刚投送、还在转码）不算播完
         if (!wasPlaying) return false
@@ -90,9 +98,21 @@ internal object CastQueuePolicy {
         // 终止态：停止或暂停。缓冲中 / 播放中 / 出错都不算「播完」
         // （出错由失联回退处理，见 DlnaCastManager.markConnectionLost）。
         if (playbackState != STATE_STOPPED && playbackState != STATE_PAUSED) return false
+
         // 总时长：优先用渲染器上报的（进度是相对渲染器时间轴量的），
-        // 渲染器不上报时用本地时长兜底；两者都未知则无法判定，不猜。
+        // 渲染器不上报时用本地时长兜底。
         val total = rendererDurationMs.takeIf { it > 0 } ?: localDurationMs
+
+        if (playbackState == STATE_STOPPED) {
+            // STOPPED = 渲染器明确终止了本条 URI。真机上此时常拿不到 GetPositionInfo，
+            // 「进度未知」绝不能等价于「还没播完」，否则队列永久卡在曲末。
+            // 唯一保守分支：确实拿到了进度，且明确停在曲中（用户在电视上按了 Stop）。
+            val clearlyMidTrack = hasProgressInfo && total > 0L &&
+                progressMs > 0L && progressMs < total - END_TOLERANCE_MS
+            return !clearlyMidTrack
+        }
+
+        // PAUSED 保持 M3 原判据：用户中途暂停也落在此态，必须靠进度排除误跳。
         if (total <= 0L) return false
         // 进度信息本身不可用 → 无法判定是否到末尾，宁可不推进也不误跳
         if (!hasProgressInfo && progressMs <= 0L) return false

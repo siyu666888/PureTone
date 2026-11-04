@@ -37,7 +37,7 @@ class StatsRepositoryTest {
         db = Room.inMemoryDatabaseBuilder(context, PureToneDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        repo = StatsRepository(db.statsDao(), db.playHistoryDao())
+        repo = StatsRepository(db.statsDao(), db.playHistoryDao(), db.songDao())
     }
 
     @After
@@ -78,5 +78,36 @@ class StatsRepositoryTest {
 
         repo.clearHistory()
         assertEquals(0L, repo.observeHistoryCount().first())
+    }
+
+    @Test
+    fun `clearHistory also resets play_count and last_played_at`() = runTest {
+        db.songDao().upsertAll(
+            listOf(
+                SongEntity(
+                    id = 1L,
+                    mediaStoreId = 1L,
+                    title = "a.mp3",
+                    artist = "Artist",
+                    album = "Album",
+                    albumId = 1L,
+                    duration = 200_000,
+                    path = "/storage/emulated/0/Music/a.mp3",
+                    size = 1_000L,
+                    mimeType = "audio/mpeg",
+                    playCount = 7,
+                    lastPlayedAt = 1_234L
+                )
+            )
+        )
+        assertEquals(7, db.songDao().getById(1L)?.playCount)
+
+        repo.clearHistory()
+
+        val song = db.songDao().getById(1L)
+        assertEquals(0, song?.playCount)
+        assertEquals(0L, song?.lastPlayedAt)
+        // 曲库本身不受影响
+        assertEquals("a.mp3", song?.title)
     }
 }

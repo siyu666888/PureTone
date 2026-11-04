@@ -83,6 +83,16 @@ interface SongDao {
     suspend fun incrementPlayCount(id: Long, now: Long)
 
     /**
+     * 清空听歌统计计数（隐私「清空历史」的一部分）。
+     *
+     * `play_count` / `last_played_at` 是「最爱歌曲 / 最爱歌手 / 我的最爱」的唯一来源，
+     * 只删 `play_history` 会让「清空全部播放记录与统计」的文案名不副实。
+     * 曲库、收藏、歌单内容均不受影响。
+     */
+    @Query("UPDATE songs SET play_count = 0, last_played_at = 0")
+    suspend fun resetPlayStats()
+
+    /**
      * 更新歌曲信息（手动编辑 / 联网匹配结果）。
      * 仅改展示字段，不动 path / mediaStoreId / play_count / favorite。
      */

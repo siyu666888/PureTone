@@ -300,6 +300,10 @@
     <string name="pt_player_039" formatted="false">上次投屏：%1$s</string>
     <!-- 投屏历史设备提示：本次发现未搜到它，点击仍会尝试投送 -->
     <string name="pt_player_040" formatted="false">本次未发现，点击仍会尝试投送</string>
+    <!-- 跟随手机音量 · 音量 %1$d%% -->
+    <string name="pt_player_041" formatted="false">跟随手机音量 · 当前 %1$d%%</string>
+    <!-- 投屏时请用手机音量键调节电视音量 -->
+    <string name="pt_player_042" formatted="false">投屏时请用手机音量键调节电视音量</string>
     <!-- 歌单 -->
     <string name="pt_playlist_001" formatted="false">歌单</string>
     <!-- 返回 -->
@@ -432,6 +436,18 @@
     <string name="pt_settings_047" formatted="false">深色</string>
     <!-- 纯黑 -->
     <string name="pt_settings_048" formatted="false">纯黑</string>
+    <!-- 投屏音量跟随手机音量键 -->
+    <string name="pt_settings_049" formatted="false">投屏音量跟随手机音量键</string>
+    <!-- 已开启：投屏时按手机音量键调节电视音量，起点为电视当前音量 -->
+    <string name="pt_settings_050" formatted="false">已开启：投屏时按手机音量键调节电视音量，起点为电视当前音量</string>
+    <!-- 已关闭：改用应用内滑块调节，音量键仍控制手机 -->
+    <string name="pt_settings_051" formatted="false">已关闭：改用应用内滑块调节，音量键仍控制手机</string>
+    <!-- 听歌数据统计 -->
+    <string name="pt_settings_052" formatted="false">听歌数据统计</string>
+    <!-- 已开启：记录播放历史与播放次数，仅保存在本机 -->
+    <string name="pt_settings_053" formatted="false">已开启：记录播放历史与播放次数，仅保存在本机</string>
+    <!-- 已关闭：不再写播放历史/播放次数（最近播放停止更新），已有数据可在听歌数据中清除 -->
+    <string name="pt_settings_054" formatted="false">已关闭：不再写播放历史/播放次数（最近播放停止更新），已有数据可在「听歌数据」中清除</string>
     <!-- 未知艺术家 -->
     <string name="pt_songinfo_001" formatted="false">未知艺术家</string>
     <!-- 歌曲信息 -->

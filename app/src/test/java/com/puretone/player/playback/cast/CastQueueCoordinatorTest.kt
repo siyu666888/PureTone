@@ -95,6 +95,28 @@ class CastQueueCoordinatorTest {
     }
 
     @Test
+    fun `STOPPED 且进度完全未知时仍推进（v1_9_2 真机回归）`() = runTest {
+        // 极光TV 曲目结束后 STOPPED，GetPositionInfo 返回 500：
+        // progressMs/durationMs 皆 0、hasProgressInfo=false。旧链路在此永久卡住，
+        // 手动点下一首却因绕过本协调器而能续投——正是用户反馈的现象。
+        val sink = FakeSink()
+        val c = coordinator(sink, this)
+        c.onState(state(pushGeneration = 1L, isPlaying = false))
+        c.onState(state(pushGeneration = 1L, isPlaying = true, progressMs = 0L))
+        c.onState(
+            state(
+                pushGeneration = 1L,
+                isPlaying = false,
+                playbackState = CastQueuePolicy.STATE_STOPPED,
+                progressMs = 0L,
+                durationMs = 0L,
+                hasProgressInfo = false
+            )
+        )
+        assertEquals(1, sink.endedCount)
+    }
+
+    @Test
     fun `推进后未重新观测到在播则不重复推进`() = runTest {
         val sink = FakeSink()
         val c = coordinator(sink, this)

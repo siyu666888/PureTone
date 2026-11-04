@@ -36,6 +36,9 @@ class SettingsViewModel @Inject constructor(
     fun setResumeOnStart(enabled: Boolean) = viewModelScope.launch { settings.setResumeOnStart(enabled) }
     /** 交叉淡化时长（毫秒），0 = 关闭 */
     fun setCrossfadeMs(ms: Int) = viewModelScope.launch { settings.setCrossfadeMs(ms) }
+    /** 投屏音量跟随手机音量键 */
+    fun setCastVolumeFollowPhone(enabled: Boolean) =
+        viewModelScope.launch { settings.setCastVolumeFollowPhone(enabled) }
     /** 睡眠定时：minutes > 0 设倒计时，0 关闭（清除模式与到期时刻） */
     fun setSleepTimer(minutes: Int) = viewModelScope.launch {
         if (minutes > 0) settings.setSleepTimerMinutes(minutes) else settings.clearSleepTimer()
@@ -48,9 +51,14 @@ class SettingsViewModel @Inject constructor(
     // ---------- 实验室（实验性功能总开关） ----------
     fun setLabEnabled(enabled: Boolean) = viewModelScope.launch { settings.setLabEnabled(enabled) }
 
-    // ---------- 隐私：联网补全元数据与歌词总开关（P2-4） ----------
+    // ---------- 隐私 ----------
+    /** 联网补全元数据与歌词总开关（P2-4） */
     fun setNetworkMetadataEnabled(enabled: Boolean) =
         viewModelScope.launch { settings.setNetworkMetadataEnabled(enabled) }
+
+    /** 听歌数据统计开关：关闭后不再写入播放历史与播放次数 */
+    fun setListeningStatsEnabled(enabled: Boolean) =
+        viewModelScope.launch { settings.setListeningStatsEnabled(enabled) }
 
     // ---------- ReplayGain（P1） ----------
     fun setReplayGainEnabled(enabled: Boolean) =

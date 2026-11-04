@@ -139,6 +139,7 @@ fun PlayerScreen(
     val favorite by vm.favorite.collectAsStateWithLifecycle()
     val currentSong by vm.currentSong.collectAsStateWithLifecycle()
     val castState by vm.castState.collectAsStateWithLifecycle()
+    val followPhoneVolume by vm.castVolumeFollowPhone.collectAsStateWithLifecycle()
     val entry = state.currentEntry
     var showQueue by remember { mutableStateOf(false) }
     var showInfo by remember { mutableStateOf(false) }
@@ -312,32 +313,53 @@ fun PlayerScreen(
                             )
                         }
                         if (castState.isCasting && castState.volumeSupported != false) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth()
-                                    .padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    if (castVol <= 0f) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Slider(
-                                    value = castVol,
-                                    onValueChange = {
-                                        castVol = it
-                                        vm.setCastVolume((it * 100).roundToInt())
-                                    },
-                                    valueRange = 0f..1f,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    stringResource(R.string.pt_player_035, (castVol * 100).roundToInt()),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                            if (followPhoneVolume) {
+                                // 跟随手机音量：音量键/系统音量条由 MediaSession 直接映射到电视。
+                                // 此处只做只读展示——App 内滑块若也下发，会与系统音量条的两个
+                                // 独立档位互相打架，正是旧版「一调就突然变大」的成因之一。
+                                Column(
+                                    modifier = Modifier.fillMaxWidth()
+                                        .padding(start = 16.dp, end = 16.dp, bottom = 10.dp)
+                                ) {
+                                    Text(
+                                        stringResource(R.string.pt_player_041, castState.castVolume),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        stringResource(R.string.pt_player_042),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth()
+                                        .padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        if (castVol <= 0f) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Slider(
+                                        value = castVol,
+                                        onValueChange = {
+                                            castVol = it
+                                            vm.setCastVolume((it * 100).roundToInt())
+                                        },
+                                        valueRange = 0f..1f,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text(
+                                        stringResource(R.string.pt_player_035, (castVol * 100).roundToInt()),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     }

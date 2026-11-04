@@ -10,6 +10,10 @@ import org.junit.Test
  * 这一层是 M3 自动续播的全部风险所在：判松了会在用户按暂停时擅自跳歌，
  * 判紧了则队列卡在曲末投屏只听一首。故把每一种可能的观测组合都钉死。
  *
+ * v1.9.2 真机补充：STOPPED 态下电视可能对 GetPositionInfo 返回 500，
+ * 此时「进度未知」是常态而非异常，判据不能再把它一票否决；
+ * PAUSED（用户暂停）仍保持全部严格条件。
+ *
  * 注意 [CastQueuePolicy] 是纯函数——不碰播放器、不发网络请求、不读协程状态，
  * 因此这里无需任何替身。
  */
@@ -116,10 +120,10 @@ class CastQueuePolicyTest {
     }
 
     @Test
-    fun `进度未知时不推进（不得把未知当成已到末尾）`() {
-        // getProgress 返回 null → 进度与时长都是 0。此时若把 0 当成「渲染器复位」
-        // 就会误判播完，故必须拦住。
-        assertFalse(
+    fun `STOPPED 且进度完全未知仍推进（真机 GetPositionInfo 返回 500）`() {
+        // 极光TV 在曲目结束后 STOPPED，GetPositionInfo 却返回 500 → 进度/时长皆 0。
+        // 旧判据在这里返回 false，导致 onCastTrackEnded 永不触发、投屏停在曲末。
+        assertTrue(
             shouldAdvance(
                 progressMs = 0L,
                 hasProgressInfo = false,
@@ -130,24 +134,61 @@ class CastQueuePolicyTest {
     }
 
     @Test
-    fun `总时长未知时不推进`() {
-        assertFalse(
-            shouldAdvance(
-                rendererDurationMs = 0L,
-                localDurationMs = 0L
-            )
-        )
-    }
-
-    @Test
-    fun `渲染器无进度信息但本地时长可用且进度为 0 时不推进`() {
-        // 进度信息不可用时不能凭「进度为 0」断言已到末尾
-        assertFalse(
+    fun `STOPPED 且渲染器无进度信息但本地时长可用也推进`() {
+        assertTrue(
             shouldAdvance(
                 progressMs = 0L,
                 hasProgressInfo = false,
                 rendererDurationMs = 0L,
                 localDurationMs = total
+            )
+        )
+    }
+
+    @Test
+    fun `PAUSED 且进度未知时不推进（用户暂停不能被当成播完）`() {
+        assertFalse(
+            shouldAdvance(
+                playbackState = CastQueuePolicy.STATE_PAUSED,
+                progressMs = 0L,
+                hasProgressInfo = false,
+                rendererDurationMs = 0L,
+                localDurationMs = total
+            )
+        )
+    }
+
+    @Test
+    fun `PAUSED 且总时长未知时不推进`() {
+        assertFalse(
+            shouldAdvance(
+                playbackState = CastQueuePolicy.STATE_PAUSED,
+                rendererDurationMs = 0L,
+                localDurationMs = 0L
+            )
+        )
+    }
+
+    @Test
+    fun `STOPPED 但明确停在曲中时不推进（用户在电视上按了 Stop）`() {
+        assertFalse(
+            shouldAdvance(
+                playbackState = CastQueuePolicy.STATE_STOPPED,
+                progressMs = 100_000L,
+                hasProgressInfo = true,
+                rendererDurationMs = total,
+                localDurationMs = total
+            )
+        )
+    }
+
+    @Test
+    fun `STOPPED 且总时长未知但已观测到播完跃迁仍推进`() {
+        assertTrue(
+            shouldAdvance(
+                playbackState = CastQueuePolicy.STATE_STOPPED,
+                rendererDurationMs = 0L,
+                localDurationMs = 0L
             )
         )
     }

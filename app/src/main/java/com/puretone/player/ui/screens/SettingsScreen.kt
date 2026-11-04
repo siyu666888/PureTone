@@ -92,6 +92,23 @@ fun SettingsScreen(
         SettingsGroup(title = stringResource(R.string.pt_settings_004)) {
             SwitchRow(label = stringResource(R.string.pt_settings_005), checked = s.gapless) { vm.setGapless(it) }
             SwitchRow(label = stringResource(R.string.pt_settings_006), checked = s.resumeOnStart) { vm.setResumeOnStart(it) }
+            // 投屏音量跟随手机音量键：开启后 MediaSession 声明为远程播放，
+            // 音量键 / 系统音量条直接调到电视，起点取自电视真实音量（不再从假 100% 起跳）。
+            SwitchRow(
+                label = stringResource(R.string.pt_settings_049),
+                checked = s.castVolumeFollowPhone,
+                onChanged = { vm.setCastVolumeFollowPhone(it) }
+            )
+            Text(
+                if (s.castVolumeFollowPhone) {
+                    stringResource(R.string.pt_settings_050)
+                } else {
+                    stringResource(R.string.pt_settings_051)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2
+            )
             // 交叉淡化（Crossfade）：0 = 关；1~12 秒，步长 500ms。
             // 仅常规格式生效；APE 等需转码格式在边界退化为无缝/曲间停顿。
             SliderRow(
@@ -191,6 +208,23 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1
+            )
+            // 听歌数据统计：关闭后两个写库收口全部短路，已有数据不自动删除，
+            // 清除动作仍由「听歌数据 → 清空历史」显式触发，符合最小必要与用户可控。
+            SwitchRow(
+                label = stringResource(R.string.pt_settings_052),
+                checked = s.listeningStatsEnabled,
+                onChanged = { vm.setListeningStatsEnabled(it) }
+            )
+            Text(
+                if (s.listeningStatsEnabled) {
+                    stringResource(R.string.pt_settings_053)
+                } else {
+                    stringResource(R.string.pt_settings_054)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2
             )
         }
 

@@ -44,6 +44,7 @@ internal class CastSessionController(
     private val next: () -> Unit,
     private val previous: () -> Unit,
     private val playAtIndex: (Int) -> Unit,
+    private val followPhoneVolume: () -> Boolean,
 ) : CastCommandSink, CastQueueSink {
 
     private companion object {
@@ -187,6 +188,14 @@ internal class CastSessionController(
 
     override val castState: CastState
         get() = dlnaCast.state.value
+
+    override val castVolumeFollowPhone: Boolean
+        get() = followPhoneVolume()
+
+    /** 手机音量键 / 系统音量条 → DLNA `SetVolume`（合并与回读由 DlnaCastManager 负责） */
+    override fun setCastVolume(volume: Int) {
+        dlnaCast.setVolume(volume)
+    }
 
     override fun playOnRenderer() {
         scope.launch { dlnaCast.play() }

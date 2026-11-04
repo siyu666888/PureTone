@@ -1,6 +1,7 @@
 package com.puretone.player.playback.cast
 
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -55,8 +56,15 @@ internal object CastProbe {
      *
      * @param descriptionOk 设备描述是否成功取到（false 时其余字段无意义，不能据此下结论）
      * @param hasRenderingControl 设备是否暴露 RenderingControl 服务——**没有就绝无可能用 DLNA 调音量**
+     * @param currentVolume 设备当前音量（0~100 百分比，已按 SCPD 量程折算；null = 未读到）。
+     *        库通道没有 `GetVolume` 回读能力，投屏建立时用它把 UI/系统音量条的初值
+     *        校准到电视真实音量，避免「显示 100%、一拖就跳到 78%」。
      */
-    data class Report(val descriptionOk: Boolean, val hasRenderingControl: Boolean)
+    data class Report(
+        val descriptionOk: Boolean,
+        val hasRenderingControl: Boolean,
+        val currentVolume: Int? = null
+    )
 
     /**
      * 跑一遍探针并把结果写进 [CastNetworkLog]。
@@ -68,7 +76,10 @@ internal object CastProbe {
             val descResult = SoapClient.get(locationUrl)
             if (!descResult.ok) {
                 CastNetworkLog.log("probe-desc http=${descResult.status} url=$locationUrl")
-                return@withContext Report(descriptionOk = false, hasRenderingControl = false)
+                return@withContext Report(
+                    descriptionOk = false,
+                    hasRenderingControl = false
+                )
             }
             val xml = descResult.body
             val desc = parseDescription(xml)
@@ -91,12 +102,15 @@ internal object CastProbe {
 
             probeAvTransport(desc, locationUrl)
             probeSinkFormats(desc, locationUrl)
-            probeVolume(desc, locationUrl)
+            val currentVolume = probeVolume(desc, locationUrl)
             probeLibraryFallback(desc, locationUrl)
             Report(
                 descriptionOk = true,
-                hasRenderingControl = desc.services.any { it.serviceType.contains("RenderingControl", true) }
+                hasRenderingControl = desc.services.any { it.serviceType.contains("RenderingControl", true) },
+                currentVolume = currentVolume
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "probe failed", e)
             CastNetworkLog.log("probe-error ${e.javaClass.simpleName} ${e.message}")
@@ -150,30 +164,34 @@ internal object CastProbe {
      * - 取值上限不是 100 → 我们之前发的是越界值，被静默截断（这是**能修**的）；
      * - 回读值与请求值无关、恒为同一个数 → 接收端收下请求却不执行（只能提示用遥控器）。
      */
-    private fun probeVolume(desc: Description, locationUrl: String) {
+    /** @return 设备当前音量（0~100 百分比，已按 SCPD 量程折算）；null = 未读到 */
+    private fun probeVolume(desc: Description, locationUrl: String): Int? {
         val svc = desc.services.firstOrNull { it.serviceType.contains("RenderingControl", true) }
         if (svc == null) {
             CastNetworkLog.log("probe-vol 缺失：设备描述无 RenderingControl（DLNA 无法调音量）")
-            return
+            return null
         }
         val url = resolveControlUrl(locationUrl, svc.controlUrl) ?: run {
             CastNetworkLog.log("probe-vol 控制地址无法解析 raw=${svc.controlUrl}")
-            return
+            return null
         }
         val body = "<u:GetVolume xmlns:u=\"$RC_NS\"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetVolume>"
         val r = SoapClient.post(url, "$RC_NS#GetVolume", body)
-        val current = SoapClient.xmlValue(r.body, "CurrentVolume")
-        CastNetworkLog.log("probe-vol http=${r.status} current=${current ?: "-"}")
+        val raw = SoapClient.xmlValue(r.body, "CurrentVolume")?.toIntOrNull()
+        CastNetworkLog.log("probe-vol http=${r.status} current=${raw ?: "-"}")
         val scpd = ControlUrls.join(locationUrl, svc.scpdUrl)
-        if (scpd == null) {
+        val max = if (scpd == null) {
             CastNetworkLog.log("probe-vol scpd=无法解析 raw=${svc.scpdUrl}")
-            return
+            DlnaTransport.DEFAULT_VOLUME_MAX
+        } else {
+            val scpdResult = SoapClient.get(scpd)
+            val parsed = DlnaTransport.parseVolumeMax(scpdResult.body)
+            CastNetworkLog.log(
+                "probe-vol scpd http=${scpdResult.status} 音量上限=${parsed ?: "未声明（按 100 处理）"}"
+            )
+            parsed ?: DlnaTransport.DEFAULT_VOLUME_MAX
         }
-        val scpdResult = SoapClient.get(scpd)
-        val max = DlnaTransport.parseVolumeMax(scpdResult.body)
-        CastNetworkLog.log(
-            "probe-vol scpd http=${scpdResult.status} 音量上限=${max ?: "未声明（按 100 处理）"}"
-        )
+        return raw?.let { DlnaTransport.toPercent(it, max) }
     }
 
     /**

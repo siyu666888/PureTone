@@ -1,5 +1,6 @@
 package com.puretone.player.playback
 
+import androidx.media3.common.DeviceInfo
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -14,6 +15,12 @@ import com.puretone.player.playback.cast.CastState
 internal interface CastCommandSink {
     /** 当前投屏状态。必须实时读取（内部是 1Hz 轮询刷新的 StateFlow），不可缓存。 */
     val castState: CastState
+
+    /** 投屏音量是否跟随手机音量键（设置项，实时读取） */
+    val castVolumeFollowPhone: Boolean
+
+    /** 设置渲染器输出音量（0~100 百分比） */
+    fun setCastVolume(volume: Int)
 
     fun playOnRenderer()
     fun pauseOnRenderer()
@@ -48,9 +55,20 @@ internal interface CastCommandSink {
  * - 队列与元数据：始终来自本地播放器（本地与投屏是同一份队列）；
  * - playbackState 投屏期固定为 [Player.STATE_READY]：渲染器已收到媒体，是可控状态。
  *
- * **不接管**：音量、播放模式等仍走本地语义（渲染器音量由 DLNA 侧独立控制）。
+ * ## 音量（跟随手机音量键）
+ *
+ * 投屏时音频**完全不经手机的输出链路**（本地播放器暂停、流由电视通过 HTTP 拉取），
+ * 于是手机音量键原本是「空转」的。开启设置项后把会话声明为 `PLAYBACK_TYPE_REMOTE`：
+ * Media3 会据此建立 `VolumeProviderCompat`，把音量键 / 系统音量条 / 线控的命令
+ * 转成 [setDeviceVolume] 回调，再由本类转发给 DLNA `RenderingControl`。
+ * 起点用 [CastState.castVolume]（投屏建立时已回读电视真实音量），所以是「接着调」
+ * 而不是从假 100% 突然跳下去。
+ *
+ * **不接管**：播放模式等仍走本地语义。设备不支持 DLNA 调音量时退回本地设备信息，
+ * 音量键照常控制手机，UI 会提示用电视遥控器。
  */
 @UnstableApi
+@Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
 internal class CastPlaybackPlayer(
     local: Player,
     private val sink: CastCommandSink
@@ -58,6 +76,15 @@ internal class CastPlaybackPlayer(
 
     /** 是否处于投屏期。每次都实时读——投屏可在任意时刻开始/结束。 */
     private val casting: Boolean get() = sink.castState.isCasting
+
+    /** 音量键是否应交给渲染器：投屏中 + 设置开启 + 设备确实支持 DLNA 调音量 */
+    private val remoteVolume: Boolean
+        get() = casting && sink.castVolumeFollowPhone && sink.castState.volumeSupported != false
+
+    private companion object {
+        /** 相对调节（音量键 +/- 一档）对应的百分比步长 */
+        const val VOLUME_STEP = 5
+    }
 
     // ---------- 命令：投屏期转发渲染器 ----------
 
@@ -125,4 +152,60 @@ internal class CastPlaybackPlayer(
         } else {
             super.getDuration()
         }
+
+    // ---------- 设备音量：投屏期映射到渲染器 ----------
+
+    override fun getDeviceInfo(): DeviceInfo =
+        if (remoteVolume) {
+            DeviceInfo.Builder(DeviceInfo.PLAYBACK_TYPE_REMOTE)
+                .setMinVolume(0)
+                .setMaxVolume(100)
+                .build()
+        } else {
+            super.getDeviceInfo()
+        }
+
+    override fun getDeviceVolume(): Int =
+        if (remoteVolume) sink.castState.castVolume.coerceIn(0, 100) else super.getDeviceVolume()
+
+    override fun isDeviceMuted(): Boolean =
+        if (remoteVolume) sink.castState.castVolume <= 0 else super.isDeviceMuted()
+
+    override fun setDeviceVolume(volume: Int) {
+        if (remoteVolume) sink.setCastVolume(volume.coerceIn(0, 100)) else super.setDeviceVolume(volume)
+    }
+
+    override fun setDeviceVolume(volume: Int, flags: Int) {
+        if (remoteVolume) sink.setCastVolume(volume.coerceIn(0, 100))
+        else super.setDeviceVolume(volume, flags)
+    }
+
+    override fun increaseDeviceVolume() {
+        if (remoteVolume) sink.setCastVolume((sink.castState.castVolume + VOLUME_STEP).coerceIn(0, 100))
+        else super.increaseDeviceVolume()
+    }
+
+    override fun decreaseDeviceVolume() {
+        if (remoteVolume) sink.setCastVolume((sink.castState.castVolume - VOLUME_STEP).coerceIn(0, 100))
+        else super.decreaseDeviceVolume()
+    }
+
+    override fun increaseDeviceVolume(flags: Int) {
+        if (remoteVolume) sink.setCastVolume((sink.castState.castVolume + VOLUME_STEP).coerceIn(0, 100))
+        else super.increaseDeviceVolume(flags)
+    }
+
+    override fun decreaseDeviceVolume(flags: Int) {
+        if (remoteVolume) sink.setCastVolume((sink.castState.castVolume - VOLUME_STEP).coerceIn(0, 100))
+        else super.decreaseDeviceVolume(flags)
+    }
+
+    override fun setDeviceMuted(muted: Boolean) {
+        if (remoteVolume) {
+            // 静音只把渲染器降到 0；取消静音沿用系统当前档位（由 VolumeProvider 下发）
+            if (muted) sink.setCastVolume(0)
+        } else {
+            super.setDeviceMuted(muted)
+        }
+    }
 }

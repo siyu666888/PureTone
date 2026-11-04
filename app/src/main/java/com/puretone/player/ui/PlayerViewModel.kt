@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import android.util.Log
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.MusicRepository
+import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.PureToneApplication
 import com.puretone.player.domain.usecase.LoadLyricsUseCase
@@ -58,6 +59,16 @@ class PlayerViewModel @Inject constructor(
 
     /** 投屏运行时状态（M1）：UI 据此渲染投屏按钮态、投屏中提示与进度 */
     val castState: StateFlow<CastState> = dlnaCast.state
+
+    /** 投屏音量是否跟随手机音量键：开启时播放页把滑块换成只读提示 */
+    val castVolumeFollowPhone: StateFlow<Boolean> = settings.settings
+        .map { it.castVolumeFollowPhone }
+        .distinctUntilChanged()
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            PureToneSettings().castVolumeFollowPhone
+        )
 
     /**
      * 历史投屏设备（跨重启持久化，最近使用在前）。
