@@ -1,0 +1,10 @@
+# PureTone 安装包交付清单
+# 生成时间: 2026-11-04 17:44:46 +0800
+# 版本    : v1.9.2
+# commit  : edadaa5
+# 来源    : app/build/outputs/apk/release（:app:assembleRelease 原生产物）
+# 输出    : dist/output（唯一交付输出目录，不再输出到桌面）
+#
+f51233d209f773b3e30d8f418ba07222af0192072fda997921c34b16708b9999 *PureTone-v1.9.2-arm64-v8a-release.apk
+a8a68e812c2bd0f2ea3108e6b500027c3b1f38b1fb7c82117ca2874d62d708d7 *PureTone-v1.9.2-universal-release.apk
+05258b3075b83ca1dbf95dc2bf816490e7c29ce8b2928c63a8b26be9996f84c4 *PureTone-v1.9.2-x86_64-release.apk
