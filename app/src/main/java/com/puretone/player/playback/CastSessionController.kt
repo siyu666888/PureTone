@@ -63,6 +63,9 @@ internal class CastSessionController(
     private var castRoutingJob: Job? = null
     /** 进度外推 ticker：在 1Hz 轮询之间用墙钟流逝推进手机进度，消除与电视的 1~2s 偏差 */
     private var progressTickerJob: Job? = null
+    /** 进度外推锚点（轮询到的电视位置 + 当时墙钟），由两个协程共享读写 */
+    private val anchorMs = AtomicLong(0L)
+    private val anchorWallMs = AtomicLong(0L)
 
     /**
      * bind 时按当前 player 重建门面并订阅投屏状态；unbind 时彻底释放。
@@ -71,10 +74,17 @@ internal class CastSessionController(
     fun bind(player: ExoPlayer) {
         castPlayer = CastPlaybackPlayer(player, this)
         castRoutingJob?.cancel()
-        // 进度外推锚点：每次 1Hz 轮询把电视当前位置记为锚点（毫秒）+ 当时墙钟。
-        // 用 AtomicLong 是因为锚点由两个协程（collect / 外推 ticker）共享读写。
-        val anchorMs = AtomicLong(0L)
-        val anchorWallMs = AtomicLong(0L)
+        progressTickerJob?.cancel()
+        // 进度外推锚点：每次 1Hz 轮询把电视当前位置记为锚点（毫秒）+ 当时墙钟，
+        // 外推 ticker 在两次轮询之间按墙钟流逝线性推进手机进度，使其实时跟随电视。
+        anchorMs.set(0L)
+        anchorWallMs.set(0L)
+        observeCastState()
+        startProgressProjection()
+    }
+
+    /** 订阅投屏状态：镜像进度/时长进 uiState，并在跨越投屏边界时切换 MediaSession 的 player */
+    private fun observeCastState() {
         castRoutingJob = scope.launch {
             dlnaCast.state.collect { st ->
                 if (st.isCasting) {
@@ -101,10 +111,14 @@ internal class CastSessionController(
                 routeSessionToCast(st.isCasting)
             }
         }
-        // 进度外推：电视进度由 1Hz 轮询得到，手机若只在轮询瞬间刷新会落后电视最多 1s。
-        // 在轮询之间按「锚点 + 流逝墙钟」线性推进 positionMs，使手机进度条实时跟随电视，
-        // 消除用户感知的 1~2s 偏差。暂停 / 拖动窗口（mirror=false）时跳过，避免越界或拉回。
-        progressTickerJob?.cancel()
+    }
+
+    /**
+     * 进度外推：电视进度由 1Hz 轮询得到，手机若只在轮询瞬间刷新会落后电视最多 1s。
+     * 在轮询之间按「锚点 + 流逝墙钟」线性推进 positionMs，使手机进度条实时跟随电视，
+     * 消除用户感知的 1~2s 偏差。暂停 / 拖动窗口（mirror=false）时跳过，避免越界或拉回。
+     */
+    private fun startProgressProjection() {
         progressTickerJob = scope.launch {
             while (true) {
                 delay(250)

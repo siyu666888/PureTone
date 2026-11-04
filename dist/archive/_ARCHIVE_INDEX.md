@@ -283,7 +283,7 @@ universal 包 ELF LOAD 段 26 个 `.so` 16KB 全合规、ZIP 层 `zipalign -c -P
 | `SHA256SUMS.txt` | 590 | 19:55 批次清单（文件名 + 上表三包哈希） |
 
 当前 `dist/output/` 为投屏进度+音量修复批次（同为 v1.9.2 / code 54，v2 签名 `CN=PureTone`）：
-`bc57daed…`（arm64-v8a）、`c502d273…`（x86_64）、`6f9fdb08…`（universal），
+`1e8b8f2a…`（arm64-v8a）、`bfc6191a…`（x86_64）、`365e911a…`（universal）（detekt 重构后重出），
 完整哈希见 `dist/output/SHA256SUMS.txt`（commit 待提交）。
 逐包 `apksigner verify` 均为 `Verifies` / `CN=PureTone`；
 arm64 包 ELF LOAD 段 11 个 `.so` 16KB 全合规、ZIP 层 `zipalign -c -P 16 -v 4` EXIT=0。
