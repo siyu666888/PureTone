@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- P3-1 诊断导出：FileProvider 可分享的路径。
-     diagnostics = cacheDir/diagnostics/，诊断报告写入此处并经系统分享面板导出。 -->
+     diagnostics = cacheDir/diagnostics/，诊断报告写入此处并经系统分享面板导出。
+     posters = cacheDir/posters/，听歌报告分享海报写入此处并经系统分享面板导出（需求4 阶段2）。 -->
 <paths>
     <cache-path name="diagnostics" path="diagnostics" />
+    <cache-path name="posters" path="posters" />
 </paths>

@@ -87,7 +87,112 @@ interface StatsDao {
         """
     )
     fun observeHourDistribution(): Flow<List<HourCountRow>>
+
+    // ---------- 周期聚合（需求4 阶段2：周/月/年报）----------
+
+    /**
+     * 指定周期窗的汇总指标。
+     *
+     * 口径（方案 4.2，全部基于 `played_at BETWEEN :start AND :end`，不含 SQLite localtime 转换）：
+     * - [PeriodSummaryRow.listenMs]：实际收听毫秒 `SUM(played_ms)`；老数据 `played_ms=0` 回退 `duration_ms`。
+     * - [PeriodSummaryRow.estimateRows]：窗内「用了回退估算」的条数（用于标注「含估算」）。
+     * - [PeriodSummaryRow.plays]：窗内历史条数（每次「开始播放」计 1）。
+     * - [PeriodSummaryRow.completed]：`SUM(completed)`，完整播放次数。
+     * - [PeriodSummaryRow.distinctSongs]：`COUNT(DISTINCT song_id)`。
+     * - [PeriodSummaryRow.activeDays]：`COUNT(DISTINCT day_key)`（空 day_key 不计，避免老数据空串干扰）。
+     */
+    @Query(
+        """
+        SELECT
+            COALESCE(SUM(CASE WHEN played_ms = 0 THEN duration_ms ELSE played_ms END), 0) AS listenMs,
+            SUM(CASE WHEN played_ms = 0 AND duration_ms > 0 THEN 1 ELSE 0 END) AS estimateRows,
+            COUNT(*) AS plays,
+            COALESCE(SUM(completed), 0) AS completed,
+            COUNT(DISTINCT song_id) AS distinctSongs,
+            COUNT(DISTINCT CASE WHEN day_key <> '' THEN day_key END) AS activeDays
+        FROM play_history
+        WHERE played_at BETWEEN :start AND :end
+        """
+    )
+    suspend fun periodSummary(start: Long, end: Long): PeriodSummaryRow
+
+    /**
+     * 周期窗内每日听歌时长与播放次数（按预存 [day_key] 聚合，升序）。
+     * 复用 [DailyTrendRow]（dayKey/listenMs/plays）。周报即 7 根柱。
+     */
+    @Query(
+        """
+        SELECT day_key AS dayKey,
+               COALESCE(SUM(CASE WHEN played_ms = 0 THEN duration_ms ELSE played_ms END), 0) AS listenMs,
+               COUNT(*) AS plays
+        FROM play_history
+        WHERE played_at BETWEEN :start AND :end
+        GROUP BY day_key
+        ORDER BY day_key ASC
+        """
+    )
+    suspend fun periodDailyTrend(start: Long, end: Long): List<DailyTrendRow>
+
+    /**
+     * 周期窗内 Top 歌曲：按 `song_id` 聚合**播放次数**（决策点③），JOIN [songs] 取展示信息。
+     * 排序：播放次数降序，次数相同看最近一次播放（更「当期」的歌优先）。
+     */
+    @Query(
+        """
+        SELECT s.id AS id, s.title AS title, s.artist AS artist, s.album AS album,
+               COUNT(*) AS playCount, s.cover_uri AS coverUri
+        FROM play_history h
+        INNER JOIN songs s ON s.id = h.song_id
+        WHERE h.played_at BETWEEN :start AND :end
+        GROUP BY h.song_id
+        ORDER BY playCount DESC, MAX(h.played_at) DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun periodTopSongs(start: Long, end: Long, limit: Int = 10): List<TopSongRow>
+
+    /**
+     * 周期窗内 Top 歌手：按 `artist` 聚合**播放次数**，JOIN [songs] 取歌手名。
+     */
+    @Query(
+        """
+        SELECT CASE WHEN s.artist = '' THEN '未知艺术家' ELSE s.artist END AS name,
+               COUNT(*) AS playCount
+        FROM play_history h
+        INNER JOIN songs s ON s.id = h.song_id
+        WHERE h.played_at BETWEEN :start AND :end
+        GROUP BY name
+        ORDER BY playCount DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun periodTopArtists(start: Long, end: Long, limit: Int = 10): List<NamedCountRow>
+
+    /**
+     * 周期窗内时段分布（0-23 时播放次数），用于周期专属趣味标签。
+     */
+    @Query(
+        """
+        SELECT CAST(strftime('%H', played_at / 1000, 'unixepoch', 'localtime') AS INTEGER) AS hour,
+               COUNT(*) AS plays
+        FROM play_history
+        WHERE played_at BETWEEN :start AND :end
+        GROUP BY hour
+        ORDER BY hour ASC
+        """
+    )
+    suspend fun periodHourDistribution(start: Long, end: Long): List<HourCountRow>
 }
+
+/** 周期汇总行（见 [periodSummary] 口径注释） */
+data class PeriodSummaryRow(
+    val listenMs: Long,
+    val estimateRows: Long,
+    val plays: Long,
+    val completed: Long,
+    val distinctSongs: Int,
+    val activeDays: Int
+)
 
 /** 每日趋势行（按日期聚合） */
 data class DailyTrendRow(

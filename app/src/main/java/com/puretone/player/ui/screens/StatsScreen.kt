@@ -2,7 +2,6 @@ package com.puretone.player.ui.screens
 import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -35,9 +34,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -47,6 +43,7 @@ import com.puretone.player.ui.PlayerViewModel
 import kotlinx.coroutines.launch
 import com.puretone.player.ui.Routes
 import com.puretone.player.ui.StatsViewModel
+import com.puretone.player.ui.components.BarChart
 
 /**
  * 听歌统计看板（Item 6）：总览卡片 + 每日听歌柱状图 + 时段分布 + 最爱歌曲/歌手 + 趣味标签。
@@ -319,32 +316,6 @@ private fun StatCard(label: String, value: String, modifier: Modifier = Modifier
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(4.dp))
             Text(value, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
-/** 简易柱状图（Canvas，GPU 加速）；[highlightIndex] 高亮当前/峰值柱 */
-@Composable
-private fun BarChart(
-    values: List<Long>,
-    barColor: Color,
-    modifier: Modifier = Modifier,
-    highlightIndex: Int = -1
-) {
-    if (values.isEmpty()) return
-    val max = (values.maxOrNull() ?: 0L).coerceAtLeast(1L).toFloat()
-    Canvas(modifier = modifier) {
-        val n = values.size
-        val gap = 3.dp.toPx()
-        val slot = ((size.width - gap * (n - 1)) / n).coerceAtLeast(1f)
-        values.forEachIndexed { i, v ->
-            val h = (v.toFloat() / max) * (size.height * 0.92f)
-            val left = i * (slot + gap)
-            drawRect(
-                color = if (i == highlightIndex) barColor else barColor.copy(alpha = 0.45f),
-                topLeft = Offset(left, size.height - h),
-                size = Size(slot, h.coerceAtLeast(if (v > 0) 2.dp.toPx() else 0f))
-            )
         }
     }
 }

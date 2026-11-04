@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.InsertChart
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
@@ -126,6 +127,25 @@ fun MeScreen(
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.weight(1f)
                     )
+            }
+        }
+
+        // 听歌报告入口（需求4 阶段2：周报 + 分享海报）
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = { navController.navigate(Routes.REPORT) { launchSingleTop = true } }
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Filled.BarChart, contentDescription = null, tint = PureToneBrand.Primary)
+                Spacer(Modifier.size(12.dp))
+                Text(
+                    stringResource(R.string.pt_report_entry),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
 

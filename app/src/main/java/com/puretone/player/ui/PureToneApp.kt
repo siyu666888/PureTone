@@ -36,6 +36,7 @@ import com.puretone.player.ui.screens.GroupDetailScreen
 import com.puretone.player.ui.screens.MeScreen
 import com.puretone.player.ui.screens.PlaylistDetailScreen
 import com.puretone.player.ui.screens.PlayerScreen
+import com.puretone.player.ui.screens.ReportScreen
 import com.puretone.player.ui.screens.SettingsScreen
 import com.puretone.player.ui.screens.StatsScreen
 import com.puretone.player.ui.theme.PureToneTheme
@@ -49,6 +50,7 @@ object Routes {
     const val PLAYER = "player"
     const val EQ = "eq"
     const val STATS = "stats"
+    const val REPORT = "report"
     const val GROUP_DETAIL = "group/{type}/{key}"
     const val PLAYLIST_DETAIL = "playlist/{id}"
 
@@ -167,6 +169,7 @@ fun PureToneApp(initialRoute: String? = null) {
                 composable(Routes.PLAYER) { PlayerScreen(navController = nav, vm = playerVm) }
                 composable(Routes.EQ) { EqScreen(navController = nav) }
                 composable(Routes.STATS) { StatsScreen(navController = nav, playerVm = playerVm) }
+                composable(Routes.REPORT) { ReportScreen(navController = nav, playerVm = playerVm) }
                 composable(
                     route = Routes.GROUP_DETAIL,
                     arguments = listOf(
