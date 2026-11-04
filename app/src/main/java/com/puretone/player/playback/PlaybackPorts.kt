@@ -50,10 +50,12 @@ internal interface SessionStorePort {
     suspend fun restoreQueue(): RestoredQueue?
 }
 
-/** 音乐仓库端口（播放/完成计数） */
+/** 音乐仓库端口（播放/完成计数 + 收听时长结算） */
 internal interface PlaybackRepoPort {
     suspend fun recordPlay(songId: Long)
     suspend fun recordCompletion(songId: Long)
+    /** 暂停/切歌时结算已收听毫秒（需求4 听歌报告） */
+    suspend fun settlePlayback(songId: Long, playedMs: Long)
 }
 
 /** 交叉淡化协调器端口 */

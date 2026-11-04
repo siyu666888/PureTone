@@ -83,6 +83,7 @@ internal class FakeSessionStore : SessionStorePort {
 internal class FakeRepo : PlaybackRepoPort {
     val plays = mutableListOf<Long>()
     val completions = mutableListOf<Long>()
+    val settlements = mutableListOf<Pair<Long, Long>>()
 
     override suspend fun recordPlay(songId: Long) {
         plays += songId
@@ -90,6 +91,10 @@ internal class FakeRepo : PlaybackRepoPort {
 
     override suspend fun recordCompletion(songId: Long) {
         completions += songId
+    }
+
+    override suspend fun settlePlayback(songId: Long, playedMs: Long) {
+        settlements += (songId to playedMs)
     }
 }
 

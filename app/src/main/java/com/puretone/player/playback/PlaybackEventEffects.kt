@@ -60,7 +60,16 @@ internal class PlaybackEventEffects(
         uiState.update { it.copy(isPlaying = isPlaying) }
         // 正常播起来了：连续失败计数归零（只有「一直在失败」才判定为坏队列）
         if (isPlaying) errorHandler.onPlaying()
-        else PlaybackEventLog.recordPauseWithQueueIfAny(playerProvider(), uiState.value.currentSongId)
+        else {
+            PlaybackEventLog.recordPauseWithQueueIfAny(playerProvider(), uiState.value.currentSongId)
+            // 需求4：暂停时结算本次播放会话已收听毫秒。仅当暂停位置 > 0 且当前歌曲已知，
+            // 避免把刚切进来的新歌（position≈0）误结算为 0ms——自然播完由 recordCompletion 另走完成结算。
+            val pos = currentPosition()
+            val sid = uiState.value.currentSongId
+            if (pos > 0 && sid != null) {
+                scope.launch { musicRepository.settlePlayback(sid, pos) }
+            }
+        }
         // 焦点跟着「真的在发声」走：起播即申请、真正停住才放弃
         playbackFocus.onIsPlayingChanged(isPlaying)
         // 桌面小部件同步（内部去抖，连续变化只推一次 IPC）

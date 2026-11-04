@@ -49,7 +49,9 @@ object DataModule {
                 // 而闪退（v1.7.0 的线上事故正是漏了 6→7）。迁移单测用独立 builder
                 // 注册了全量迁移，无法替生产代码兜底，故新增 DatabaseMigrationWiringTest
                 // 直接跑本生产 builder 做端到端校验。
-                PureToneDatabase.MIGRATION_6_7
+                PureToneDatabase.MIGRATION_6_7,
+                // v8：play_history 新增 4 列（需求4 听歌报告）。漏注册会复现 v1.7.0 闪退。
+                PureToneDatabase.MIGRATION_7_8
             )
             .build()
 

@@ -19,32 +19,32 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 
-/**
- * 生产数据库接线回归测试（v1.7.4 引入）。
- *
- * 痛点：v1.7.0 的线上事故是 `DataModule.provideDatabase` 漏注册了
- * `MIGRATION_6_7`——@Database(version=7) 但 builder 只注册到 5→6。
- * 升级用户（v1.6.0=schema 6）首次开库即抛
- * "A migration from 6 to 7 was required but not found"，启动即闪退。
- * 而 [PureToneDatabaseMigrationTest] 用**独立**的 addMigrations 列表注册了
- * 全量迁移，根本替生产代码兜不住这个"漏接线"的 bug。
- *
- * 本测试直接调用生产 builder [DataModule.provideDatabase]，预先造一个
- * 旧版本（当前为 schema 6）的真实库，再走生产开库路径升级：
- * 只要生产 builder 漏注册任何一个版本区间，这里就会抛 IllegalStateException 而失败。
- *
- * **维护约定**：每当 @Database(version) 自 N 升到 N+1 并新增 MIGRATION_(N)_(N+1)
- * 时，把下方 startVersion 改为 N，并把建库 INSERT 改成 N 版对应的列集合
- * （参照 app/schemas 下 (N).json 的 createSql）。
- */
+    /**
+     * 生产数据库接线回归测试（v1.7.4 引入）。
+     *
+     * 痛点：v1.7.0 的线上事故是 `DataModule.provideDatabase` 漏注册了
+     * `MIGRATION_6_7`——@Database(version=7) 但 builder 只注册到 5→6。
+     * 升级用户（v1.6.0=schema 6）首次开库即抛
+     * "A migration from 6 to 7 was required but not found"，启动即闪退。
+     * 而 [PureToneDatabaseMigrationTest] 用**独立**的 addMigrations 列表注册了
+     * 全量迁移，根本替生产代码兜不住这个"漏接线"的 bug。
+     *
+     * 本测试直接调用生产 builder [DataModule.provideDatabase]，预先造一个
+     * 旧版本（当前为 schema 7）的真实库，再走生产开库路径升级：
+     * 只要生产 builder 漏注册任何一个版本区间，这里就会抛 IllegalStateException 而失败。
+     *
+     * **维护约定**：每当 @Database(version) 自 N 升到 N+1 并新增 MIGRATION_(N)_(N+1)
+     * 时，把下方 startVersion 改为 N，并把建库 INSERT 改成 N 版对应的列集合
+     * （参照 app/schemas 下 (N).json 的 createSql）。
+     */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class DatabaseMigrationWiringTest {
 
     private lateinit var context: Context
 
-    /** 升级起点版本：当前 @Database(version=7)，起点取 7-1=6 */
-    private val startVersion = 6
+    /** 升级起点版本：当前 @Database(version=8)，起点取 8-1=7 */
+    private val startVersion = 7
 
     @Before
     fun setUp() {
@@ -71,6 +71,14 @@ class DatabaseMigrationWiringTest {
         val song = db.songDao().getById(1L)
         assertTrue("应能读到升级前的歌曲", song != null)
         assertEquals("Song A", song!!.title)
+        assertEquals("升级前写入的播放历史应保留", 1, db.playHistoryDao().observeRecent(50).first().size)
+
+        // v8 新增的报告四列必须真实存在（漏迁移 / DDL 漂移会在这里暴露）
+        val cols = columnNamesOf(db, "play_history")
+        assertTrue("play_history 缺 day_key 列：$cols", cols.contains("day_key"))
+        assertTrue("play_history 缺 played_ms 列：$cols", cols.contains("played_ms"))
+        assertTrue("play_history 缺 end_at 列：$cols", cols.contains("end_at"))
+        assertTrue("play_history 缺 completed 列：$cols", cols.contains("completed"))
 
         // 终点版本必须等于当前导出的最高 schema 版本（即 @Database(version) 的值），
         // 否则说明版本号与迁移没对齐。@Database 注解 RetentionPolicy=CLASS，运行时反射
@@ -106,16 +114,20 @@ class DatabaseMigrationWiringTest {
                 .build()
         )
         helper.writableDatabase.use { db ->
-            // v6 schema：20 列（无 rg_* 三列，迁移 6→7 负责加），依赖迁移兜底默认值。
+            // v7 schema：23 列（含 rg_* 三列，迁移 7→8 负责加报告四列），依赖迁移兜底默认值。
             db.execSQL(
                 """
                 INSERT INTO songs (id, media_store_id, title, artist, album, album_id, volume_name,
                     duration, path, size, cover_uri, mimeType, year, track_number, date_added,
-                    date_modified, favorite, play_count, last_played_at, user_edited)
+                    date_modified, favorite, play_count, last_played_at, user_edited,
+                    rg_track_gain, rg_album_gain, rg_analyzed)
                 VALUES (1, 100, 'Song A', 'Artist', 'Album', 1, '',
                     200000, '/music/a.mp3', 1000, NULL, 'audio/mpeg', 2024, 1, 1000, 2000,
-                    1, 3, 99, 0)
+                    1, 3, 99, 0, NULL, NULL, 0)
                 """.trimIndent()
+            )
+            db.execSQL(
+                "INSERT INTO play_history (id, song_id, played_at, duration_ms) VALUES (1, 1, 100, 5000)"
             )
         }
         helper.close()
@@ -146,6 +158,16 @@ class DatabaseMigrationWiringTest {
             }
         }
         return ddls to (setupQueries + indexQueries)
+    }
+
+    /** 查询表上真实存在的列名集合 */
+    private fun columnNamesOf(db: PureToneDatabase, table: String): Set<String> {
+        val names = mutableSetOf<String>()
+        db.openHelper.writableDatabase.query("PRAGMA table_info(`$table`)").use { c ->
+            val nameCol = c.getColumnIndexOrThrow("name")
+            while (c.moveToNext()) names += c.getString(nameCol)
+        }
+        return names
     }
 
     /** 当前导出的 schema 最高版本号（等于 @Database(version)），用于断言开库终点版本 */

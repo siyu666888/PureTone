@@ -61,7 +61,9 @@ class PureToneDatabaseMigrationTest {
                 PureToneDatabase.MIGRATION_3_4,
                 PureToneDatabase.MIGRATION_4_5,
                 PureToneDatabase.MIGRATION_5_6,
-                PureToneDatabase.MIGRATION_6_7
+                PureToneDatabase.MIGRATION_6_7,
+                // v8：play_history 新增 4 列（需求4 听歌报告）；全链必须到 8，否则开库报「3→8 缺迁移」
+                PureToneDatabase.MIGRATION_7_8
             )
             .build()
 
@@ -104,10 +106,15 @@ class PureToneDatabaseMigrationTest {
     fun `migrate 4 to 5 adds query indexes and keeps data`() = runTest {
         createV4DatabaseWithData()
 
-        // 只注册 4 → 5：验证纯索引迁移 + v5 schema 校验（索引名/列序与实体
+        // 只注册 4 → 8：验证纯索引迁移 + v8 schema 校验（索引名/列序与实体
         // @Index 注解不一致会在这里抛错）
         val db = Room.databaseBuilder(context, PureToneDatabase::class.java, dbFile.absolutePath)
-            .addMigrations(PureToneDatabase.MIGRATION_4_5, PureToneDatabase.MIGRATION_5_6, PureToneDatabase.MIGRATION_6_7)
+            .addMigrations(
+                PureToneDatabase.MIGRATION_4_5,
+                PureToneDatabase.MIGRATION_5_6,
+                PureToneDatabase.MIGRATION_6_7,
+                PureToneDatabase.MIGRATION_7_8
+            )
             .build()
 
         // 1) 触发真实打开：跑迁移 + schema 校验，数据完整保留
@@ -135,9 +142,9 @@ class PureToneDatabaseMigrationTest {
     fun `migrate 5 to 6 adds volume_name column and keeps data`() = runTest {
         createV5DatabaseWithData()
 
-        // 只注册 5 → 6：验证纯加列迁移 + v6 schema 校验（缺列 / 列类型不一致会抛错）
+        // 只注册 5 → 8：验证纯加列迁移 + v8 schema 校验（缺列 / 列类型不一致会抛错）
         val db = Room.databaseBuilder(context, PureToneDatabase::class.java, dbFile.absolutePath)
-            .addMigrations(PureToneDatabase.MIGRATION_5_6, PureToneDatabase.MIGRATION_6_7)
+            .addMigrations(PureToneDatabase.MIGRATION_5_6, PureToneDatabase.MIGRATION_6_7, PureToneDatabase.MIGRATION_7_8)
             .build()
 
         // 1) 触发真实打开：跑迁移 + schema 校验，数据完整保留
@@ -170,11 +177,11 @@ class PureToneDatabaseMigrationTest {
     fun `migrate 6 to 7 adds replaygain columns and keeps data`() = runTest {
         createV6DatabaseWithData()
 
-        // 只注册 6 → 7：验证纯加列迁移 + v7 schema 校验
-        // （rg_track_gain / rg_album_gain 可空 REAL、rg_analyzed NOT NULL DEFAULT 0，
-        // 缺列 / 类型 / 默认值不一致都会在 Room 打开路径的 schema 校验里抛错）
+        // 只注册 6 → 8：验证纯加列迁移 + v8 schema 校验
+        // （rg_track_gain / rg_album_gain 可空 REAL、rg_analyzed NOT NULL DEFAULT 0、
+        //  报告四列 NOT NULL DEFAULT 的默认值，缺列 / 类型 / 默认值不一致都会抛错）
         val db = Room.databaseBuilder(context, PureToneDatabase::class.java, dbFile.absolutePath)
-            .addMigrations(PureToneDatabase.MIGRATION_6_7)
+            .addMigrations(PureToneDatabase.MIGRATION_6_7, PureToneDatabase.MIGRATION_7_8)
             .build()
 
         // 1) 触发真实打开：跑迁移 + schema 校验，数据完整保留
@@ -198,6 +205,39 @@ class PureToneDatabaseMigrationTest {
         assertEquals(true, reread.rgAnalyzed)
         assertEquals(-6.42f, reread.rgTrackGain!!, 0.001f)
         assertEquals(-7.1f, reread.rgAlbumGain!!, 0.001f)
+
+        db.close()
+    }
+
+    @Test
+    fun `migrate 7 to 8 adds report columns and keeps data`() = runTest {
+        createV7DatabaseWithData()
+
+        // 只注册 7 → 8：验证纯加列迁移 + v8 schema 校验
+        // （day_key TEXT NOT NULL DEFAULT '' / played_ms INTEGER NOT NULL DEFAULT 0 /
+        //  end_at INTEGER NOT NULL DEFAULT 0 / completed INTEGER NOT NULL DEFAULT 0，
+        //  缺列 / 类型 / 默认值不一致都会在 Room 打开路径的 schema 校验里抛错）
+        val db = Room.databaseBuilder(context, PureToneDatabase::class.java, dbFile.absolutePath)
+            .addMigrations(PureToneDatabase.MIGRATION_7_8)
+            .build()
+
+        // 1) 触发真实打开：跑迁移 + schema 校验，数据完整保留
+        assertEquals(1, db.songDao().count())
+        assertEquals("Song A", db.songDao().getById(SONG_ID)!!.title)
+        val history = db.playHistoryDao().observeRecent(50).first()
+        assertEquals(1, history.size)
+
+        // 2) 四列真实存在，既有行默认值正确（未结算态：报告层按 played_at 回退估算）
+        val cols = columnNamesOf(db, "play_history")
+        assertTrue("play_history 缺 day_key 列：$cols", cols.contains("day_key"))
+        assertTrue("play_history 缺 played_ms 列：$cols", cols.contains("played_ms"))
+        assertTrue("play_history 缺 end_at 列：$cols", cols.contains("end_at"))
+        assertTrue("play_history 缺 completed 列：$cols", cols.contains("completed"))
+        val row = history.first()
+        assertEquals("", row.dayKey)
+        assertEquals(0L, row.playedMs)
+        assertEquals(0L, row.endAt)
+        assertEquals(0, row.completed)
 
         db.close()
     }
@@ -406,6 +446,47 @@ class PureToneDatabaseMigrationTest {
                     200000, '/music/a.mp3', 1000, NULL, 'audio/mpeg', 2024, 1, 1000, 2000,
                     1, 3, 99, 0)
                 """.trimIndent()
+            )
+        }
+        helper.close()
+    }
+
+    /** 按导出的 7.json 建库并灌入数据（v7 真实库，尚无报告四列） */
+    private fun createV7DatabaseWithData() {
+        val schema = readSchema(7)
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbFile.absolutePath)
+                .callback(object : SupportSQLiteOpenHelper.Callback(7) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        schema.first.forEach { (table, ddl) -> db.execSQL(ddl) }
+                        schema.second.forEach { db.execSQL(it) }
+                    }
+
+                    override fun onUpgrade(
+                        db: SupportSQLiteDatabase,
+                        oldVersion: Int,
+                        newVersion: Int
+                    ) = Unit
+                })
+                .build()
+        )
+        helper.writableDatabase.use { db ->
+            // 不写报告四列：依赖 7→8 迁移加列 + 默认值的兜底
+            db.execSQL(
+                """
+                INSERT INTO songs (id, media_store_id, title, artist, album, album_id, volume_name,
+                    duration, path, size, cover_uri, mimeType, year, track_number, date_added,
+                    date_modified, favorite, play_count, last_played_at, user_edited,
+                    rg_track_gain, rg_album_gain, rg_analyzed)
+                VALUES ($SONG_ID, 100, 'Song A', 'Artist', 'Album', 1, '',
+                    200000, '/music/a.mp3', 1000, NULL, 'audio/mpeg', 2024, 1, 1000, 2000,
+                    1, 3, 99, 0, NULL, NULL, 0)
+                """.trimIndent()
+            )
+            db.execSQL(
+                "INSERT INTO play_history (id, song_id, played_at, duration_ms) " +
+                    "VALUES (1, $SONG_ID, 100, 5000)"
             )
         }
         helper.close()

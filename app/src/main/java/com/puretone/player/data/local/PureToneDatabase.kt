@@ -42,6 +42,12 @@ import com.puretone.player.data.local.entity.SongEntity
  *              rg_track_gain / rg_album_gain 为 REAL 可空（存 dB，NULL = 未分析或无标签），
  *              rg_analyzed 为 INTEGER NOT NULL DEFAULT 0（是否已跑过 ffprobe）。
  *              纯 ALTER 加列，无表重建、无数据搬运；ffprobe 提取由同步流程异步回填。
+ * version 8 —— 听歌报告（需求4）：play_history 新增 4 个维度列，支撑周/月/年报的精确聚合——
+ *              day_key（本地日期 yyyy-MM-dd，插入时算好）、played_ms（实际收听毫秒）、
+ *              end_at（结算时间戳，0=未结算）、completed（是否完整播放完成）。
+ *              4 条纯 ALTER TABLE ADD COLUMN NOT NULL DEFAULT ...，无表重建、无数据搬运；
+ *              既有行 day_key 留空（由报告层按 played_at 回退）、played_ms/completed 置 0、
+ *              end_at 置 0（标记「未结算」，报告层回退 duration_ms 并标注「含估算」）。
  * schema JSON 由 KSP room.schemaLocation 导出至 app/schemas，供后续迁移校验。
  */
 @Database(
@@ -51,7 +57,7 @@ import com.puretone.player.data.local.entity.SongEntity
         PlaylistSongEntity::class,
         PlayHistoryEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 abstract class PureToneDatabase : RoomDatabase() {
@@ -227,6 +233,26 @@ abstract class PureToneDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE `songs` ADD COLUMN `rg_analyzed` INTEGER NOT NULL DEFAULT 0"
                 )
+            }
+        }
+
+        /**
+         * v7 → v8：听歌报告（需求4）。
+         *
+         * play_history 新增 4 个维度列（纯加列、无表重建、无数据搬运）：
+         * - day_key：TEXT NOT NULL DEFAULT ''（本地日期 yyyy-MM-dd，插入时算好）；
+         * - played_ms：INTEGER NOT NULL DEFAULT 0（实际收听毫秒）；
+         * - end_at：INTEGER NOT NULL DEFAULT 0（结算时间戳，0=未结算）；
+         * - completed：INTEGER NOT NULL DEFAULT 0（是否完整播放完成）。
+         * 既有行全部落在「未结算」态（day_key=''、played_ms=0、end_at=0、completed=0），
+         * 由报告层按 played_at/day_key 回退、必要时用 duration_ms 估算并标注「含估算」。
+         */
+        val MIGRATION_7_8: Migration = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `play_history` ADD COLUMN `day_key` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `play_history` ADD COLUMN `played_ms` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `play_history` ADD COLUMN `end_at` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `play_history` ADD COLUMN `completed` INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

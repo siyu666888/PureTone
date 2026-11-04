@@ -13,6 +13,7 @@ import com.puretone.player.data.media.ScannedSong
 import com.puretone.player.data.media.MediaStoreScanner
 import com.puretone.player.data.media.isNonMusicPath
 import com.puretone.player.data.settings.SettingsRepository
+import com.puretone.player.domain.report.ReportPeriod
 import com.puretone.player.playback.ReplayGainExtractor
 import com.puretone.player.util.UnknownText
 import kotlinx.coroutines.CancellationException
@@ -349,13 +350,20 @@ class MusicRepository @Inject constructor(
         // 取歌曲时长，供"累计听歌时长"估算（找不到则不记历史）
         val song = songDao.getById(songId)
         if (song != null) {
+            val now = System.currentTimeMillis()
             playHistoryDao.insert(
-                PlayHistoryEntity(songId = songId, playedAt = System.currentTimeMillis(), durationMs = song.duration)
+                PlayHistoryEntity(
+                    songId = songId,
+                    playedAt = now,
+                    durationMs = song.duration,
+                    // 需求4：插入时即算好本地日期键，供周/月/年报周期聚合（避免查询时 localtime 漂移）
+                    dayKey = ReportPeriod.dayKeyFromEpoch(now)
+                )
             )
         }
         // 注意：此处不再累加 play_count。播放次数只统计「完整播放完成」，
         // 见 recordCompletion()——否则跳过/拖动的部分播放会污染“最爱歌曲/歌手”。
-        // 历史保留 1 年：足够覆盖月度/年度趋势；「最近播放」查询本身只取最近若干条。
+        // 历史保留约 400 天：覆盖更长年度趋势；「最近播放」查询本身只取最近若干条。
         // P3-19：旧实现每次播放都跑一次全表 DELETE（切歌频繁时写放大+全表扫描），
         // 改为至少间隔 [HISTORY_CLEANUP_INTERVAL_MS] 清理一次——保留时长是以「年」计的，
         // 晚几小时清理没有任何可观察差异。
@@ -372,7 +380,24 @@ class MusicRepository @Inject constructor(
      */
     override suspend fun recordCompletion(songId: Long) {
         if (!listeningStatsEnabled()) return
-        songDao.incrementPlayCount(songId, System.currentTimeMillis())
+        val now = System.currentTimeMillis()
+        songDao.incrementPlayCount(songId, now)
+        // 需求4：回填本次播放会话的实际收听（整曲时长 = 完整收听），标记 completed=1。
+        // 结算落到「最近一条该歌曲记录」，即使 onIsPlayingChanged(false) 已先行结算过也不冲突
+        // （settleCompletion 不要求 end_at=0，只在最新开行回填）。
+        playHistoryDao.settleCompletion(songId, songDao.getById(songId)?.duration ?: 0L, now)
+    }
+
+    /**
+     * 暂停/切歌结算（需求4）：回填本次播放会话已收听毫秒。
+     * 只命中「最近一条未结算」的该歌曲记录（end_at=0），回填 played_ms 与 end_at。
+     * 由 [com.puretone.player.playback.PlaybackEventEffects.onIsPlayingChanged] 在 isPlaying=false
+     * 时调用（仅当暂停位置 > 0，避免把刚切进来的新歌误结算为 0ms）。
+     */
+    override suspend fun settlePlayback(songId: Long, playedMs: Long) {
+        if (!listeningStatsEnabled()) return
+        if (playedMs <= 0) return
+        playHistoryDao.settleLastPlayback(songId, playedMs, System.currentTimeMillis())
     }
 
     // ---------- 歌曲信息编辑 / 联网匹配 ----------
@@ -567,8 +592,8 @@ class MusicRepository @Inject constructor(
             .replace("%", "\\%")
             .replace("_", "\\_")
 
-        /** 播放历史保留 1 年（支撑月度/年度听歌趋势统计） */
-        const val HISTORY_RETENTION_MS = 365L * 24 * 60 * 60 * 1000
+        /** 播放历史保留约 400 天（决策点：原 365 天 → 放宽到 400 天，覆盖更长年度趋势） */
+        const val HISTORY_RETENTION_MS = 400L * 24 * 60 * 60 * 1000
 
         /** 过期历史清理的最小间隔（P3-19）：1 小时 */
         const val HISTORY_CLEANUP_INTERVAL_MS = 60L * 60 * 1000
