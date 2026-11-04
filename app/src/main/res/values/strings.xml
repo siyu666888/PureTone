@@ -300,8 +300,6 @@
     <string name="pt_player_039" formatted="false">上次投屏：%1$s</string>
     <!-- 投屏历史设备提示：本次发现未搜到它，点击仍会尝试投送 -->
     <string name="pt_player_040" formatted="false">本次未发现，点击仍会尝试投送</string>
-    <!-- 跟随手机音量 · 音量 %1$d%% -->
-    <string name="pt_player_041" formatted="false">跟随手机音量 · 当前 %1$d%%</string>
     <!-- 投屏时请用手机音量键调节电视音量 -->
     <string name="pt_player_042" formatted="false">投屏时请用手机音量键调节电视音量</string>
     <!-- 歌单 -->

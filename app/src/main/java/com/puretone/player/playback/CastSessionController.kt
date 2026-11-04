@@ -173,12 +173,28 @@ internal class CastSessionController(
      */
     fun startCast(device: CastDevice, song: SongEntity) {
         scope.launch {
+            // 投屏前先记下落地的本地播放位置（蓝牙 / 本地播放都可能已播到中段）。
+            // 投出去后把渲染器 seek 到该位置，避免「从头开始播放」。
+            val localPos = (playerProvider()?.currentPosition ?: uiState.value.positionMs)
+                .coerceAtLeast(0L)
+            val localDur = playerProvider()?.duration?.takeIf { it > 0L }
+                ?: song.duration.takeIf { it > 0L } ?: 0L
             if (uiState.value.isPlaying) pause()
             // 投屏态释放手机侧音频焦点（声音走电视，焦点无关且不应占用）
             playbackFocus.abandon()
             dlnaCast.selectDevice(device)
             when (val result = dlnaCast.castSong(song)) {
-                is CastResult.Success -> Unit
+                is CastResult.Success -> {
+                    // 不是从开头投的，就把渲染器 seek 到本地暂停那一刻的位置。
+                    // 等到渲染器进入 PLAYING 再 seek 更稳；加乐观窗口防止 1Hz 轮询
+                    // 把进度条又拉回 0。
+                    if (localPos > 1_500L && (localDur <= 0L || localPos < localDur)) {
+                        delay(600)
+                        dlnaCast.seek(localPos)
+                        dlnaCast.noteSeekOptimistic()
+                        CastNetworkLog.log("cast-resume-on-start seek=$localPos dur=$localDur")
+                    }
+                }
                 // 首投失败 → 恢复本地播放，否则用户点了投屏却两头都没声音。
                 // 「已过期」不恢复：那是期间用户自己停了投屏或改了目标，
                 // 本地播放已由那条路径恢复，这里再拉一次会把新一轮投送也打断。

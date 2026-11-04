@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.outlined.Cast
@@ -155,9 +155,9 @@ fun CastDevicePickerDialog(
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         if (devices.isNotEmpty()) {
                             item { SectionHeader(stringResource(R.string.pt_player_037)) }
-                            // key 用设备唯一 id（即 UPnP location）而非 IP：即便上游去重有疏漏，
-                            // 也不会再因同 IP 多记录撞车闪退。
-                            items(devices, key = { "online-${it.id}" }) { d ->
+                            // key 由「地址|名称|序号」拼成：同 IP 多设备（如客厅极光TV 与
+                            // 623 共用 192.168.101.20）也能各自唯一，彻底避免 LazyColumn 撞 key 闪退。
+                            itemsIndexed(devices, key = { index, d -> "online-${d.address}|${d.name}|$index" }) { _, d ->
                                 CastDeviceRow(
                                     device = d,
                                     lastUsedAt = lastUsedByAddress[d.address],
@@ -169,7 +169,7 @@ fun CastDevicePickerDialog(
                         // 搜索中 devices 为空，这里就等于全部历史；搜完后已上线的自动上浮到上面。
                         if (offlineHistory.isNotEmpty()) {
                             item { SectionHeader(stringResource(R.string.pt_player_038)) }
-                            items(offlineHistory, key = { "history-${it.address}" }) { h ->
+                            itemsIndexed(offlineHistory, key = { index, h -> "history-${h.address}|${h.name}|$index" }) { _, h ->
                                 CastDeviceRow(
                                     device = h.toDevice(),
                                     lastUsedAt = h.lastUsedAt,

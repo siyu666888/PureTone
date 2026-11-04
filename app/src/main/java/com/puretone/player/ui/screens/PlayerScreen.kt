@@ -52,8 +52,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.filled.CastConnected
-import androidx.compose.material.icons.filled.VolumeOff
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.outlined.Cast
 import androidx.compose.material.icons.outlined.Equalizer
 import androidx.compose.material.icons.rounded.AddCircleOutline
@@ -313,53 +313,49 @@ fun PlayerScreen(
                             )
                         }
                         if (castState.isCasting && castState.volumeSupported != false) {
+                            // 投射音量：始终提供 App 内滑块作为可靠控制。
+                            // 蓝牙绝对音量场景下手机音量键会被蓝牙设备截走、到不了 MediaSession，
+                            // 滑块是与设备无关的保底；开启「跟随手机音量」时再附一行提示。
+                            Row(
+                                modifier = Modifier.fillMaxWidth()
+                                    .padding(start = 16.dp, end = 16.dp, bottom = if (followPhoneVolume) 4.dp else 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                val volIcon = if (castVol <= 0f) {
+                                    Icons.AutoMirrored.Filled.VolumeOff
+                                } else {
+                                    Icons.AutoMirrored.Filled.VolumeUp
+                                }
+                                Icon(
+                                    volIcon,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Slider(
+                                    value = castVol,
+                                    onValueChange = {
+                                        castVol = it
+                                        vm.setCastVolume((it * 100).roundToInt())
+                                    },
+                                    valueRange = 0f..1f,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    stringResource(R.string.pt_player_035, (castVol * 100).roundToInt()),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                             if (followPhoneVolume) {
-                                // 跟随手机音量：音量键/系统音量条由 MediaSession 直接映射到电视。
-                                // 此处只做只读展示——App 内滑块若也下发，会与系统音量条的两个
-                                // 独立档位互相打架，正是旧版「一调就突然变大」的成因之一。
-                                Column(
+                                Text(
+                                    stringResource(R.string.pt_player_042),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.fillMaxWidth()
                                         .padding(start = 16.dp, end = 16.dp, bottom = 10.dp)
-                                ) {
-                                    Text(
-                                        stringResource(R.string.pt_player_041, castState.castVolume),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Text(
-                                        stringResource(R.string.pt_player_042),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            } else {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth()
-                                        .padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Icon(
-                                        if (castVol <= 0f) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Slider(
-                                        value = castVol,
-                                        onValueChange = {
-                                            castVol = it
-                                            vm.setCastVolume((it * 100).roundToInt())
-                                        },
-                                        valueRange = 0f..1f,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Text(
-                                        stringResource(R.string.pt_player_035, (castVol * 100).roundToInt()),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                                )
                             }
                         }
                     }
