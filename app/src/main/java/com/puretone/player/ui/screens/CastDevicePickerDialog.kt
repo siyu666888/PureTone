@@ -133,62 +133,64 @@ fun CastDevicePickerDialog(
         title = { Text(stringResource(R.string.pt_player_028)) },
         text = {
             Column(modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
-                when {
-                    loading -> {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            androidx.compose.material3.CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp), strokeWidth = 2.dp
-                            )
-                            Text(stringResource(R.string.pt_player_029), style = MaterialTheme.typography.bodyMedium)
+                // 搜索转圈常驻顶部：即便正在搜，下方历史列表也实时可见（边显示历史边转圈），
+                // 不再用 loading 整屏替换列表——这样上次投过的电视在搜索那几秒里就能直接点。
+                if (loading && hasPermission) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp), strokeWidth = 2.dp
+                        )
+                        Text(stringResource(R.string.pt_player_029), style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                if (!hasPermission || permissionDenied) {
+                    Text(
+                        stringResource(R.string.pt_player_034),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        if (devices.isNotEmpty()) {
+                            item { SectionHeader(stringResource(R.string.pt_player_037)) }
+                            items(devices, key = { "online-${it.address}" }) { d ->
+                                CastDeviceRow(
+                                    device = d,
+                                    lastUsedAt = lastUsedByAddress[d.address],
+                                    offline = false,
+                                    onClick = { onSelect(d) }
+                                )
+                            }
+                        }
+                        // 搜索中 devices 为空，这里就等于全部历史；搜完后已上线的自动上浮到上面。
+                        if (offlineHistory.isNotEmpty()) {
+                            item { SectionHeader(stringResource(R.string.pt_player_038)) }
+                            items(offlineHistory, key = { "history-${it.address}" }) { h ->
+                                CastDeviceRow(
+                                    device = h.toDevice(),
+                                    lastUsedAt = h.lastUsedAt,
+                                    offline = true,
+                                    onClick = { onSelect(h.toDevice()) }
+                                )
+                            }
                         }
                     }
-                    !hasPermission || permissionDenied -> {
-                        Text(
-                            stringResource(R.string.pt_player_034),
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                    error != null && devices.isEmpty() && history.isEmpty() -> {
-                        Text(
-                            stringResource(R.string.pt_player_030, error ?: ""),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                    devices.isEmpty() && history.isEmpty() -> {
-                        Text(
-                            stringResource(R.string.pt_player_031) +
-                                stringResource(R.string.pt_player_032),
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                    else -> {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            if (devices.isNotEmpty()) {
-                                item { SectionHeader(stringResource(R.string.pt_player_037)) }
-                                items(devices, key = { "online-${it.address}" }) { d ->
-                                    CastDeviceRow(
-                                        device = d,
-                                        lastUsedAt = lastUsedByAddress[d.address],
-                                        offline = false,
-                                        onClick = { onSelect(d) }
-                                    )
-                                }
-                            }
-                            if (offlineHistory.isNotEmpty()) {
-                                item { SectionHeader(stringResource(R.string.pt_player_038)) }
-                                items(offlineHistory, key = { "history-${it.address}" }) { h ->
-                                    CastDeviceRow(
-                                        device = h.toDevice(),
-                                        lastUsedAt = h.lastUsedAt,
-                                        offline = true,
-                                        onClick = { onSelect(h.toDevice()) }
-                                    )
-                                }
-                            }
+                    // 列表彻底空时（非权限问题）的兜底文案：出错显红字，否则显「未发现」。
+                    if (devices.isEmpty() && offlineHistory.isEmpty()) {
+                        if (error != null) {
+                            Text(
+                                stringResource(R.string.pt_player_030, error ?: ""),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        } else if (!loading) {
+                            Text(
+                                stringResource(R.string.pt_player_031) +
+                                    stringResource(R.string.pt_player_032),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
                         }
                     }
                 }
