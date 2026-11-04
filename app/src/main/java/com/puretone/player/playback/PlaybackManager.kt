@@ -5,8 +5,6 @@ import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.OptIn
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
@@ -108,7 +106,7 @@ class PlaybackManager @Inject constructor(
     private val widgetUpdater: WidgetUpdater,
     private val dlnaCast: DlnaCastManager,
     private val serviceLauncher: PlaybackServiceLauncher
-) : PlaybackEventSink, PlaybackControlSink, PlaybackQueueSink {
+) : PlaybackControlSink, PlaybackQueueSink {
 
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
@@ -176,23 +174,7 @@ class PlaybackManager @Inject constructor(
      * 抽出来后可纯 JVM 锁定（见 [PlaybackSessionStore] 类注释）。
      */
     private val sessionStore: PlaybackSessionStore = PlaybackSessionStore(
-        archive = object : PlaybackSessionArchive {
-            override suspend fun load(): SavedSession? =
-                musicRepository.loadPlaybackSession()?.let {
-                    SavedSession(songIds = it.songIds, index = it.index, positionMs = it.positionMs)
-                }
-
-            override suspend fun songsByIds(ids: List<Long>): List<SongEntity> =
-                musicRepository.getSongs(ids)
-
-            override suspend fun save(songIds: List<Long>, index: Int, positionMs: Long) {
-                musicRepository.savePlaybackSession(songIds, index, positionMs)
-            }
-
-            override suspend fun clear() {
-                musicRepository.clearPlaybackSession()
-            }
-        },
+        archive = RoomPlaybackSessionArchive(musicRepository),
         scope = scope
     )
 
@@ -315,6 +297,16 @@ class PlaybackManager @Inject constructor(
     )
 
     /**
+     * 续播恢复（P1-1 拆分第十一刀）：读取存档 → 二次守卫 → 重建队列。
+     * 落地动作仍在 [QueueOrchestrator]（依赖它独有的播放器与 APE 转码编排）。
+     */
+    private val sessionRestorer = PlaybackSessionRestorer(
+        playerProvider = { player },
+        sessionStore = sessionStore,
+        queueOrchestrator = queueOrchestrator
+    )
+
+    /**
      * 睡眠定时控制器（P1-1 收尾抽取）：MINUTES 倒计时 / END_OF_TRACK 播完本曲停止 / OFF。
      * 状态机与 job 全部归它，主类只保留「设置变化 / ticker / 自然播完」三处一行转发。
      */
@@ -323,6 +315,21 @@ class PlaybackManager @Inject constructor(
         uiState = _uiState,
         scope = scope,
         pause = { this@PlaybackManager.pause() }
+    )
+
+    /**
+     * 设置 → 引擎/音效 映射（P1-1 拆分第十刀）：倍速 / 无缝 / 顺序 / 随机 / 音效 / ReplayGain。
+     * `lastSettings` / `gaplessEnabled` 仍以回调回写，因为交叉淡化协调器与 ReplayGain 刷新仍读它们。
+     */
+    private val settingsApplier = PlaybackSettingsApplier(
+        uiState = _uiState,
+        playerProvider = { player },
+        controller = controller,
+        sleepTimer = sleepTimer,
+        audioEffectController = audioEffectController,
+        applyReplayGainForCurrent = this::applyReplayGainForCurrent,
+        setLastSettings = { lastSettings = it },
+        setGaplessEnabled = { gaplessEnabled = it }
     )
 
     /**
@@ -372,16 +379,7 @@ class PlaybackManager @Inject constructor(
     private val castQueueCoordinator = CastQueueCoordinator(
         scope = scope,
         castState = dlnaCast.state,
-        queueInfo = {
-            val state = _uiState.value
-            val index = state.queueIndex
-            val queue = state.queue
-            CastQueueInfo(
-                // 末曲不推进：投完这一首就停，回绕交给本地播放模式（循环/随机）
-                hasNext = index >= 0 && index < queue.lastIndex,
-                currentDurationMs = queue.getOrNull(index)?.durationMs ?: 0L
-            )
-        },
+        queueInfo = { buildCastQueueInfo() },
         sink = cast
     )
 
@@ -391,10 +389,35 @@ class PlaybackManager @Inject constructor(
      * 收听主/备播放器回调、做事件分类与完成去重，再通过 [PlaybackEventSink] 回传副作用。
      * 监听器对象本体与分类/去重逻辑都搬到了 [PlaybackEventListener]，本类只实现副作用。
      */
+    /**
+     * 播放事件副作用落地（P1-1 拆分第九刀）：[PlaybackEventListener] 解释完事件后，
+     * 所有「宿主据此要做什么」都委托给本类——UI 镜像 / 音效会话 / 去抖存档 / ReplayGain /
+     * APE 预热 / 小部件 / 空闲停服。主类因此只实现控制与队列两个 sink 接口。
+     */
+    private val eventEffects = PlaybackEventEffects(
+        playerProvider = { player },
+        uiState = _uiState,
+        audioEffectController = audioEffectController,
+        lastSettingsProvider = { lastSettings },
+        errorHandler = errorHandler,
+        playbackFocus = playbackFocus,
+        widgetUpdater = widgetUpdater,
+        sessionStore = sessionStore,
+        scope = scope,
+        musicRepository = musicRepository,
+        crossfade = crossfade,
+        interTrackGap = interTrackGap,
+        sleepTimer = sleepTimer,
+        gaplessEnabledProvider = { gaplessEnabled },
+        warmUpFollowingApe = this::warmUpFollowingApe,
+        applyReplayGainForCurrent = this::applyReplayGainForCurrent,
+        stopServiceIfIdle = this::stopServiceIfIdle
+    )
+
     private val eventListener = PlaybackEventListener(
         playerProvider = { player },
         currentSongIdProvider = { _uiState.value.currentSongId },
-        sink = this
+        sink = eventEffects
     )
 
     // 服务拉起 / 兜底 controller 已下沉到 PlaybackServiceLauncher（P1-1 拆分第二刀）：
@@ -454,22 +477,11 @@ class PlaybackManager @Inject constructor(
     // 全程走原有单播放器路径，回归无缝/曲间停顿语义，不会引入回归。
     //
     // 状态机与备援播放器的全部生命周期已下沉到 CrossfadeCoordinator（P1-1 拆分第四刀），
-    // 此处只剩三个入口：触发（ticker）、收尾（STATE_ENDED 兜底）、取消。
+    // 此处只剩两个入口：触发（ticker）、取消（收尾已随事件层下沉到 PlaybackEventEffects）。
 
     /** ticker 调用：临近曲尾且存在下一首时启动淡化（判定与编排在协调器内） */
     private fun maybeStartCrossfade(p: ExoPlayer) {
         crossfade.maybeStart(ExoCrossfadePlayer(p))
-    }
-
-    /**
-     * 主播放器自然播到结尾时的兜底收尾（[PlaybackEventSink] 实现）。
-     * 只有「淡出方就是当前主播放器」时才收尾：[CrossfadeCoordinator.finalize] 自带幂等守卫，
-     * 渐变协程与本回调谁先到谁收尾，后到者直接返回。
-     */
-    override fun finalizeCrossfadeIfOutgoing(player: ExoPlayer): Boolean {
-        val hit = crossfade.isCrossfading && crossfade.isOutgoing(player)
-        if (hit) crossfade.finalize()
-        return hit
     }
 
     /** 由 [PlaybackService] 在 onCreate 注入主/备播放器、媒体会话与各自的 ReplayGain 处理器 */
@@ -501,7 +513,7 @@ class PlaybackManager @Inject constructor(
         serviceLauncher.onServiceBound()
         // 订阅设置：倍速 / 睡眠定时 / 无缝播放 / 播放顺序 / 音效 实时生效
         settingsJob = scope.launch {
-            settings.settings.collect { applySettings(it) }
+            settings.settings.collect { settingsApplier.apply(it) }
         }
         // 投屏路由（M1 收尾）：门面必须包住**当前**这个 player，故每次 bind 重建；
         // 路由状态与订阅已下沉到 CastSessionController（P1-1 收尾抽取）。
@@ -557,55 +569,6 @@ class PlaybackManager @Inject constructor(
         castQueueCoordinator.stop()
     }
 
-    /**
-     * 将用户设置映射到播放引擎与音效（唯一入口）。
-     *
-     * - 倍速 / 无缝播放：直接生效；
-     * - 睡眠定时：按「到期时刻」恢复倒计时（进程重建后仍准确），已过期则清零；
-     * - 播放顺序 / 随机：灌给 ExoPlayer 与 uiState，冷启动不再重置；
-     * - 音效：整包交给 [AudioEffectController.applySettings]，设置页开关从此有真实效果。
-     */
-    private fun applySettings(s: PureToneSettings) {
-        lastSettings = s
-        gaplessEnabled = s.gapless
-        setSpeed(s.playbackSpeed)
-        applyPlayOrder(s)
-        sleepTimer.applySettings(s)
-        audioEffectController.applySettings(s)
-        // ReplayGain：开关 / 模式 / preamp 变化时刷新当前曲目的增益
-        applyReplayGainForCurrent()
-    }
-
-    /**
-     * 播放顺序（顺序/随机/单曲）来自设置：既灌给播放器，也写回 uiState。
-     *
-     * P3-13：任何非 ALL/ONE 的持久化值（含历史遗留的 OFF 默认）统归并为 ALL——
-     * 三态循环（顺序→随机→单曲）不包含「停止」态，OFF 在 UI 被显示为「顺序播放」循环
-     * 图标却「放完即停」，图标/状态/行为割裂。规整后 SEQUENTIAL 始终表示「列表循环」，
-     * 与图标一致；点击循环图标进入随机也符合三态循环预期。
-     */
-    private fun applyPlayOrder(s: PureToneSettings) {
-        val repeat = when (s.repeatMode) {
-            PureToneSettings.REPEAT_ALL -> RepeatMode.ALL
-            PureToneSettings.REPEAT_ONE -> RepeatMode.ONE
-            else -> RepeatMode.ALL
-        }
-        if (repeat != _uiState.value.repeatMode) {
-            _uiState.update { it.copy(repeatMode = repeat) }
-        }
-        if (s.shuffle != _uiState.value.shuffle) {
-            _uiState.update { it.copy(shuffle = s.shuffle) }
-        }
-        player?.let { p ->
-            p.repeatMode = when (repeat) {
-                RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                RepeatMode.ALL -> Player.REPEAT_MODE_ALL
-                RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-            }
-            p.shuffleModeEnabled = s.shuffle
-        }
-    }
-
     // ---------- 队列命令（逻辑下沉至 QueueOrchestrator，此处仅转发） ----------
 
     fun setQueueAndPlay(songs: List<SongEntity>, startIndex: Int = 0, startPositionMs: Long = 0L) =
@@ -646,44 +609,10 @@ class PlaybackManager @Inject constructor(
     /**
      * 恢复上次播放会话（受 settings resumeOnStart 控制，由 PlayerViewModel 首帧后调用）。
      *
-     * 守卫必须放在本层（进程级单例），不能只靠 ViewModel 的实例字段：
-     * - 恢复以 [autoPlay=false] 重建队列并 `pause()`，一旦在「播放器里已有内容」时
-     *   执行，就会打断正在播放的歌（队列、进度、音量均被重置）；
-     * - 每个导航目的地用 `hiltViewModel()` 拿到的是 **NavBackStackEntry 作用域的独立
-     *   PlayerViewModel 实例**，其 init 都会跑一次恢复。于是「点迷你条进播放页」
-     *   （以及进 我的 / 统计 / 分组详情 页）都会新建实例 → 二次恢复 → 自动暂停。
-     *
-     * 因此：播放器已有媒体项或正在播放时，一律原样返回 false。
+     * 守卫逻辑与「读取存档 → 二次守卫 → 重建队列」已下沉到 [PlaybackSessionRestorer]；
+     * 这里只保留进程级单例的入口语义（详见其类注释）。
      */
-    override suspend fun restoreLastSession(): Boolean {
-        val p = player
-        if (!canRestoreSession(playerItemCount = p?.mediaItemCount ?: 0, isPlaying = p?.isPlaying == true)) {
-            return false
-        }
-        // 按保存顺序重建队列（含重复项）：顺序还原与「曲目已删除」过滤都在 sessionStore 内
-        val restored = sessionStore.restoreQueue() ?: return false
-        val songs = restored.songs
-        // P1-2：上面的 DB 读取是挂起点——这期间用户可能已经点了别的歌起播
-        // （setQueueAndPlay 会重建队列）。起播前必须再查一次守卫：否则旧会话
-        // 队列会覆盖用户的新选择，表现为「点了新歌却播出旧队列/旧歌」。
-        val current = player
-        if (!canRestoreSession(
-                playerItemCount = current?.mediaItemCount ?: 0,
-                isPlaying = current?.isPlaying == true
-            )
-        ) {
-            return false
-        }
-        // autoPlay=false：恢复后停在当前位置，是否播交给用户（旧实现先 setQueueAndPlay
-        // 再 pause()，APE 队列会在 ensureWav 挂起导致 pause 先于 play 执行，行为不确定）。
-        queueOrchestrator.applyQueueAndPlay(
-            songs,
-            restored.index,
-            restored.positionMs,
-            autoPlay = false
-        )
-        return true
-    }
+    override suspend fun restoreLastSession(): Boolean = sessionRestorer.restore()
 
     /**
      * 桌面小部件专用：队列为空时把上次会话恢复到暂停态。
@@ -696,140 +625,15 @@ class PlaybackManager @Inject constructor(
         return restoreLastSession()
     }
 
-    private fun saveSessionDebounced() {
-        // 快照在写入时刻才求值：去抖的意义就是「以最新状态写一次」
-        sessionStore.saveDebounced { sessionSnapshot() }
-    }
+    /**
+     * 立即存档（停止 / 暂停 / 切歌等关键节点）；事件触发的去抖存档在 [PlaybackEventEffects]。
+     */
+    override fun saveSessionNow() = eventEffects.saveSessionNow()
 
-    override fun saveSessionNow() {
-        val snapshot = sessionSnapshot() ?: return
-        sessionStore.saveNow(snapshot)
-    }
-
-    /** 当前待存档的会话快照；队列为空（无可存档内容）时为 null */
-    private fun sessionSnapshot(): SavedSession? {
-        val state = _uiState.value
-        if (state.queue.isEmpty()) return null
-        return SavedSession(
-            songIds = state.queue.map { it.songId },
-            index = state.queueIndex,
-            positionMs = sessionStore.positionToSave(currentPosition(), currentDuration())
-        )
-    }
-
-    /** 当前播放位置（毫秒，非负） */
-    private fun currentPosition(): Long = (player?.currentPosition ?: 0L).coerceAtLeast(0L)
-
-    /** 当前曲目时长；未知（ExoPlayer 返回 C.TIME_UNSET 等负值）时按 0 处理 */
-    private fun currentDuration(): Long = player?.duration?.takeIf { it > 0 } ?: 0L
-
-    // ---------- 内部 ----------
-    // 播放错误处理（APE 重试 / 错误自愈 / 连续跳过计数）已下沉到 PlaybackErrorHandler
-    // （P1-1 收尾抽取），由 onError / onIsPlayingChanged 经 errorHandler 字段转发。
-
-    // ---------- 播放事件副作用（PlaybackEventSink 实现） ----------
-    //
-    // 事件「发生了什么」的解释与去重已在 PlaybackEventListener 完成，这里只落地副作用。
-
-    override fun onAudioSessionChanged(audioSessionId: Int) {
-        audioEffectController.attachToSession(audioSessionId)
-        // session 重建后把当前设置重新灌一遍（音效/播放模式不因换会话丢失）
-        audioEffectController.applySettings(lastSettings)
-    }
-
-    override fun onSecondaryAudioSessionChanged(audioSessionId: Int) {
-        audioEffectController.attachToSession(audioSessionId)
-        audioEffectController.applySettings(lastSettings)
-    }
-
-    override fun onIsPlayingChanged(isPlaying: Boolean) {
-        _uiState.update { it.copy(isPlaying = isPlaying) }
-        // 正常播起来了：连续失败计数归零（只有「一直在失败」才判定为坏队列）
-        if (isPlaying) errorHandler.onPlaying()
-        else PlaybackEventLog.recordPauseWithQueueIfAny(player, _uiState.value.currentSongId)
-        // 焦点跟着「真的在发声」走：起播即申请、真正停住才放弃（判据见 PlaybackAudioFocus）
-        playbackFocus.onIsPlayingChanged(isPlaying)
-        // 桌面小部件同步（内部去抖，连续变化只推一次 IPC）
-        widgetUpdater.requestUpdate()
-        // 注意：此处绝不可调用 serviceLauncher.ensureStarted()（见 PlaybackEventListener 注释）。
-        saveSessionDebounced()
-    }
-
-    override fun onBufferingChanged(isBuffering: Boolean) {
-        _uiState.update { it.copy(isBuffering = isBuffering) }
-    }
-
-    override fun onTrackChanged(songId: Long, queueIndex: Int, durationMs: Long) {
-        _uiState.update { state ->
-            state.copy(
-                currentSongId = songId,
-                queueIndex = queueIndex,
-                durationMs = durationMs
-            )
-        }
-    }
-
-    override fun recordPlay(songId: Long) {
-        scope.launch { musicRepository.recordPlay(songId) }
-    }
-
-    override fun onTrackSideEffects(reason: Int) {
-        warmUpFollowingApe()
-        // 曲目切换后立即刷新 ReplayGain 增益（取当前曲目标签 + 设置）
-        applyReplayGainForCurrent()
-        // 无缝播放关闭：在自动切歌（非用户手动 next）的边界处停顿一小会再继续。
-        // 注意必须是「暂停 → 延时 → 继续」，只暂停不续播会让播放到此为止（历史缺陷）。
-        // 其余原因（用户手动切歌 / 换队列）不动在途的停顿：用户按 next 时播放器
-        // 正处于「被停顿暂停」的状态，若在这里取消续播意图，会变成「切了歌却停着」。
-        if (!gaplessEnabled && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
-            interTrackGap.start()
-        }
-        // 「播完本曲停止」到点：自然播完切下一首（AUTO）或单曲循环重头（REPEAT）。
-        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
-            reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
-        ) {
-            sleepTimer.finishEndOfTrack()
-        }
-        // 曲目变化（含清空队列导致切到空）→ 同步桌面小部件
-        widgetUpdater.requestUpdate()
-    }
-
-    /** 作废在途的曲间停顿（不改变当前播放态，仅取消「稍后自动续播」的意图） */
-    override fun cancelInterTrackGap() {
-        interTrackGap.cancel()
-    }
-
-    override fun recordCompletion(songId: Long) {
-        scope.launch { musicRepository.recordCompletion(songId) }
-    }
-
-    override fun onPlaybackEnded() {
-        // 末首自然播完（无 AUTO/REPEAT 过渡）的收尾。完成去重已由事件层
-        // [CompletionRecorder] 在触发处负责，此处只做：睡眠定时归零 + 立即存档 + 空闲停服。
-        PlaybackEventLog.record("playback-ended", endedSnapshot())
-        sleepTimer.finishEndOfTrack()
-        saveSessionNow()
-        // 判定一律交给 stopServiceIfIdle（它同时看主/备两个实例，交叉淡化收尾时不会误停）
-        stopServiceIfIdle()
-    }
-
-    override fun onIdleCleared() {
-        PlaybackEventLog.record("idle-cleared", endedSnapshot())
-        stopServiceIfIdle()
-    }
-
-    /** 播放结束类事件的现场快照（诊断报告靠它把「停服」与「淡化中的角色交换」对上账） */
-    private fun endedSnapshot(): String =
-        "idx=${player?.currentMediaItemIndex} count=${player?.mediaItemCount ?: 0} " +
-            "cf=${crossfade.isCrossfading}"
-
-    override fun onError(error: PlaybackException) {
-        errorHandler.handle(error)
-    }
-
-    override fun onSecondaryError(error: PlaybackException) {
-        Log.w(TAG, "secondary player error: ${error.errorCodeName} ${error.message}")
-    }
+    // 播放事件副作用（事件解释在 [PlaybackEventListener]、落地在 [PlaybackEventEffects]）、
+    // APE 重试 / 错误自愈（[PlaybackErrorHandler]）都已下沉；主类只保留控制与队列两个 sink 接口。
+    // 曲间停顿作废（[PlaybackControlSink.cancelInterTrackGap]）：事件层触发后此处一行转发。
+    override fun cancelInterTrackGap() = interTrackGap.cancel()
 
     // ensureServiceStarted / startServiceByBinding 已下沉到 PlaybackServiceLauncher
     // （P1-1 拆分第二刀），调用点统一走 serviceLauncher.ensureStarted()。
@@ -919,6 +723,17 @@ class PlaybackManager @Inject constructor(
             // 到达未捕获异常处理器 → 进程崩溃，必须包住
             runCatching { apeTranscoder.ensureWav(nextApe.songId, nextApe.filePath) }
         }
+    }
+
+    /** 投屏队列推进所需的队列快照（末曲不推进：投完这一首就停，回绕交给本地播放模式） */
+    private fun buildCastQueueInfo(): CastQueueInfo {
+        val state = _uiState.value
+        val index = state.queueIndex
+        val queue = state.queue
+        return CastQueueInfo(
+            hasNext = index >= 0 && index < queue.lastIndex,
+            currentDurationMs = queue.getOrNull(index)?.durationMs ?: 0L
+        )
     }
 
 }
