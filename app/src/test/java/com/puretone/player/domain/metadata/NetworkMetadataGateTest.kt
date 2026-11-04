@@ -70,7 +70,6 @@ class NetworkMetadataGateTest {
             songDao = db.songDao(),
             playlistDao = db.playlistDao(),
             playHistoryDao = db.playHistoryDao(),
-            statsDao = db.statsDao(),
             scanner = MediaStoreScanner(context),
             replayGainExtractor = ReplayGainExtractor(),
             settings = settings

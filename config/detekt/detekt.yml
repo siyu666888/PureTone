@@ -67,10 +67,11 @@ complexity:
     active: true
     # DAO 接口天然方法多（SongDao 32 个、PlaylistDao 19 个），Room 的 @Query
     # 一条一个方法，没有合理的上限——这类接口不该被此规则管。
-    # 阈值定 40：现存唯一超标者是 MusicRepository（42 个函数），它已作为存量
-    # 冻结进 baseline。这是有意为之——它是**下一个该拆分的类**（曲库查询 /
-    # 统计 / 歌单 / 播放历史 / 会话存档 5 类职责混在一起），拆完后本规则会
-    # 自动重新生效。把阈值调到 45+ 只会让这条信号消失，债务反而被掩盖。
+    # 阈值定 40：DAO 接口天然方法多，但业务仓库不应如此。2026-11-04 前
+    # MusicRepository 有 41 个受管函数（超 1 个）被冻结在 baseline；
+    # 把听歌统计 9 个只读聚合方法拆到 StatsRepository 后降到 32，
+    # baseline 已清零、本规则全量生效。刻意不调高阈值掩盖债务——
+    # 阈值一调，这条信号就消失了。
     thresholdInFiles: 40
     thresholdInClasses: 40
     thresholdInObjects: 40

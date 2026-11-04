@@ -3,18 +3,20 @@
 #
 # 为什么需要它（detekt 覆盖不到的部分）：
 # - detekt 的 LargeClass 只统计**类体**行数，而本项目的大文件多为
-#   Compose 顶层函数 + 顶层状态（PlayerScreen.kt 1209 行、BrowseScreen.kt 979 行），
+#   Compose 顶层函数 + 顶层状态（定档时 PlayerScreen.kt 1209 行、BrowseScreen.kt 979 行），
 #   这些根本不在 class 里 —— LargeClass 对它们完全无效；
 # - detekt 的 LongMethod 虽能覆盖顶层函数，但对 Compose 声明式代码是系统性误报
 #   （详见 config/detekt/detekt.yml 的说明），已按 ui 包排除；
 # - 于是「文件规模」这条线在两个工具之间成了盲区，需要一道显式检查补上。
 #
 # 阈值设计：
-# - 1200 行：现状最大 PlayerScreen.kt 1209 行 —— 恰好被拦。
-#   这不是巧合：它意味着**下一个同级文件一落地就会失败**，
-#   想加新文件必须先拆分现有的，起到「结构性压力」的作用。
+# - 1200 行：定档时（2026-11-01，P2-2）全库最大文件 PlayerScreen.kt 为 1209 行，
+#   取 1200 让它恰好被拦。这不是巧合：它意味着**下一个同级文件一落地就会失败**，
+#   想加新文件必须先拆分现有的，起到「结构性压力」的作用。阈值至今未调整过。
 # - 存量豁免用文件级白名单，且必须写明豁免理由与拆分计划 ——
-#   白名单是临时的债务记录，不是永久通行证。
+#   白名单是临时的债务记录，不是永久通行证。2026-11-04 清理：PlayerScreen.kt
+#   经删死代码 / UI 重构降到 1145 行，已低于阈值，其豁免不再可能被触发，
+#   故白名单清空；机制与格式保留，将来确有超线存量时按格式补条目即可。
 #
 # 用法：
 #   scripts/check-file-size.sh            # 校验（有超标即 exit 1）
@@ -33,9 +35,8 @@ REPORT_ONLY=0
 
 # 存量豁免：文件路径（相对 SRC_DIR）| 行数 | 豁免理由
 # 新增豁免时必须写清理由——这行字就是未来的拆分 TODO。
-WHITELIST=(
-  "ui/screens/PlayerScreen.kt|1222|播放页主屏：封面翻转 + 歌词面板 + 进度条 + 队列预览；拆分计划见 P3 段「歌单功能补完」后的 UI 重构。P3-4 字符串资源化新增 R/stringResource 导入与 detekt 换行，使行数 1209→1212；2026-11-02 进度条完整重设计接入 ProgressSection（discreteState 收集 + derivePlaybackState + 透传 playedFraction/durationMs/playbackState），再增 ~10 行；UI 重构后会回落"
-)
+# 当前为空（2026-11-04 起）：全部主源文件均 ≤ 1200 行，无需任何豁免。
+WHITELIST=()
 
 FAILED=0
 OVERFLOW=()
@@ -48,15 +49,17 @@ while IFS= read -r file; do
   lines="$(wc -l < "$file" | tr -d ' ')"
   [ "$lines" -le "$LIMIT" ] && continue
 
-  # 查白名单
+  # 查白名单（空数组直接跳过，兼容 set -u 与旧版 bash）
   allowed=""
-  for entry in "${WHITELIST[@]}"; do
-    wl_file="${entry%%|*}"
-    if [ "$wl_file" = "$rel" ]; then
-      allowed="$entry"
-      break
-    fi
-  done
+  if [ ${#WHITELIST[@]} -gt 0 ]; then
+    for entry in "${WHITELIST[@]}"; do
+      wl_file="${entry%%|*}"
+      if [ "$wl_file" = "$rel" ]; then
+        allowed="$entry"
+        break
+      fi
+    done
+  fi
 
   if [ -n "$allowed" ]; then
     wl_lines="$(echo "$allowed" | cut -d'|' -f2)"

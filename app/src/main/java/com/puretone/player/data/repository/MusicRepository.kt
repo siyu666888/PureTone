@@ -5,12 +5,7 @@ import com.puretone.player.PureToneApplication
 import com.puretone.player.data.local.dao.PlayHistoryDao
 import com.puretone.player.data.local.dao.PlaylistDao
 import com.puretone.player.data.local.dao.PlaylistWithSongs
-import com.puretone.player.data.local.dao.DailyTrendRow
-import com.puretone.player.data.local.dao.HourCountRow
-import com.puretone.player.data.local.dao.NamedCountRow
 import com.puretone.player.data.local.dao.SongDao
-import com.puretone.player.data.local.dao.StatsDao
-import com.puretone.player.data.local.dao.TopSongRow
 import com.puretone.player.data.local.entity.PlayHistoryEntity
 import com.puretone.player.data.local.entity.PlaylistEntity
 import com.puretone.player.data.local.entity.SongEntity
@@ -55,7 +50,9 @@ data class SyncResult(
  *
  * - 扫描结果与本地库按 [SongEntity.path] 幂等对账（保留旧 id，避免歌单/历史引用断裂）；
  * - 所有读路径返回 Flow，Room 负责失效推送；
- * - 所有写路径为 suspend，调用方自行切 IO（本仓库方法均为快速本地操作）。
+ * - 所有写路径为 suspend，调用方自行切 IO（本仓库方法均为快速本地操作）；
+ * - 听歌统计的只读聚合与历史清空已拆到 [StatsRepository]，此处只保留
+ *   曲库 / 收藏 / 歌单 / 播放历史写入 / 续播会话等职责。
  */
 @Singleton
 class MusicRepository @Inject constructor(
@@ -63,7 +60,6 @@ class MusicRepository @Inject constructor(
     private val songDao: SongDao,
     private val playlistDao: PlaylistDao,
     private val playHistoryDao: PlayHistoryDao,
-    private val statsDao: StatsDao,
     private val scanner: MediaStoreScanner,
     private val settings: SettingsRepository,
     private val replayGainExtractor: ReplayGainExtractor
@@ -387,19 +383,6 @@ class MusicRepository @Inject constructor(
         songDao.getSongsMissingCover(limit)
 
     suspend fun countSongs(): Int = songDao.countSongs()
-
-    // ---------- 听歌统计（只读聚合） ----------
-
-    fun observeTotalPlays(): Flow<Long> = statsDao.observeTotalPlays()
-    fun observeTotalListenMs(): Flow<Long> = statsDao.observeTotalListenMs()
-    fun observeHistoryCount(): Flow<Long> = statsDao.observeHistoryCount()
-    fun observePlayedSongs(): Flow<Int> = statsDao.observePlayedSongs()
-    fun observeDailyTrend(sinceMs: Long): Flow<List<DailyTrendRow>> = statsDao.observeDailyTrend(sinceMs)
-    fun observeTopSongs(limit: Int = 10): Flow<List<TopSongRow>> = statsDao.observeTopSongs(limit)
-    fun observeTopArtists(limit: Int = 10): Flow<List<NamedCountRow>> = statsDao.observeTopArtists(limit)
-    fun observeHourDistribution(): Flow<List<HourCountRow>> = statsDao.observeHourDistribution()
-
-    suspend fun clearHistory() = playHistoryDao.clear()
 
     // ---------- 歌单 ----------
 

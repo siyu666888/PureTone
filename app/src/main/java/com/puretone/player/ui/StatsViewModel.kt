@@ -5,7 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.puretone.player.data.local.dao.HourCountRow
 import com.puretone.player.data.local.dao.NamedCountRow
 import com.puretone.player.data.local.dao.TopSongRow
-import com.puretone.player.data.repository.MusicRepository
+import com.puretone.player.data.repository.StatsRepository
 import com.puretone.player.domain.grouping.DayBucket
 import com.puretone.player.domain.grouping.TREND_DAYS
 import com.puretone.player.domain.grouping.buildFullTrend
@@ -52,11 +52,11 @@ data class StatsUiState(
 }
 
 /**
- * 听歌统计视图模型：聚合曲库与播放历史的统计查询，供统计看板消费。
+ * 听歌统计视图模型：聚合播放历史的只读统计查询，供统计看板消费。
  */
 @HiltViewModel
 class StatsViewModel @Inject constructor(
-    private val repo: MusicRepository
+    private val repo: StatsRepository
 ) : ViewModel() {
 
     /**
