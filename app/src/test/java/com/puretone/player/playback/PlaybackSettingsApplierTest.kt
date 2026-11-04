@@ -1,6 +1,5 @@
 package com.puretone.player.playback
 
-import androidx.media3.exoplayer.ExoPlayer
 import com.puretone.player.data.settings.PureToneSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
