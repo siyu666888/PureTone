@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PureTone · 听歌报告分享海报设计预览（方案稿）</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+       background:#EDEAF4;color:#2c2a35;padding:26px 18px 80px}
+  h1{font-size:23px;margin:0 0 6px}
+  h2{font-size:17px;margin:36px 0 6px;border-left:5px solid #5E6AD2;padding-left:9px}
+  h3{font-size:13px;margin:18px 0 6px;color:#3a3560}
+  p.lede{font-size:13px;color:#5a5470;line-height:1.8;max-width:980px;margin:0 0 8px}
+  p.note{font-size:12px;color:#8a7fa0;line-height:1.7;margin:4px 0 0}
+  code{background:#e3def0;padding:1px 5px;border-radius:4px;font-size:11.5px}
+  .badge{display:inline-block;font-size:10px;padding:2px 8px;border-radius:999px;background:#5E6AD2;color:#fff;margin-right:6px;vertical-align:2px}
+  .badge.gray{background:#e3def0;color:#5a5470}
+  .card{background:#fff;border:1px solid #ddd6ea;border-radius:16px;padding:14px 16px;margin-top:12px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-top:14px}
+  .cell{background:#fff;border:1px solid #ddd6ea;border-radius:16px;padding:14px 12px 16px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .cell .cap{font-size:12px;font-weight:700;color:#3a3560;margin:0 2px 10px;display:flex;justify-content:space-between;align-items:center}
+  .cell .cap span{font-size:10px;font-weight:500;color:#8a7fa0}
+  .stage{display:flex;justify-content:center;padding:10px 0 4px;border-radius:12px}
+  .stage.l{background:#FAF9FF}
+  .stage.d{background:#121218}
+  .stage.b{background:#000}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}
+  td,th{border-top:1px solid #eceaf2;padding:6px 8px;vertical-align:top;text-align:left;line-height:1.65}
+  th{color:#6f6a86;font-size:11px;background:#f7f6fc}
+  td:first-child{color:#7a7390;font-weight:600;white-space:nowrap}
+  .yes{color:#2e7d32;font-weight:700}
+  .no{color:#c62828;font-weight:700}
+
+  /* ================= 海报本体：288 x 512 = 9:16，对应 1080x1920 ================= */
+  .poster{width:288px;height:512px;border-radius:20px;position:relative;overflow:hidden;
+          color:var(--p-ink);background:var(--p-bg);box-shadow:0 8px 26px rgba(24,20,52,.18);
+          font-size:12px;line-height:1.4}
+  .poster::before{content:"";position:absolute;inset:-120px -80px auto auto;width:330px;height:330px;
+          border-radius:50%;background:var(--p-glow);opacity:.9;pointer-events:none}
+  .poster::after{content:"";position:absolute;left:-70px;bottom:-150px;width:260px;height:260px;
+          border-radius:50%;border:1px solid var(--p-line);opacity:.7;pointer-events:none}
+  .t-light{--p-bg:#FAF9FF;--p-card:#FFFFFF;--p-ink:#1B1B21;--p-ink2:#47464F;--p-line:#E5E2EC;
+           --p-brand:#5E6AD2;--p-brand2:#3A449E;--p-ter:#7A56C6;--p-chip:#E4E3FA;--p-onchip:#232965;
+           --p-glow:radial-gradient(circle at 35% 35%,rgba(138,147,228,.30),rgba(228,227,250,0) 70%)}
+  .t-dark{--p-bg:#121218;--p-card:#1E1E28;--p-ink:#E4E1E9;--p-ink2:#C9C7D0;--p-line:#34343E;
+          --p-brand:#BFC2F3;--p-brand2:#8A93E4;--p-ter:#D8C2F5;--p-chip:#414A9C;--p-onchip:#E4E3FA;
+          --p-glow:radial-gradient(circle at 35% 35%,rgba(94,106,210,.34),rgba(18,18,24,0) 70%)}
+  .t-black{--p-bg:#000000;--p-card:#101016;--p-ink:#E4E1E9;--p-ink2:#C9C7D0;--p-line:#202027;
+           --p-brand:#BFC2F3;--p-brand2:#8A93E4;--p-ter:#D8C2F5;--p-chip:#414A9C;--p-onchip:#E4E3FA;
+           --p-glow:radial-gradient(circle at 35% 35%,rgba(94,106,210,.30),rgba(0,0,0,0) 70%)}
+
+  .pw{position:relative;z-index:1;height:100%;padding:19px 18px 14px;display:flex;flex-direction:column}
+  .ph{display:flex;justify-content:space-between;align-items:center}
+  .pbrand{display:flex;align-items:center;gap:5px;font-weight:700;font-size:11px;letter-spacing:.2px}
+  .pmark{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:10px;
+         background:linear-gradient(135deg,var(--p-brand2),var(--p-ter))}
+  .pperiod{font-size:7.5px;letter-spacing:.9px;color:var(--p-ink2);border:1px solid var(--p-line);
+           padding:2px 7px;border-radius:999px;background:var(--p-card)}
+  .pkicker{font-size:10.5px;color:var(--p-ink2);margin-top:19px}
+  .pnum{font-size:37px;font-weight:800;line-height:1.08;letter-spacing:-1.2px;color:var(--p-brand);margin-top:3px}
+  .pnum small{font-size:13px;font-weight:600;letter-spacing:0;margin:0 2px;color:var(--p-ink)}
+  .prange{font-size:9px;color:var(--p-ink2);margin-top:6px}
+  .prange b{color:var(--p-brand);font-weight:700}
+
+  .psec{font-size:9px;font-weight:700;letter-spacing:.8px;color:var(--p-ink2);margin:14px 0 6px;
+        text-transform:uppercase;display:flex;justify-content:space-between}
+  .bars{height:60px;display:flex;align-items:flex-end;gap:6px;padding:0 2px}
+  .bars i{flex:1;background:var(--p-line);border-radius:3px 3px 2px 2px;display:block;min-height:3px}
+  .bars i.on{background:linear-gradient(180deg,var(--p-brand),var(--p-brand2))}
+  .bars i.alt{background:var(--p-ter);opacity:.55}
+  .blabels{display:flex;gap:6px;padding:4px 2px 0;font-size:7.5px;color:var(--p-ink2)}
+  .blabels span{flex:1;text-align:center}
+  .pills{display:flex;gap:6px;margin-top:14px}
+  .pill{flex:1;background:var(--p-card);border:1px solid var(--p-line);border-radius:10px;padding:7px 4px;text-align:center}
+  .pill b{display:block;font-size:14px;font-weight:800;color:var(--p-ink);line-height:1.2}
+  .pill span{font-size:7.5px;color:var(--p-ink2)}
+
+  .tops{margin-top:2px}
+  .top{display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid var(--p-line)}
+  .top:last-child{border-bottom:0}
+  .idx{font-size:9px;font-weight:800;color:var(--p-brand);width:11px}
+  .cover{width:26px;height:26px;border-radius:7px;flex:none;display:grid;place-items:center;color:#fff;font-size:11px;
+         background:linear-gradient(135deg,var(--p-brand2),var(--p-ter))}
+  .cover.c2{background:linear-gradient(135deg,var(--p-ter),var(--p-brand2))}
+  .cover.c3{background:linear-gradient(135deg,var(--p-brand),var(--p-ter))}
+  .tinfo{flex:1;min-width:0}
+  .tinfo b{display:block;font-size:10px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tinfo span{font-size:8px;color:var(--p-ink2)}
+  .tcnt{font-size:9px;color:var(--p-ink2);white-space:nowrap}
+
+  .ptag{margin-top:auto;background:var(--p-chip);color:var(--p-onchip);border-radius:999px;
+        padding:7px 10px;font-size:9px;font-weight:600;line-height:1.35}
+  .pfoot{display:flex;justify-content:space-between;align-items:center;margin-top:9px;padding-top:8px;
+         border-top:1px solid var(--p-line);font-size:7.5px;color:var(--p-ink2)}
+  .pfoot b{color:var(--p-brand);font-weight:700;letter-spacing:.3px}
+
+  /* 月报日历热力 */
+  .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-top:2px}
+  .cal i{aspect-ratio:1;border-radius:3px;background:var(--p-line);display:block}
+  .cal i.l1{background:var(--p-brand);opacity:.28}
+  .cal i.l2{background:var(--p-brand);opacity:.55}
+  .cal i.l3{background:var(--p-brand);opacity:.85}
+  .cal i.l4{background:var(--p-ter)}
+  .calhead{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;font-size:7px;color:var(--p-ink2);margin-bottom:3px}
+  .calhead span{text-align:center}
+  /* 年报季节带 */
+  .season{display:flex;gap:3px;margin-top:8px}
+  .season i{flex:1;height:5px;border-radius:3px;background:var(--p-line)}
+  .season i:nth-child(1){background:var(--p-brand);opacity:.45}
+  .season i:nth-child(2){background:var(--p-ter);opacity:.65}
+  .season i:nth-child(3){background:var(--p-brand);opacity:.8}
+  .season i:nth-child(4){background:var(--p-brand2)}
+  .seasonlabels{display:flex;gap:3px;font-size:7px;color:var(--p-ink2);margin-top:3px}
+  .seasonlabels span{flex:1;text-align:center}
+  /* 高亮小卡 */
+  .minicard{background:var(--p-card);border:1px solid var(--p-line);border-radius:10px;padding:8px 10px;margin-top:9px;
+            display:flex;justify-content:space-between;align-items:center}
+  .minicard span{font-size:8px;color:var(--p-ink2)}
+  .minicard b{font-size:11px;color:var(--p-brand);font-weight:800}
+  /* 标注序号 */
+  .anno{counter-reset:a}
+  .anno li{margin:5px 0;font-size:12px;line-height:1.7}
+  .anno li::marker{color:#5E6AD2;font-weight:700}
+  .kbd{font-size:11px;color:#5a5470}
+  .split{display:grid;grid-template-columns:minmax(240px,330px) 1fr;gap:16px;align-items:start}
+  @media(max-width:760px){.split{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<h1>PureTone · 听歌报告分享海报设计预览</h1>
+<p class="lede">
+  <span class="badge">方案稿 · 未改代码</span><span class="badge gray">示意数据</span>
+  对应需求第 4 项「逐步实现周报 / 月报 / 年报，并生成分享海报，先出方案，设计海报，再确定修改」。
+  本页只做<b>视觉确认</b>：三周期主视觉、三主题对照、版式与令牌规范。
+  <b>海报内所有数字均为示意数据</b>，用于确认排版与配色，不代表真实统计结果。
+  落地规格与数据口径见 <code>dist/v1.9.2_听歌报告与分享海报方案_2026-11-04.md</code>。
+</p>
+<p class="note">画幅 288 × 512 等比预览，对应实际导出 1080 × 1920 PNG（9:16）。三套主题取自 <code>PureToneColorSchemes.Light / Dark / Black</code>。</p>
+
+<h2>1 · 三周期主视觉</h2>
+<p class="note">周报用 7 日柱状，月报用日历热力 + 周柱，年报用 12 月柱 + 四季色带；共用同一套头部、主数字、三胶囊与页脚骨架。</p>
+
+<div class="grid3">
+
+  <!-- ============ 周报 / Light ============ -->
+  <div class="cell">
+    <div class="cap">周报 · WEEKLY<span>Light 主题 / 推荐默认</span></div>
+    <div class="stage l">
+      <div class="poster t-light">
+        <div class="pw">
+          <div class="ph">
+            <div class="pbrand"><span class="pmark">♪</span> PureTone</div>
+            <div class="pperiod">WEEKLY · 2026 W45</div>
+          </div>
+          <div class="pkicker">这一周，你听了</div>
+          <div class="pnum">18<small>小时</small>42<small>分</small></div>
+          <div class="prange">11.02 — 11.08 &nbsp;·&nbsp; <b>比上周多 3 小时</b></div>
+
+          <div class="psec"><span>每日听歌</span><span>峰值 周六</span></div>
+          <div class="bars">
+            <i style="height:32%"></i><i style="height:48%"></i><i style="height:26%"></i>
+            <i style="height:61%"></i><i style="height:40%"></i><i class="on" style="height:100%"></i>
+            <i class="alt" style="height:72%"></i>
+          </div>
+          <div class="blabels"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+
+          <div class="pills">
+            <div class="pill"><b>128</b><span>播放次数</span></div>
+            <div class="pill"><b>63</b><span>收听歌曲</span></div>
+            <div class="pill"><b>7</b><span>活跃天数</span></div>
+          </div>
+
+          <div class="psec"><span>最常循环 TOP 3</span><span>本周</span></div>
+          <div class="tops">
+            <div class="top"><span class="idx">01</span><span class="cover">♪</span><span class="tinfo"><b>Crystal Ball</b><span>森罗万象</span></span><span class="tcnt">14 次</span></div>
+            <div class="top"><span class="idx">02</span><span class="cover c2">♪</span><span class="tinfo"><b>夜航西飞</b><span>林间晚风</span></span><span class="tcnt">11 次</span></div>
+            <div class="top"><span class="idx">03</span><span class="cover c3">♪</span><span class="tinfo"><b>五月的雨</b><span>北岸</span></span><span class="tcnt">9 次</span></div>
+          </div>
+
+          <div class="ptag">深夜听众 · 23:00 是你最常按下播放的时刻</div>
+          <div class="pfoot"><span>数据仅保存在本机 · 未上传</span><b>2026.11.08</b></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 月报 / Dark ============ -->
+  <div class="cell">
+    <div class="cap">月报 · MONTHLY<span>Dark 主题</span></div>
+    <div class="stage d">
+      <div class="poster t-dark">
+        <div class="pw">
+          <div class="ph">
+            <div class="pbrand"><span class="pmark">♪</span> PureTone</div>
+            <div class="pperiod">MONTHLY · 2026.11</div>
+          </div>
+          <div class="pkicker">这个月，音乐陪你走过</div>
+          <div class="pnum">76<small>小时</small>15<small>分</small></div>
+          <div class="prange">11.01 — 11.30 &nbsp;·&nbsp; <b>27 天有音乐相伴</b></div>
+
+          <div class="psec"><span>声音日历</span><span>深色 = 听得更多</span></div>
+          <div class="calhead"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+          <div class="cal">
+            <i class="l1"></i><i class="l2"></i><i class="l1"></i><i></i><i class="l3"></i><i class="l4"></i><i class="l2"></i>
+            <i class="l2"></i><i class="l3"></i><i class="l1"></i><i class="l2"></i><i class="l4"></i><i class="l3"></i><i class="l1"></i>
+            <i></i><i class="l2"></i><i class="l3"></i><i class="l1"></i><i class="l4"></i><i class="l2"></i><i class="l3"></i>
+            <i class="l2"></i><i class="l1"></i><i></i><i class="l3"></i><i class="l2"></i><i class="l4"></i><i class="l3"></i>
+            <i class="l3"></i><i class="l2"></i><i class="l4"></i><i class="l1"></i><i class="l2"></i><i></i><i class="l1"></i>
+          </div>
+          <div class="bars" style="height:26px;margin-top:8px">
+            <i style="height:56%"></i><i style="height:74%"></i><i class="on" style="height:100%"></i>
+            <i class="alt" style="height:82%"></i><i style="height:64%"></i>
+          </div>
+          <div class="blabels"><span>W1</span><span>W2</span><span>W3</span><span>W4</span><span>W5</span></div>
+
+          <div class="pills">
+            <div class="pill"><b>496</b><span>播放次数</span></div>
+            <div class="pill"><b>182</b><span>收听歌曲</span></div>
+            <div class="pill"><b>24</b><span>新发现</span></div>
+          </div>
+
+          <div class="psec"><span>月度之最</span><span>本月</span></div>
+          <div class="tops">
+            <div class="top"><span class="idx">01</span><span class="cover">♪</span><span class="tinfo"><b>夜航西飞</b><span>林间晚风</span></span><span class="tcnt">38 次</span></div>
+            <div class="top"><span class="idx">02</span><span class="cover c2">♪</span><span class="tinfo"><b>Crystal Ball</b><span>森罗万象</span></span><span class="tcnt">31 次</span></div>
+          </div>
+          <div class="minicard"><span>本月最常听的歌手</span><b>森罗万象</b></div>
+
+          <div class="ptag">通勤搭子 · 18:00 的高峰，总有一首歌在等你</div>
+          <div class="pfoot"><span>数据仅保存在本机 · 未上传</span><b>2026.12.01</b></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 年报 / Black ============ -->
+  <div class="cell">
+    <div class="cap">年报 · YEARLY<span>Black / AMOLED 主题</span></div>
+    <div class="stage b">
+      <div class="poster t-black">
+        <div class="pw">
+          <div class="ph">
+            <div class="pbrand"><span class="pmark">♪</span> PureTone</div>
+            <div class="pperiod">YEARLY · 2026</div>
+          </div>
+          <div class="pkicker">这一年，你的声音日历</div>
+          <div class="pnum">842<small>小时</small>30<small>分</small></div>
+          <div class="prange">01.01 — 12.31 &nbsp;·&nbsp; <b>311 天有音乐相伴</b></div>
+
+          <div class="psec"><span>十二个月</span><span>峰值 8 月</span></div>
+          <div class="bars" style="height:56px;gap:4px">
+            <i style="height:44%"></i><i style="height:38%"></i><i style="height:57%"></i>
+            <i style="height:62%"></i><i style="height:53%"></i><i style="height:71%"></i>
+            <i style="height:78%"></i><i class="on" style="height:100%"></i><i style="height:74%"></i>
+            <i class="alt" style="height:86%"></i><i style="height:66%"></i><i style="height:59%"></i>
+          </div>
+          <div class="blabels" style="gap:4px"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span><span>11</span><span>12</span></div>
+          <div class="season"><i></i><i></i><i></i><i></i></div>
+          <div class="seasonlabels"><span>春</span><span>夏</span><span>秋</span><span>冬</span></div>
+
+          <div class="pills">
+            <div class="pill"><b>6124</b><span>播放次数</span></div>
+            <div class="pill"><b>968</b><span>收听歌曲</span></div>
+            <div class="pill"><b>311</b><span>活跃天数</span></div>
+          </div>
+
+          <div class="psec"><span>年度歌手</span><span>全年</span></div>
+          <div class="tops">
+            <div class="top"><span class="idx">01</span><span class="cover">♪</span><span class="tinfo"><b>森罗万象</b><span>全年 214 次</span></span><span class="tcnt">TOP 1</span></div>
+            <div class="top"><span class="idx">02</span><span class="cover c2">♪</span><span class="tinfo"><b>林间晚风</b><span>全年 186 次</span></span><span class="tcnt">TOP 2</span></div>
+            <div class="top"><span class="idx">03</span><span class="cover c3">♪</span><span class="tinfo"><b>北岸</b><span>全年 143 次</span></span><span class="tcnt">TOP 3</span></div>
+          </div>
+
+          <div class="ptag">年度关键词：长情 · 一整年都在循环同一批歌</div>
+          <div class="pfoot"><span>数据仅保存在本机 · 未上传</span><b>2027.01.01</b></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<h2>2 · 同一份周报的三主题对照</h2>
+<p class="note">默认跟随 App 当前主题，分享前可临时切换。深色/纯黑主题下主色由 <code>#5E6AD2</code> 切换为 <code>#BFC2F3</code>，保证正文与底色对比度 ≥ 4.5:1。</p>
+
+<div class="grid3">
+
+  <div class="cell">
+    <div class="cap">Light<span>background #FAF9FF · primary #5E6AD2</span></div>
+    <div class="stage l">
+      <div class="poster t-light">
+        <div class="pw">
+          <div class="ph"><div class="pbrand"><span class="pmark">♪</span> PureTone</div><div class="pperiod">WEEKLY · 2026 W45</div></div>
+          <div class="pkicker">这一周，你听了</div>
+          <div class="pnum">18<small>小时</small>42<small>分</small></div>
+          <div class="prange">11.02 — 11.08 &nbsp;·&nbsp; <b>比上周多 3 小时</b></div>
+          <div class="psec"><span>每日听歌</span><span>峰值 周六</span></div>
+          <div class="bars"><i style="height:32%"></i><i style="height:48%"></i><i style="height:26%"></i><i style="height:61%"></i><i style="height:40%"></i><i class="on" style="height:100%"></i><i class="alt" style="height:72%"></i></div>
+          <div class="blabels"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+          <div class="pills"><div class="pill"><b>128</b><span>播放次数</span></div><div class="pill"><b>63</b><span>收听歌曲</span></div><div class="pill"><b>7</b><span>活跃天数</span></div></div>
+          <div class="psec"><span>最常循环 TOP 3</span><span>本周</span></div>
+          <div class="tops">
+            <div class="top"><span class="idx">01</span><span class="cover">♪</span><span class="tinfo"><b>Crystal Ball</b><span>森罗万象</span></span><span class="tcnt">14 次</span></div>
+            <div class="top"><span class="idx">02</span><span class="cover c2">♪</span><span class="tinfo"><b>夜航西飞</b><span>林间晚风</span></span><span class="tcnt">11 次</span></div>
+            <div class="top"><span class="idx">03</span><span class="cover c3">♪</span><span class="tinfo"><b>五月的雨</b><span>北岸</span></span><span class="tcnt">9 次</span></div>
+          </div>
+          <div class="ptag">深夜听众 · 23:00 是你最常按下播放的时刻</div>
+          <div class="pfoot"><span>数据仅保存在本机 · 未上传</span><b>2026.11.08</b></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cell">
+    <div class="cap">Dark<span>background #121218 · primary #BFC2F3</span></div>
+    <div class="stage d">
+      <div class="poster t-dark">
+        <div class="pw">
+          <div class="ph"><div class="pbrand"><span class="pmark">♪</span> PureTone</div><div class="pperiod">WEEKLY · 2026 W45</div></div>
+          <div class="pkicker">这一周，你听了</div>
+          <div class="pnum">18<small>小时</small>42<small>分</small></div>
+          <div class="prange">11.02 — 11.08 &nbsp;·&nbsp; <b>比上周多 3 小时</b></div>
+          <div class="psec"><span>每日听歌</span><span>峰值 周六</span></div>
+          <div class="bars"><i style="height:32%"></i><i style="height:48%"></i><i style="height:26%"></i><i style="height:61%"></i><i style="height:40%"></i><i class="on" style="height:100%"></i><i class="alt" style="height:72%"></i></div>
+          <div class="blabels"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+          <div class="pills"><div class="pill"><b>128</b><span>播放次数</span></div><div class="pill"><b>63</b><span>收听歌曲</span></div><div class="pill"><b>7</b><span>活跃天数</span></div></div>
+          <div class="psec"><span>最常循环 TOP 3</span><span>本周</span></div>
+          <div class="tops">
+            <div class="top"><span class="idx">01</span><span class="cover">♪</span><span class="tinfo"><b>Crystal Ball</b><span>森罗万象</span></span><span class="tcnt">14 次</span></div>
+            <div class="top"><span class="idx">02</span><span class="cover c2">♪</span><span class="tinfo"><b>夜航西飞</b><span>林间晚风</span></span><span class="tcnt">11 次</span></div>
+            <div class="top"><span class="idx">03</span><span class="cover c3">♪</span><span class="tinfo"><b>五月的雨</b><span>北岸</span></span><span class="tcnt">9 次</span></div>
+          </div>
+          <div class="ptag">深夜听众 · 23:00 是你最常按下播放的时刻</div>
+          <div class="pfoot"><span>数据仅保存在本机 · 未上传</span><b>2026.11.08</b></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cell">
+    <div class="cap">Black / AMOLED<span>background #000000 · surface #101016</span></div>
+    <div class="stage b">
+      <div class="poster t-black">
+        <div class="pw">
+          <div class="ph"><div class="pbrand"><span class="pmark">♪</span> PureTone</div><div class="pperiod">WEEKLY · 2026 W45</div></div>
+          <div class="pkicker">这一周，你听了</div>
+          <div class="pnum">18<small>小时</small>42<small>分</small></div>
+          <div class="prange">11.02 — 11.08 &nbsp;·&nbsp; <b>比上周多 3 小时</b></div>
+          <div class="psec"><span>每日听歌</span><span>峰值 周六</span></div>
+          <div class="bars"><i style="height:32%"></i><i style="height:48%"></i><i style="height:26%"></i><i style="height:61%"></i><i style="height:40%"></i><i class="on" style="height:100%"></i><i class="alt" style="height:72%"></i></div>
+          <div class="blabels"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+          <div class="pills"><div class="pill"><b>128</b><span>播放次数</span></div><div class="pill"><b>63</b><span>收听歌曲</span></div><div class="pill"><b>7</b><span>活跃天数</span></div></div>
+          <div class="psec"><span>最常循环 TOP 3</span><span>本周</span></div>
+          <div class="tops">
+            <div class="top"><span class="idx">01</span><span class="cover">♪</span><span class="tinfo"><b>Crystal Ball</b><span>森罗万象</span></span><span class="tcnt">14 次</span></div>
+            <div class="top"><span class="idx">02</span><span class="cover c2">♪</span><span class="tinfo"><b>夜航西飞</b><span>林间晚风</span></span><span class="tcnt">11 次</span></div>
+            <div class="top"><span class="idx">03</span><span class="cover c3">♪</span><span class="tinfo"><b>五月的雨</b><span>北岸</span></span><span class="tcnt">9 次</span></div>
+          </div>
+          <div class="ptag">深夜听众 · 23:00 是你最常按下播放的时刻</div>
+          <div class="pfoot"><span>数据仅保存在本机 · 未上传</span><b>2026.11.08</b></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<h2>3 · 版式分区与导出规范</h2>
+<div class="split">
+  <div class="card">
+    <h3>版式分区（自上而下）</h3>
+    <ol class="anno">
+      <li><b>品牌头</b>：音符环标识 + PureTone + 周期角标</li>
+      <li><b>主数字区</b>：引导语 + 听歌时长 + 周期范围 + 环比</li>
+      <li><b>趋势图</b>：周 7 柱 / 月日历热力 + 周柱 / 年 12 柱 + 四季带</li>
+      <li><b>三数据胶囊</b>：播放次数 · 收听歌曲 · 活跃天数</li>
+      <li><b>Top 3</b>：序号 + 几何封面占位 + 标题/歌手 + 次数</li>
+      <li><b>趣味标签</b>：一句人格化文案</li>
+      <li><b>页脚</b>：本机声明 + 品牌落款 + 生成日期</li>
+    </ol>
+    <p class="note">封面默认使用品牌几何占位块，<b>不读取真实专辑封面</b>——避免 <code>content://</code> 权限、缺图降级与分享图片的版权/隐私顾虑（见方案决策点 6）。</p>
+  </div>
+  <div class="card">
+    <h3>导出规格</h3>
+    <table>
+      <tr><th>项</th><th>规格</th></tr>
+      <tr><td>输出</td><td>PNG 1080 × 1920（9:16），<code>Bitmap.CompressFormat.PNG</code></td></tr>
+      <tr><td>安全区</td><td>左右 72 px、上 72 px、下 96 px</td></tr>
+      <tr><td>圆角</td><td>外层 28 dp / 卡片 16 dp / 封面 8 dp（<code>PureToneShapes</code>）</td></tr>
+      <tr><td>主数字</td><td>96 px，映射 <code>displaySmall 36sp</code> 放大</td></tr>
+      <tr><td>标题 / 正文 / 角标</td><td>headlineSmall / bodyMedium / labelSmall 等比换算</td></tr>
+      <tr><td>最小字号</td><td>24 px，保证手机缩略图可读</td></tr>
+      <tr><td>落盘</td><td><code>cacheDir/posters/</code>，免存储权限</td></tr>
+      <tr><td>分享</td><td>FileProvider + <code>ACTION_SEND image/png</code> + 临时读权限</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h3>色值令牌（与 <code>Color.kt</code> 一一对应）</h3>
+  <table>
+    <tr><th>角色</th><th>Light</th><th>Dark</th><th>Black</th></tr>
+    <tr><td>背景</td><td><code>#FAF9FF</code></td><td><code>#121218</code></td><td><code>#000000</code></td></tr>
+    <tr><td>卡片</td><td><code>#FFFFFF</code></td><td><code>#1E1E28</code></td><td><code>#101016</code></td></tr>
+    <tr><td>主色 / 主数字</td><td><code>#5E6AD2</code></td><td><code>#BFC2F3</code></td><td><code>#BFC2F3</code></td></tr>
+    <tr><td>渐变深阶</td><td><code>#3A449E</code></td><td><code>#8A93E4</code></td><td><code>#8A93E4</code></td></tr>
+    <tr><td>辅助紫</td><td><code>#7A56C6</code></td><td><code>#D8C2F5</code></td><td><code>#D8C2F5</code></td></tr>
+    <tr><td>标签底 / 标签字</td><td><code>#E4E3FA</code> / <code>#232965</code></td><td><code>#414A9C</code> / <code>#E4E3FA</code></td><td>同 Dark</td></tr>
+    <tr><td>正文 / 次要</td><td><code>#1B1B21</code> / <code>#47464F</code></td><td><code>#E4E1E9</code> / <code>#C9C7D0</code></td><td>同 Dark</td></tr>
+  </table>
+</div>
+
+<h2>4 · 渲染方案比选</h2>
+<div class="card">
+  <table>
+    <tr><th>方案</th><th>做法</th><th>结论</th></tr>
+    <tr><td>A · Android Canvas 直绘</td><td><code>Bitmap.createBitmap</code> + <code>Canvas</code>/<code>Paint</code>/<code>StaticLayout</code>；与现有 <code>StatsScreen.BarChart</code> 思路一致，零依赖、可后台生成、易写纯 JVM 单测</td><td class="yes">采用</td></tr>
+    <tr><td>B · Compose 离屏截图</td><td><code>GraphicsLayer</code> 截 Composable；需 Composition 与测量，后台生成复杂、单测困难</td><td class="no">不采用</td></tr>
+    <tr><td>C · HTML + WebView 截图</td><td>直接复用本预览页；WebView 重、截图时机不稳、隐私面变大</td><td class="no">不采用</td></tr>
+  </table>
+  <p class="note">本 HTML 仅用于设计确认，落地按方案 A 以尺寸 / 色值 / 字阶 1:1 还原。</p>
+</div>
+
+<h2>5 · 隐私与空态</h2>
+<div class="card">
+  <table>
+    <tr><td>统计开关关闭</td><td>可查看历史存量，但「生成 / 分享海报」按钮禁用并说明原因</td></tr>
+    <tr><td>周期内无数据</td><td>不生成图片，显示「这一周还没有听歌记录」空态</td></tr>
+    <tr><td>海报禁止携带</td><td>歌曲文件路径、设备型号、账号、精确时间戳、外链二维码</td></tr>
+    <tr><td>文案纪律</td><td>不使用「超越 99% 用户」「全国排名」等无数据支撑的对比话术</td></tr>
+    <tr><td>清空历史后</td><td>报告与海报立即归零（<code>clearHistory()</code> 本轮已同时清 <code>play_history</code> 与 <code>songs.play_count/last_played_at</code>）</td></tr>
+  </table>
+</div>
+
+<h2>6 · 待确认</h2>
+<div class="card">
+  <p class="lede">
+    ① 周起始日（建议周一）　② 听歌时长是否改为实际收听秒数　③ 周期 Top 榜按播放次数还是完整播放次数　
+    ④ 年报与 365 天保留期的取舍　⑤ 是否保存历史报告快照　⑥ 海报是否展示真实专辑封面（建议否）
+  </p>
+  <p class="note">详见方案文档第 8 节。确认后才进入阶段 1（Room v8 数据基建）实现。本轮未修改任何业务代码、未提交、未出包。</p>
+</div>
+
+</body>
+</html>
