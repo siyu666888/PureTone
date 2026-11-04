@@ -302,8 +302,8 @@ fun PlayerScreen(
                         }
                     }
                         if (castState.isCasting && castState.volumeSupported == false) {
-                            // 渲染器没有 RenderingControl 服务（或回读证明设了不生效）：
-                            // 给一个拖了没反应的滑块比不给更糟，改为如实提示用遥控器。
+                            // 渲染器没有 RenderingControl 服务（设备描述里就没有，
+                            // 不是靠某次回读猜的）：如实提示用遥控器，别给假滑块。
                             Text(
                                 stringResource(R.string.pt_player_036),
                                 style = MaterialTheme.typography.bodySmall,

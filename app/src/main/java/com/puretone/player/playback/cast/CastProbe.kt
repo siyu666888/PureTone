@@ -185,7 +185,13 @@ internal object CastProbe {
             DlnaTransport.DEFAULT_VOLUME_MAX
         } else {
             val scpdResult = SoapClient.get(scpd)
-            val parsed = DlnaTransport.parseVolumeMax(scpdResult.body)
+            // 与 DlnaTransport.deviceVolumeMax 一致：只有 HTTP 成功才采信 SCPD 量程，
+            // 否则退回标准量程，避免同一个 raw 值被两条路径折算成两个百分比。
+            val parsed = if (scpdResult.ok) {
+                DlnaTransport.parseVolumeMax(scpdResult.body)
+            } else {
+                null
+            }
             CastNetworkLog.log(
                 "probe-vol scpd http=${scpdResult.status} 音量上限=${parsed ?: "未声明（按 100 处理）"}"
             )

@@ -9,6 +9,8 @@
 > 新增 1 个批次 / 4 个文件，三包哈希全唯一（31/31 无重复），详见第七节。
 > 更新（2026-11-04 19:55）：前 3 项反馈修复后重新出包给真机复测，脚本第二次触发自动归档，
 > 再新增 1 个批次 / 4 个文件，详见第八节。
+> 更新（2026-11-04 21:16）：投屏复测反馈修复（音量稳定 / 进度同步 / 退出接管）后第三轮出包，
+> 脚本第三次触发自动归档，再新增 1 个批次 / 4 个文件，详见第九节。
 
 ## 一、结论速览
 
@@ -22,7 +24,7 @@
 | 历史重复副本 | `PureTone-v1.1.8-arm64-v8a-release - 副本.apk` 同批清理（回收站），正本完好 |
 | 既有历史归档 | 平铺区（v1.0.3~v1.5.0）除上述已确认清理的重复副本外**保持原状不动** |
 | 二进制入库 | 否（`.gitignore` 忽略 `*.apk` / `/dist/output/*` / `/dist/archive/**/*.zip`） |
-| 后续自动归档批次 | **2 批 / 8 个文件**（17:38 见第七节、19:55 见第八节）；归档集合累计 35 个文件，哈希全唯一 |
+| 后续自动归档批次 | **3 批 / 12 个文件**（17:38 见第七节、19:55 见第八节、21:16 见第九节）；归档集合累计 39 个文件，哈希全唯一 |
 
 ## 二、目录结构
 
@@ -243,5 +245,40 @@ cd /d/PureTone/dist/archive/v1.9.2 && find . -type f -exec sha256sum {} \; | sor
 当前 `dist/output/` 为本次复测批次（同为 v1.9.2 / code 54，v2 签名 `CN=PureTone`）：
 `149121a7…`（arm64-v8a）、`1c4d7a08…`（x86_64）、`0de2a29f…`（universal），
 完整哈希见 `dist/output/SHA256SUMS.txt`（commit `42e4724`）。
+逐包 `apksigner verify` 均为 `Verifies` / `CN=PureTone`；
+universal 包 ELF LOAD 段 26 个 `.so` 16KB 全合规、ZIP 层 `zipalign -c -P 16 -v 4` EXIT=0。
+
+---
+
+## 九、第三次自动归档批次（2026-11-04 21:16）
+
+投屏复测反馈修复（音量稳定 / 投屏态进度同步 / 结束投屏从电视进度接管）落地后，
+重新执行 `:app:testDebugUnitTest :app:lintDebug :app:detekt :benchmark:detekt :app:assembleRelease`
+（BUILD SUCCESSFUL），并以 `scripts/package-release.sh --zip 真机复测2_20261104` 出包。
+脚本**第三次在真实工程触发**「旧输出自动无损归档」分支：
+
+- 19:55 批次的三包 + 清单整体移入
+  `dist/archive/v1.9.2/2026-11-04_2116_构建更新前输出/`，逐包 sha256 移动前后一致
+  （与第八节记录的 `f51233d2…` / `05258b30…` / `a8a68e81…` 相同）；
+- 新三包写入 `dist/output/`，3/3 sha256 与 Gradle 原生产物一致，清单重新生成
+  （`5d7dace5…` / `cb3df792…` / `b98eb8ba…`，commit 待提交）；
+- 额外生成 `PureTone-v1.9.2-真机复测2_20261104.zip`（三包合集，便于真机复测传输）；
+- 归档集合累计 39 个文件（27 + 4 + 4 + 4），本批 4 个哈希全唯一；
+- `dist/archive` + `dist/output` 共 **66 个 APK、66 个唯一哈希、0 组重复**（19:55 三包仅位移、
+  21:16 三包为新增；`交付链路验证.zip` 仍为 15:02 历史包，不在脚本三包范围内）；
+- **本轮复测请用 `真机复测2_20261104` 这一批**，安装 `universal` 最稳妥。
+
+`2026-11-04_2116_构建更新前输出/` — 4 个文件（为 19:55 批次整包位移，内容未重新生成）：
+
+| 文件 | 字节 | sha256 |
+| --- | ---: | --- |
+| `PureTone-v1.9.2-arm64-v8a-release.apk` | 20,718,209 | `149121a73158eb358db1725c74647cac9fa525a3b25a38be8f4f9d4a79725fc4` |
+| `PureTone-v1.9.2-x86_64-release.apk` | 23,966,640 | `1c4d7a088964aa8f0da90ebb39980bb4e209e5d44b6915b40d1eb4e16402cbd0` |
+| `PureTone-v1.9.2-universal-release.apk` | 39,008,354 | `0de2a29f314bcbcabcc41647d27757dec3023e372edac7cb1306ec590396453c` |
+| `SHA256SUMS.txt` | 590 | 19:55 批次清单（文件名 + 上表三包哈希） |
+
+当前 `dist/output/` 为本次复测批次（同为 v1.9.2 / code 54，v2 签名 `CN=PureTone`）：
+`5d7dace5…`（arm64-v8a）、`cb3df792…`（x86_64）、`b98eb8ba…`（universal），
+完整哈希见 `dist/output/SHA256SUMS.txt`（commit 待提交）。
 逐包 `apksigner verify` 均为 `Verifies` / `CN=PureTone`；
 universal 包 ELF LOAD 段 26 个 `.so` 16KB 全合规、ZIP 层 `zipalign -c -P 16 -v 4` EXIT=0。

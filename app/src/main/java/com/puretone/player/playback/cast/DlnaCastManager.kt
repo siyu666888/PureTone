@@ -36,7 +36,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.abs
 
 /**
  * 投屏设备（PureTone 自有类型）。
@@ -105,11 +104,11 @@ data class CastState(
      */
     val hasProgressInfo: Boolean = false,
     /**
-     * 投射音量（M3，0~100，默认 100）。
+     * 投射音量（M3，0~100，默认 100 = 尚未校准）。
      *
-     * 由 [DlnaCastManager.setVolume] 回写；投屏态下经 [DLNACast.setVolume] 下发给渲染器。
-     * 属**会话内**状态：一首播完由 M3 自动续播下一首时（[castSong] 成功处会把它
-     * 重新下发给新渲染器会话）继续沿用，[DlnaCastManager.stopCast] 整体重置后才归 100。
+     * 首投时由 [DlnaCastManager.syncInitialVolumeNow] 同步回读设备真实音量写入；
+     * 之后只由 [DlnaCastManager.setVolume] 按用户下发值更新，设备回读**不回写**，
+     * 避免量程取整误差让档位逐次漂移。换曲沿用同一会话音量，不再重设渲染器。
      */
     val castVolume: Int = 100,
     /**
@@ -264,6 +263,15 @@ class DlnaCastManager @Inject constructor(
     /** 最近一次投送开始时刻：换曲窗口内渲染器短暂不应答不应判失联 */
     @Volatile
     private var lastCastStartMs = 0L
+
+    /** 拖动投屏进度后的乐观窗口：期间不拿渲染器回读的旧值覆盖手机进度条 */
+    @Volatile
+    var progressHoldUntilMs = 0L
+        private set
+
+    fun noteSeekOptimistic() {
+        progressHoldUntilMs = System.currentTimeMillis() + 2_500L
+    }
 
     init {
         // 音量下发通道常驻：合并连发的请求，并对最终值做一次回读校验
@@ -621,11 +629,24 @@ class DlnaCastManager @Inject constructor(
                     // M3：投送代次在**转码之前**自增——APE 转码可能耗时数十秒，
                     // 期间渲染器随时可能上报旧曲的停止态，此时必须已经知道
                     // 「换了一首」，否则会把「手动切歌」误判成「自然播完」而多跳一首。
-                    pushGeneration = epoch
+                    pushGeneration = epoch,
+                    // 换曲瞬间清掉上一首的进度：否则下一次 1Hz 轮询到来前，
+                    // 手机进度条与歌词会短暂挂在新曲名下显示旧曲的时间。
+                    progressMs = 0L,
+                    durationMs = 0L,
+                    hasProgressInfo = false
                 )
             }
         } else {
-            _state.update { it.copy(error = null, pushGeneration = epoch) }
+            _state.update {
+                it.copy(
+                    error = null,
+                    pushGeneration = epoch,
+                    progressMs = 0L,
+                    durationMs = 0L,
+                    hasProgressInfo = false
+                )
+            }
         }
 
         val prepared = try {
@@ -743,7 +764,6 @@ class DlnaCastManager @Inject constructor(
             engine = CastEngine.LIBRARY
             transport = null
             syncInitialVolumeNow()
-            reapplyVolume(_state.value.castVolume)
             onCastSucceeded(device, mimeType, "library")
             if (probedDevices.add(device.id)) launchProbe(device)
             return null
@@ -766,7 +786,6 @@ class DlnaCastManager @Inject constructor(
         if (!tryOwnCast(device, target, title, mimeType, upnpClass)) return "自有通道投送失败"
         engine = CastEngine.OWN
         syncInitialVolumeNow()
-        reapplyVolume(_state.value.castVolume)
         onCastSucceeded(device, mimeType, "own")
         return null
     }
@@ -780,7 +799,10 @@ class DlnaCastManager @Inject constructor(
                 deviceName = device.name,
                 deviceAddress = device.address,
                 error = null,
-                isConnectionLost = false
+                isConnectionLost = false,
+                progressMs = 0L,
+                durationMs = 0L,
+                hasProgressInfo = false
             )
         }
         startPolling()
@@ -845,14 +867,14 @@ class DlnaCastManager @Inject constructor(
     }
 
     /**
-     * 投送链路内**同步**回读渲染器真实音量，必须在 `isCasting=true` 之前完成：
-     * 否则 MediaSession 建 `VolumeProviderCompat` 时读到的仍是假 100，按一下音量键
-     * 就把电视从 15 拉到 100 —— 跳变更严重。放在投送末尾只多一次 SOAP。
+     * 投送链路内**同步**回读真实音量，必须在 `isCasting=true` 之前完成：否则 MediaSession
+     * 建 `VolumeProviderCompat` 时读到的仍是假 100，按一下音量键就把电视从 15 拉到 100。
+     * 库通道的 `DLNACast.getVolume()` 返回值量纲不明，不做同步校准，交给 [CastProbe] 折算。
      */
     private suspend fun syncInitialVolumeNow() {
+        val client = transport ?: return
         val actual = try {
-            val client = transport
-            if (client != null) client.volume() else DLNACast.getVolume()?.first
+            client.volume()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -860,27 +882,25 @@ class DlnaCastManager @Inject constructor(
             null
         }
         if (actual != null) {
+            // GetVolume 成功 = RenderingControl 确实可用，是能力事实而非探测冒充。
+            // 必须在路由切换前落定，否则 remoteVolume 会在 null/true 间翻转。
+            _state.update {
+                if (CastVolumePolicy.shouldSetSupport(it.volumeSupported)) {
+                    it.copy(volumeSupported = true)
+                } else {
+                    it
+                }
+            }
             applyInitialVolume(actual)
             CastNetworkLog.log("cast-vol init actual=$actual")
         }
     }
 
-    /** 同步设备真实音量到状态；用户已调过音量则不再覆盖（避免把用户的选择冲掉） */
+    /** 同步设备真实音量；用户已调过或已校准过就不再覆盖（防止多个来源互相冲掉） */
     private fun applyInitialVolume(volume: Int?) {
-        if (volume == null || volumeTouchedByUser) return
+        if (volume == null) return
+        if (!CastVolumePolicy.shouldApplyInitialVolume(volumeTouchedByUser, _state.value.castVolume)) return
         _state.update { it.copy(castVolume = volume.coerceIn(0, 100)) }
-    }
-
-    /** 让新渲染器会话沿用当前音量（投送成功时调用） */
-    private suspend fun reapplyVolume(volume: Int) {
-        if (volume == 100) return
-        val client = transport
-        val ok = if (client != null) {
-            client.setVolume(volume)
-        } else {
-            runCatching { DLNACast.setVolume(volume) }.getOrDefault(false)
-        }
-        if (ok != true) Log.w(TAG, "re-apply cast volume failed (volume=$volume)")
     }
 
     /**
@@ -899,8 +919,12 @@ class DlnaCastManager @Inject constructor(
             try {
                 val report = CastProbe.inspect(device.id, device.name)
                 if (report.descriptionOk) {
-                    _state.update { it.copy(volumeSupported = report.hasRenderingControl) }
-                    // 库通道没有自己的 GetVolume 回读，用探针读到的当前音量校准初值
+                    // 能力判定只写一次：反复改写会让 remoteVolume 翻转、Media3 重建
+                    // VolumeProvider，音量键在远程/本地两套档位间来回跳。
+                    if (CastVolumePolicy.shouldSetSupport(_state.value.volumeSupported)) {
+                        _state.update { it.copy(volumeSupported = report.hasRenderingControl) }
+                    }
+                    // 库通道没有自己的 GetVolume 回读，用探针折算后的音量补校准初值
                     applyInitialVolume(report.currentVolume)
                 }
             } catch (e: CancellationException) {
@@ -911,16 +935,13 @@ class DlnaCastManager @Inject constructor(
         }
     }
 
-    /**
-     * 音量下发通道（常驻）：合并连发的请求，只对最终值发一次 SOAP，再回读校验。
-     *
-     * [collectLatest] 在这里是刻意的：滑块拖动时新值会**取消**上一轮处理，于是
-     * 十几个中间值被直接丢弃，最后只发一次。同一次处理里把「下发 + 等待 + 回读」
-     * 绑在一起，回读也就不会被前一次拖动打断。
-     */
+    /** 音量下发通道（常驻）：合并连发请求，只对最终值发一次 SOAP。
+     *  [collectLatest] 刻意用于取消上一轮，避免滑块拖动时十几个中间值刷屏。 */
     private suspend fun drainVolumeRequests() {
         requestedVolume.filterNotNull().collectLatest { target ->
             delay(VOLUME_COALESCE_MS)
+            // stopCast 已把 isCasting 置 false：不能让延迟中的请求在会话结束后还写状态
+            if (!_state.value.isCasting) return@collectLatest
             val client = transport
             val accepted = if (client != null) {
                 client.setVolume(target) == true
@@ -929,32 +950,19 @@ class DlnaCastManager @Inject constructor(
             }
             if (accepted) _state.update { it.copy(castVolume = target) }
             if (client == null) return@collectLatest
-            // 等渲染器真正执行完再回读：立刻读必然读到旧值，会把「异步生效」
-            // 误判成「不支持」，进而把滑块藏掉。
             delay(VOLUME_SETTLE_MS)
+            if (!_state.value.isCasting) return@collectLatest
             verifyVolume(client, target, accepted)
         }
     }
 
-    /**
-     * 音量回读校验：`SetVolume` 返回 200 **不代表**电视音量真变了。
-     *
-     * 只有设置后再 `GetVolume` 读一次，才能把「我们发错了」与「它收下不做」分开：
-     * 前者能修，后者只能如实提示用户用遥控器——给一个拖不动的假滑块比不给更糟。
-     */
+    /** 回读只做取证：`SetVolume` 返回 200 不代表电视真变了。
+     *  绝不把回读值写回 castVolume——量程折算的 ±2 误差会成为下次按键的基准，
+     *  连按几次就一路漂移；也不改 volumeSupported，避免 Media3 反复重建 VolumeProvider。 */
     private suspend fun verifyVolume(client: DlnaTransport, requested: Int, accepted: Boolean) {
         try {
             val actual = client.volume()
-            if (actual == null) {
-                CastNetworkLog.log("own-vol readback=none req=$requested accepted=$accepted")
-                if (!accepted) _state.update { it.copy(volumeSupported = false) }
-                return
-            }
-            // 容差 ±2%：设备把百分比折算到自身量程时会取整，来回换算差一两格属正常。
-            val supported = abs(actual - requested) <= VOLUME_TOLERANCE
-            CastNetworkLog.log("own-vol readback req=$requested actual=$actual supported=$supported")
-            // 回写真值：设备收了不做时滑块会立刻跳回真实音量，用户一眼可见。
-            _state.update { it.copy(volumeSupported = supported, castVolume = actual) }
+            CastNetworkLog.log("own-vol readback req=$requested actual=${actual ?: "none"} accepted=$accepted")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -986,20 +994,20 @@ class DlnaCastManager @Inject constructor(
     suspend fun seek(positionMs: Long): Boolean =
         dispatch("seek", { it.seek(positionMs) }, { DLNACast.seek(positionMs) })
 
-    /**
-     * 设置渲染器输出音量（M3 投射音量，入参 0~100 的百分比）。
-     *
-     * 只把值交给常驻的 [drainVolumeRequests]，**不在这里同步发 SOAP**：
-     * 滑块一次拖动能触发十几次调用，逐次下发会让电视来不及执行（回读必然读到旧值），
-     * 日志里也是一片 `own-vol-set`。合并后一次拖动只发一条，再回读一次。
-     *
-     * @return 恒为 true（已受理）。真实是否生效由回读结果写进 [CastState.volumeSupported]。
-     */
+    /** 受理一次音量请求：值交给 [drainVolumeRequests] 合并下发，不在这里同步发 SOAP。
+     *  [adjustVolume] 以「最近一次请求值」而非滞后的状态值为基准，连按音量键才不丢档。 */
     fun setVolume(volume: Int): Boolean {
+        val target = volume.coerceIn(0, 100)
+        CastNetworkLog.log("cast-vol req=$target")
         volumeTouchedByUser = true
-        requestedVolume.value = volume.coerceIn(0, 100)
+        requestedVolume.value = target
         return true
     }
+
+    /** 相对调节（音量键 +/-）：以最后一次请求值为基准，避免连按时读到旧档位 */
+    fun adjustVolume(delta: Int): Boolean = setVolume(
+        CastVolumePolicy.resolveRelative(requestedVolume.value, _state.value.castVolume, delta)
+    )
 
     /**
      * 停止投屏：停止渲染器、清空状态（本地播放恢复由上层负责）。
@@ -1021,6 +1029,7 @@ class DlnaCastManager @Inject constructor(
         releaseCastNetwork()
         requestedVolume.value = null
         volumeTouchedByUser = false
+        progressHoldUntilMs = 0L
         transport = null
         engine = CastEngine.LIBRARY
         currentDevice = null
@@ -1178,15 +1187,7 @@ class DlnaCastManager @Inject constructor(
          */
         private const val VOLUME_COALESCE_MS = 120L
 
-        /**
-         * 下发后到回读之间的等待。
-         *
-         * **不能立即回读**：渲染器执行音量是异步的，立刻读必然读到旧值，会把
-         * 「正常生效」误判成「不支持」并把滑块藏起来。
-         */
+        /** 下发后到回读取证之间的等待：渲染器执行音量是异步的，立刻读只会读到旧值 */
         private const val VOLUME_SETTLE_MS = 700L
-
-        /** 回读容差（百分比）：设备把百分比折算到自身量程时会取整，差一两格属正常 */
-        private const val VOLUME_TOLERANCE = 2
     }
 }

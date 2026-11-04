@@ -22,6 +22,9 @@ internal interface CastCommandSink {
     /** 设置渲染器输出音量（0~100 百分比） */
     fun setCastVolume(volume: Int)
 
+    /** 相对调节音量：以管理器里「最近一次请求值」为基准，连按音量键不丢档 */
+    fun adjustCastVolume(delta: Int)
+
     fun playOnRenderer()
     fun pauseOnRenderer()
     fun seekOnRenderer(positionMs: Long)
@@ -64,8 +67,11 @@ internal interface CastCommandSink {
  * 起点用 [CastState.castVolume]（投屏建立时已回读电视真实音量），所以是「接着调」
  * 而不是从假 100% 突然跳下去。
  *
- * **不接管**：播放模式等仍走本地语义。设备不支持 DLNA 调音量时退回本地设备信息，
- * 音量键照常控制手机，UI 会提示用电视遥控器。
+ * [remoteVolume] **刻意不依赖** `volumeSupported`：Media3 只在 `setPlayer` 时读一次
+ * `getDeviceInfo()` 来建立 `VolumeProviderCompat`，而能力探测是异步的、且旧实现会被
+ * 单次回读反复改写。一旦判定在投屏中途翻转，音量键就会在「远程档位」与「本地媒体
+ * 档位」之间来回跳——正是「忽高忽低」的成因。设备确实不支持时由 sink 拦住下发，
+ * UI 仍显示「请用遥控器」。
  */
 @UnstableApi
 @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
@@ -77,13 +83,18 @@ internal class CastPlaybackPlayer(
     /** 是否处于投屏期。每次都实时读——投屏可在任意时刻开始/结束。 */
     private val casting: Boolean get() = sink.castState.isCasting
 
-    /** 音量键是否应交给渲染器：投屏中 + 设置开启 + 设备确实支持 DLNA 调音量 */
+    /** 音量键是否应交给渲染器：只看「投屏中 + 设置开启」，不随异步能力探测翻转 */
     private val remoteVolume: Boolean
-        get() = casting && sink.castVolumeFollowPhone && sink.castState.volumeSupported != false
+        get() = casting && sink.castVolumeFollowPhone
+
+    /** 静音前的档位：取消静音时恢复，避免一直停在 0 */
+    private var preMuteVolume: Int? = null
 
     private companion object {
         /** 相对调节（音量键 +/- 一档）对应的百分比步长 */
         const val VOLUME_STEP = 5
+        /** 没有静音记录时（例如会话中途重建）取消静音恢复到的档位 */
+        const val DEFAULT_UNMUTE_VOLUME = 30
     }
 
     // ---------- 命令：投屏期转发渲染器 ----------
@@ -181,31 +192,32 @@ internal class CastPlaybackPlayer(
     }
 
     override fun increaseDeviceVolume() {
-        if (remoteVolume) sink.setCastVolume((sink.castState.castVolume + VOLUME_STEP).coerceIn(0, 100))
-        else super.increaseDeviceVolume()
+        if (remoteVolume) sink.adjustCastVolume(VOLUME_STEP) else super.increaseDeviceVolume()
     }
 
     override fun decreaseDeviceVolume() {
-        if (remoteVolume) sink.setCastVolume((sink.castState.castVolume - VOLUME_STEP).coerceIn(0, 100))
-        else super.decreaseDeviceVolume()
+        if (remoteVolume) sink.adjustCastVolume(-VOLUME_STEP) else super.decreaseDeviceVolume()
     }
 
     override fun increaseDeviceVolume(flags: Int) {
-        if (remoteVolume) sink.setCastVolume((sink.castState.castVolume + VOLUME_STEP).coerceIn(0, 100))
-        else super.increaseDeviceVolume(flags)
+        if (remoteVolume) sink.adjustCastVolume(VOLUME_STEP) else super.increaseDeviceVolume(flags)
     }
 
     override fun decreaseDeviceVolume(flags: Int) {
-        if (remoteVolume) sink.setCastVolume((sink.castState.castVolume - VOLUME_STEP).coerceIn(0, 100))
-        else super.decreaseDeviceVolume(flags)
+        if (remoteVolume) sink.adjustCastVolume(-VOLUME_STEP) else super.decreaseDeviceVolume(flags)
     }
 
     override fun setDeviceMuted(muted: Boolean) {
-        if (remoteVolume) {
-            // 静音只把渲染器降到 0；取消静音沿用系统当前档位（由 VolumeProvider 下发）
-            if (muted) sink.setCastVolume(0)
-        } else {
+        if (!remoteVolume) {
             super.setDeviceMuted(muted)
+            return
+        }
+        if (muted) {
+            if (preMuteVolume == null) preMuteVolume = sink.castState.castVolume
+            sink.setCastVolume(0)
+        } else {
+            sink.setCastVolume(preMuteVolume ?: DEFAULT_UNMUTE_VOLUME)
+            preMuteVolume = null
         }
     }
 }

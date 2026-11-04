@@ -6,8 +6,10 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.playback.cast.CastDevice
+import com.puretone.player.playback.cast.CastNetworkLog
 import com.puretone.player.playback.cast.CastQueueSink
 import com.puretone.player.playback.cast.CastResult
+import com.puretone.player.playback.cast.CastResumePolicy
 import com.puretone.player.playback.cast.CastState
 import com.puretone.player.playback.cast.DlnaCastManager
 import kotlinx.coroutines.CoroutineScope
@@ -44,6 +46,7 @@ internal class CastSessionController(
     private val next: () -> Unit,
     private val previous: () -> Unit,
     private val playAtIndex: (Int) -> Unit,
+    private val seekTo: (Long) -> Unit,
     private val followPhoneVolume: () -> Boolean,
 ) : CastCommandSink, CastQueueSink {
 
@@ -66,9 +69,23 @@ internal class CastSessionController(
         castRoutingJob?.cancel()
         castRoutingJob = scope.launch {
             dlnaCast.state.collect { st ->
-                // 投屏期本地 ExoPlayer 是暂停的，onIsPlayingChanged 只会推 false；
-                // UI 的播放态镜像改跟渲染器，否则手机显示「暂停」而电视在播。
-                if (st.isCasting) uiState.update { it.copy(isPlaying = st.isPlaying) }
+                if (st.isCasting) {
+                    // 投屏期本地 ExoPlayer 恒暂停，ticker 只在 isPlaying 时写 position，
+                    // 于是 App 内进度条冻结在投屏那一刻（切歌后更是 00:00）。这里把
+                    // 1Hz 轮询到的渲染器进度镜像进 uiState，播放页 / 歌词 / 迷你条
+                    // 无需各自分支就一起跟随。非投屏期绝不镜像，避免状态清零冲掉本地位置。
+                    // 拖动进度后留一段乐观窗口：渲染器执行 Seek 是异步的，头几次回读
+                    // 仍是旧值，直接镜像会把进度条拉回去。
+                    val mirror = st.hasProgressInfo &&
+                        System.currentTimeMillis() >= dlnaCast.progressHoldUntilMs
+                    uiState.update {
+                        it.copy(
+                            isPlaying = st.isPlaying,
+                            positionMs = if (mirror) st.progressMs.coerceAtLeast(0L) else it.positionMs,
+                            durationMs = if (mirror && st.durationMs > 0L) st.durationMs else it.durationMs
+                        )
+                    }
+                }
                 routeSessionToCast(st.isCasting)
             }
         }
@@ -128,15 +145,31 @@ internal class CastSessionController(
     }
 
     /**
-     * 停止投屏：停渲染器 → MediaSession 切回本地 → 本地从原位置续播。
+     * 停止投屏：停渲染器 → MediaSession 切回本地 → 本地从**电视当前进度**续播。
      *
      * 无条件续播而非「若本地非播放才播」：投屏期本地必然是暂停的，停止投屏的意图就是
      * 回到手机上继续听。若按 uiState 判断会误判——投屏期 uiState.isPlaying 跟随的是
      * 渲染器，停止后它仍是 true，会被读成「正在播放」而不恢复，用户就既听不到电视也听不到手机。
+     *
+     * 快照必须在 [DlnaCastManager.stopCast] **之前**取：它最后一行整包清零 [CastState]，
+     * 电视进度随之丢失。seek 也必须排在 stopCast 之后，否则 `PlaybackController.seekTo`
+     * 会把命令发去已经停掉的渲染器。
      */
     fun stopCast() {
         scope.launch {
+            val snapshot = dlnaCast.state.value
             dlnaCast.stopCast()
+            val localDuration = playerProvider()?.duration?.takeIf { it > 0L }
+                ?: uiState.value.currentEntry?.durationMs?.takeIf { it > 0L }
+                ?: snapshot.durationMs
+            val target = CastResumePolicy.takeOverPositionMs(snapshot, localDuration)
+            // 真机复测抓手：一眼看出是「接管电视进度」还是「设备没给进度、保持本地」
+            CastNetworkLog.log(
+                "cast-resume takeOver=${target ?: "keep-local"} " +
+                    "tv=${snapshot.progressMs}/${snapshot.durationMs} " +
+                    "progressKnown=${snapshot.hasProgressInfo} localDuration=$localDuration"
+            )
+            target?.let { seekTo(it) }
             play()
         }
     }
@@ -194,7 +227,15 @@ internal class CastSessionController(
 
     /** 手机音量键 / 系统音量条 → DLNA `SetVolume`（合并与回读由 DlnaCastManager 负责） */
     override fun setCastVolume(volume: Int) {
+        // 设备没有 RenderingControl 时不下发：门面的 getDeviceInfo 刻意不依赖能力探测，
+        // 拦在 sink 这一层既能稳住 Media3 的 VolumeProvider，又不会白按音量键。
+        if (castState.volumeSupported == false) return
         dlnaCast.setVolume(volume)
+    }
+
+    override fun adjustCastVolume(delta: Int) {
+        if (castState.volumeSupported == false) return
+        dlnaCast.adjustVolume(delta)
     }
 
     override fun playOnRenderer() {

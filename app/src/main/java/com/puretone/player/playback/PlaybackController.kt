@@ -173,8 +173,11 @@ internal class PlaybackController(
     fun seekTo(positionMs: Long) {
         crossfade.cancel()
         val ms = positionMs.coerceAtLeast(0L)
-        // 投屏态：进度条拖的是渲染器上的位置，本地进度由投屏轮询同步
+        // 投屏态：进度条拖的是渲染器上的位置，手机进度由投屏轮询镜像同步。
+        // 先记一段乐观窗口：渲染器执行 Seek 是异步的，头几次回读仍是旧值，
+        // 不拦住就会把刚拖到的位置又拉回去。
         if (castState().isCasting) {
+            dlnaCast.noteSeekOptimistic()
             scope.launch { dlnaCast.seek(ms) }
             uiState.update { it.copy(positionMs = ms) }
             return

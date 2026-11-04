@@ -374,6 +374,7 @@ class PlaybackManager @Inject constructor(
         next = { this@PlaybackManager.next() },
         previous = { this@PlaybackManager.previous() },
         playAtIndex = { i -> this@PlaybackManager.playAtIndex(i) },
+        seekTo = { ms -> this@PlaybackManager.seekTo(ms) },
         followPhoneVolume = { lastSettings.castVolumeFollowPhone }
     )
 
@@ -684,7 +685,7 @@ class PlaybackManager @Inject constructor(
     /** 开始投屏：暂停本地 → 选定设备 → 投送当前曲（实现见 [CastSessionController]） */
     fun startCast(device: CastDevice, song: SongEntity) = cast.startCast(device, song)
 
-    /** 停止投屏：停渲染器 → MediaSession 切回本地 → 本地从原位置续播（实现见 [CastSessionController]） */
+    /** 停止投屏：停渲染器 → MediaSession 切回本地 → 从电视当前进度续播（实现见 [CastSessionController]） */
     fun stopCast() = cast.stopCast()
 
     /**

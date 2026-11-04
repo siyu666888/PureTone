@@ -223,7 +223,7 @@ class PlayerViewModel @Inject constructor(
     fun startCast(device: CastDevice, song: SongEntity) = playback.startCast(device, song)
 
     /**
-     * 停止投屏：停渲染器 → MediaSession 切回本地 ExoPlayer → 本地从原位置续播。
+     * 停止投屏：停渲染器 → MediaSession 切回本地 ExoPlayer → 从电视当前进度续播。
      *
      * 同样下沉到 [PlaybackManager]：那里才持有 MediaSession 引用，能完成切换。
      */
