@@ -182,6 +182,32 @@ internal class CastPlaybackPlayer(
     override fun isDeviceMuted(): Boolean =
         if (remoteVolume) sink.castState.castVolume <= 0 else super.isDeviceMuted()
 
+    /**
+     * 关键修复：投屏期显式把设备音量命令加入可用命令集。
+     *
+     * Media3 的 `MediaSession` 只在「设备信息为 REMOTE **且** 播放器可用命令含
+     * `COMMAND_SET_DEVICE_VOLUME` / `COMMAND_ADJUST_DEVICE_VOLUME`」时，才会为远程设备
+     * 建立 `VolumeProviderCompat`，把硬件音量键 / 系统音量条 / 线控转成
+     * [setDeviceVolume] / [increaseDeviceVolume] 回调。
+     *
+     * 本类是 `ForwardingPlayer`，[getAvailableCommands] 直接转发底层本地 ExoPlayer——
+     * 本地设备本就不宣称这两个命令（音量由系统管），于是 Media3 读到的可用命令里没有它们，
+     * 远程音量通道**从不建立**，音量键空转、命令永远到不了 [CastCommandSink]。
+     * 投屏期补上这两个命令，Media3 才会把音量键路由到渲染器。本地期原样转发，不受影响。
+     */
+    override fun getAvailableCommands(): Player.Commands {
+        val base = super.getAvailableCommands()
+        return if (remoteVolume) {
+            Player.Commands.Builder()
+                .addAll(base)
+                .add(Player.COMMAND_SET_DEVICE_VOLUME)
+                .add(Player.COMMAND_ADJUST_DEVICE_VOLUME)
+                .build()
+        } else {
+            base
+        }
+    }
+
     override fun setDeviceVolume(volume: Int) {
         if (remoteVolume) sink.setCastVolume(volume.coerceIn(0, 100)) else super.setDeviceVolume(volume)
     }

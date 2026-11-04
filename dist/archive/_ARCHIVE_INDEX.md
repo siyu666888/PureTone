@@ -282,9 +282,9 @@ universal 包 ELF LOAD 段 26 个 `.so` 16KB 全合规、ZIP 层 `zipalign -c -P
 | `PureTone-v1.9.2-universal-release.apk` | 39,008,354 | `0de2a29f314bcbcabcc41647d27757dec3023e372edac7cb1306ec590396453c` |
 | `SHA256SUMS.txt` | 590 | 19:55 批次清单（文件名 + 上表三包哈希） |
 
-当前 `dist/output/` 为投屏闪退修复批次（同为 v1.9.2 / code 54，v2 签名 `CN=PureTone`）：
-`1eb43712…`（arm64-v8a）、`8896ee0c…`（x86_64）、`83fab7b7…`（universal），
+当前 `dist/output/` 为投屏进度+音量修复批次（同为 v1.9.2 / code 54，v2 签名 `CN=PureTone`）：
+`bc57daed…`（arm64-v8a）、`c502d273…`（x86_64）、`6f9fdb08…`（universal），
 完整哈希见 `dist/output/SHA256SUMS.txt`（commit 待提交）。
 逐包 `apksigner verify` 均为 `Verifies` / `CN=PureTone`；
-universal 包 ELF LOAD 段 26 个 `.so` 16KB 全合规、ZIP 层 `zipalign -c -P 16 -v 4` EXIT=0。
-**本轮复测请用 `投屏闪退修复_20261104` 这一批**，安装 `universal` 或 `arm64-v8a` 均可。
+arm64 包 ELF LOAD 段 11 个 `.so` 16KB 全合规、ZIP 层 `zipalign -c -P 16 -v 4` EXIT=0。
+**本轮复测请用 `投屏进度音量修复_20261104` 这一批**，安装 `universal` 或 `arm64-v8a` 均可。

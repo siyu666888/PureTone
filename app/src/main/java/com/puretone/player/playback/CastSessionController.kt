@@ -14,9 +14,11 @@ import com.puretone.player.playback.cast.CastState
 import com.puretone.player.playback.cast.DlnaCastManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 投屏会话控制器（P1-1 收尾抽取，对应原路线图的 PlaybackSessionController）。
@@ -59,6 +61,8 @@ internal class CastSessionController(
     /** MediaSession 当前是否挂在门面上（避免每次状态刷新都重复 setPlayer） */
     private var routedToCast = false
     private var castRoutingJob: Job? = null
+    /** 进度外推 ticker：在 1Hz 轮询之间用墙钟流逝推进手机进度，消除与电视的 1~2s 偏差 */
+    private var progressTickerJob: Job? = null
 
     /**
      * bind 时按当前 player 重建门面并订阅投屏状态；unbind 时彻底释放。
@@ -67,6 +71,10 @@ internal class CastSessionController(
     fun bind(player: ExoPlayer) {
         castPlayer = CastPlaybackPlayer(player, this)
         castRoutingJob?.cancel()
+        // 进度外推锚点：每次 1Hz 轮询把电视当前位置记为锚点（毫秒）+ 当时墙钟。
+        // 用 AtomicLong 是因为锚点由两个协程（collect / 外推 ticker）共享读写。
+        val anchorMs = AtomicLong(0L)
+        val anchorWallMs = AtomicLong(0L)
         castRoutingJob = scope.launch {
             dlnaCast.state.collect { st ->
                 if (st.isCasting) {
@@ -78,15 +86,38 @@ internal class CastSessionController(
                     // 仍是旧值，直接镜像会把进度条拉回去。
                     val mirror = st.hasProgressInfo &&
                         System.currentTimeMillis() >= dlnaCast.progressHoldUntilMs
+                    if (mirror) {
+                        anchorMs.set(st.progressMs.coerceAtLeast(0L))
+                        anchorWallMs.set(System.currentTimeMillis())
+                    }
                     uiState.update {
                         it.copy(
                             isPlaying = st.isPlaying,
-                            positionMs = if (mirror) st.progressMs.coerceAtLeast(0L) else it.positionMs,
+                            positionMs = if (mirror) anchorMs.get() else it.positionMs,
                             durationMs = if (mirror && st.durationMs > 0L) st.durationMs else it.durationMs
                         )
                     }
                 }
                 routeSessionToCast(st.isCasting)
+            }
+        }
+        // 进度外推：电视进度由 1Hz 轮询得到，手机若只在轮询瞬间刷新会落后电视最多 1s。
+        // 在轮询之间按「锚点 + 流逝墙钟」线性推进 positionMs，使手机进度条实时跟随电视，
+        // 消除用户感知的 1~2s 偏差。暂停 / 拖动窗口（mirror=false）时跳过，避免越界或拉回。
+        progressTickerJob?.cancel()
+        progressTickerJob = scope.launch {
+            while (true) {
+                delay(250)
+                val st = dlnaCast.state.value
+                if (!st.isCasting || !st.isPlaying) continue
+                val mirror = st.hasProgressInfo &&
+                    System.currentTimeMillis() >= dlnaCast.progressHoldUntilMs
+                if (!mirror) continue
+                val elapsed = System.currentTimeMillis() - anchorWallMs.get()
+                if (elapsed <= 0) continue
+                val projected = (anchorMs.get() + elapsed)
+                    .coerceAtMost(if (st.durationMs > 0L) st.durationMs else Long.MAX_VALUE)
+                uiState.update { it.copy(positionMs = projected) }
             }
         }
     }
@@ -95,6 +126,8 @@ internal class CastSessionController(
     fun unbind() {
         castRoutingJob?.cancel()
         castRoutingJob = null
+        progressTickerJob?.cancel()
+        progressTickerJob = null
         castPlayer = null
         routedToCast = false
     }
