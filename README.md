@@ -71,12 +71,12 @@
 | 播放 | AndroidX Media3 (ExoPlayer 1.6.0) + media3-session |
 | 持久化 | Room 2.6.1 (KSP，schema v7) · DataStore 1.1.1 |
 | 图片 | Coil 2.7.0 |
-| 音频处理 | ffmpeg-kit-min 6.0-2.LTS（本地 AAR，无损转码） |
+| 音频处理 | `dev.ffmpegkit-maintained:ffmpeg-kit-min` 6.0.3（本地 vendored AAR，16KB 页对齐） |
 | 桌面小部件 | Glance AppWidget |
-| 构建 | AGP 8.6.0 · Gradle 8.7 · JDK 17 · compileSdk 35 / targetSdk 34 · minSdk 26 |
-| 测试 | Robolectric 4.12.2 · Turbine 1.1.0（**344 用例 / 39 类全绿**） |
+| 构建 | AGP 8.6.1 · Gradle Wrapper 8.14.6（本地亦可用独立 Gradle 8.7）· JDK 17 · compileSdk 35 / targetSdk 35 / minSdk 26 |
+| 测试 | Robolectric 4.12.2 · Turbine 1.1.0（**488 用例 / 57 类全绿**） |
 | 静态检查 | Android Lint（`warningsAsErrors` + baseline 冻结存量）· detekt 1.23.8（baseline 冻结 1 条）· 文件行数门禁 ≤ 1200 行 |
-| CI | GitHub Actions（单测 / Debug+Release 构建 / apksigner 验签 / Baseline Profile 打包断言 **+ 规则有效性校验** / lint / detekt / 文件行数 / 16KB 对齐报告）+ Dependabot 依赖升级 + 每周依赖漂移巡检 |
+| CI | GitHub Actions（单测 / Debug+Release 构建 / apksigner 验签 / Baseline Profile 打包断言 **+ 规则有效性校验** / lint / detekt / 文件行数 / **16KB 对齐真门禁**）+ Dependabot 依赖升级 + 每周依赖漂移巡检 |
 
 ---
 
@@ -110,8 +110,8 @@ app/src/main/java/com/puretone/player/
 ### 环境要求
 
 - **JDK 17**
-- **Android SDK**（compileSdk 34），在 `local.properties` 设置 `sdk.dir`
-- **Gradle 8.7**（使用仓库自带 `gradlew`，无需单独安装）
+- **Android SDK**（compileSdk / targetSdk 35、buildTools 35.0.0），在 `local.properties` 设置 `sdk.dir`
+- **Gradle Wrapper 8.14.6**（使用仓库自带 `gradlew`，无需单独安装；本地也可用独立 Gradle 8.7）
 
 ### 调试构建（无需签名）
 
@@ -148,8 +148,10 @@ keyPassword=你的密钥口令
 
 ### 关于 ffmpeg-kit 依赖
 
-`app/libs/ffmpeg-kit-min-6.0-2.LTS.aar` 为本地 AAR（无公网 Maven 坐标），**已随仓库提交**，
-构建时由 `app/build.gradle.kts` 通过 `libs` 目录直接引用，无需联网下载。
+`app/libs/ffmpeg-kit-min-6.0-3-maintained.aar`（`dev.ffmpegkit-maintained` 社区维护版，
+仅 64 位 ABI、全 16KB 页对齐）为本地 vendored AAR，**已随仓库提交**，
+构建时由 `app/build.gradle.kts` 通过 `files("libs/...")` 直接引用，无需联网下载。
+原 `6.0-2.LTS`（4KB 页编译）已于 v1.9.2 换库时移除。
 
 ### 静态检查（本地同样会拦）
 
@@ -165,7 +167,7 @@ bash scripts/check-file-size.sh # 文件行数上限 1200 行（detekt 的 Large
 
 | 门禁 | 管什么 | 存量 |
 | --- | --- | --- |
-| lint | Android 特有正确性 | `app/lint-baseline.xml` 冻结 17 条 |
+| lint | Android 特有正确性 | `app/lint-baseline.xml` 冻结 16 条 |
 | detekt | Kotlin 结构与复杂度 | `app/detekt-baseline.xml` 冻结 1 条 |
 | 文件行数 | 文件规模 | `scripts/check-file-size.sh` 内白名单 1 个 |
 
@@ -181,8 +183,8 @@ Android 15 起支持 16KB 页大小设备，Google Play 自 2025-11-01 起要求
 
 | 关 | 管什么 | 谁负责 | 本项目现状 |
 | --- | --- | --- | --- |
-| ZIP 层 | APK 内未压缩 `.so` 的条目偏移按 16KB 对齐 | AGP 打包 + `zipalign` | ✅ 5 个 APK 全部通过 |
-| ELF 层 | `.so` 内 `PT_LOAD` 段的 `p_align` ≥ 16384 | **第三方库的编译方式**，打包工具管不了 | ❌ 52 个中 44 个 = 4096 |
+| ZIP 层 | APK 内未压缩 `.so` 的条目偏移按 16KB 对齐 | AGP 打包 + `zipalign` | ✅ 3 个 ABI 包全部通过 |
+| ELF 层 | `.so` 内 `PT_LOAD` 段的 `p_align` ≥ 16384 | **第三方库的编译方式**，打包工具管不了 | ✅ 26 个 `.so` 全部合规（不合规 0 个） |
 
 ```bash
 # ELF 层检查（自研解析器，零外部依赖，不需要 NDK）
@@ -192,16 +194,21 @@ python3 tools/check_16kb_alignment.py app/build/outputs/apk/release/*universal-r
 $ANDROID_HOME/build-tools/35.0.0/zipalign -c -P 16 -v 4 <apk>
 ```
 
-> **「zipalign 通过」≠「支持 16KB」**——这是最容易搞混的一点。
+> **「zipalign 通过」≠「支持 16KB」**——这是最容易搞混的一点：ZIP 层由 AGP 打包保证，
+> ELF 层只取决于第三方库是用 4KB 还是 16KB 页 NDK 编译，打包工具管不了。
 >
-> 现状：不合规的 44 个 `.so` **全部来自 ffmpeg-kit**（2022 年用 4KB 页 NDK 编译），
-> 影响 **APE 转码** 与 **ReplayGain** 两个功能在 16KB 设备上加载失败。
-> AndroidX 自己的两个 `.so` 已是 16384，无风险。
+> 历史：原 `ffmpeg-kit-min 6.0-2.LTS` 的 `.so` 为 4KB 页编译，实测 52 个中 44 个 `p_align=4096`，
+> 会让 **APE 转码** 与 **ReplayGain** 在 16KB 页设备上加载失败（详见
+> `dist/v1.7.24_P0-3_16KB对齐实测_2026-11-01.md`）。
 >
-> 当前 `targetSdk=35` 但走**自分发**（不上 Google Play），Play 的 16KB 硬要求不适用；16KB 仍是 ffmpeg-kit 在 16KB 页设备上的**已知设备兼容问题**（与上架无关），故 CI 里仍只**报告不阻塞**
-> （结论写进 CI Summary，保持风险可见）；换成 16KB 版 ffmpeg-kit 后即可升级为门禁。
+> 现状（v1.9.2 / commit `9eff959`）：已换用 `dev.ffmpegkit-maintained:ffmpeg-kit-min:6.0.3`
+> 维护版（仅 arm64-v8a / x86_64，全 16KB 对齐），universal 包 **26 个 `.so` 全部合规**；
+> 同时 ABI 收敛为 arm64-v8a / x86_64 / universal 三包。CI 的
+> 「检查 16KB 页大小对齐（ELF LOAD 段，当前已合规）」已删掉 `continue-on-error`、升级为**真门禁**，
+> 不合格（含 `.so` 解析失败无法判定）直接让 CI 失败。
 >
-> 完整实测数据与换库验证清单见 `dist/v1.7.24_P0-3_16KB对齐实测_2026-11-01.md`。
+> 自分发（不上 Google Play）仍使 Play 的 16KB **政策**不适用，但**设备兼容性**问题已闭环，
+> 不再以「只报告不阻塞」的方式保留风险。
 
 ### Baseline Profile（性能）
 

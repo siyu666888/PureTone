@@ -43,7 +43,9 @@ jobs:
           SDKM="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
           echo "sdkmanager: $SDKM"
           yes | "$SDKM" --licenses > /dev/null 2>&1 || true
-          "$SDKM" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          # 与 app/build.gradle.kts 对齐：compileSdk/targetSdk 35、buildToolsVersion 35.0.0。
+          # 旧值 34/34.0.0 靠 runner 镜像预装才没暴露，属隐性脆弱点。
+          "$SDKM" "platforms;android-35" "build-tools;35.0.0" > /dev/null
 
       - name: 赋予 gradlew 执行权限
         run: chmod +x gradlew
@@ -178,7 +180,7 @@ jobs:
       - name: 检查 16KB 页大小对齐（ELF LOAD 段，当前已合规）
         run: |
           set -e
-          # 只查 universal 包：它一个就覆盖 arm64-v8a / armeabi-v7a / x86 / x86_64 四个 ABI
+          # 只查 universal 包：v1.9.2 起 ABI 收敛为 arm64-v8a / x86_64，universal 一个包即全覆盖
           APK=$(ls app/build/outputs/apk/release/*universal-release.apk | head -1)
           echo "checking $APK"
           python3 tools/check_16kb_alignment.py "$APK" | tee /tmp/16kb.txt

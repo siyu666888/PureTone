@@ -2,17 +2,6 @@
 <issues format="6" by="lint 8.6.0" type="baseline" client="gradle" dependencies="false" name="AGP (8.6.0)" variant="all" version="8.6.0">
 
     <issue
-        id="OldTargetApi"
-        message="Not targeting the latest versions of Android; compatibility modes apply. Consider testing and updating this version. Consult the `android.os.Build.VERSION_CODES` javadoc for details."
-        errorLine1="        targetSdk = 34"
-        errorLine2="        ~~~~~~~~~~~~~~">
-        <location
-            file="build.gradle.kts"
-            line="50"
-            column="9"/>
-    </issue>
-
-    <issue
         id="UnusedAttribute"
         message="Attribute `targetCellWidth` is only used in API level 31 and higher (current min is 26)"
         errorLine1="    android:targetCellWidth=&quot;4&quot;"
