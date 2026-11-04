@@ -5,6 +5,7 @@ import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
 import android.util.Log
 import com.puretone.player.data.settings.PureToneSettings
+import com.puretone.player.playback.AudioEffectPort
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,7 +52,7 @@ data class EffectStatus(
  * - 所有 setter 在调用线程执行，均为本地快操作。
  */
 @Singleton
-class AudioEffectController @Inject constructor() {
+class AudioEffectController @Inject constructor() : AudioEffectPort {
 
     companion object {
         private const val TAG = "AudioEffectController"
@@ -116,7 +117,7 @@ class AudioEffectController @Inject constructor() {
      * session 变化（重建/切换）时先释放旧效果再按当前设置重建。
      */
     @Synchronized
-    fun attachToSession(newSessionId: Int) {
+    override fun attachToSession(newSessionId: Int) {
         if (newSessionId == 0) return
         attachedSessions.add(newSessionId)
         if (needsEffects()) ensureEffects(newSessionId) else releaseEffects(newSessionId)
@@ -220,7 +221,7 @@ class AudioEffectController @Inject constructor() {
      * 对所有已挂接会话统一生效。
      */
     @Synchronized
-    fun applySettings(s: PureToneSettings) {
+    override fun applySettings(s: PureToneSettings) {
         enabled = s.eqEnabled
         bandLevels = normalizeBands(s.eqBandLevels)
         bassStrength = s.bassBoostStrength.coerceIn(MIN_STRENGTH, MAX_STRENGTH)

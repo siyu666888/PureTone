@@ -38,7 +38,7 @@ internal class PlaybackController(
     private val serviceLauncher: PlaybackServiceLauncher,
     private val scope: CoroutineScope,
     private val sink: PlaybackControlSink
-) {
+) : SpeedControlPort {
     fun togglePlayPause() {
         crossfade.cancel()
         // 投屏态：必须按**渲染器**的状态取反。本地 ExoPlayer 恒为暂停，
@@ -214,7 +214,7 @@ internal class PlaybackController(
         scope.launch { settings.setShuffle(enabled) }
     }
 
-    fun setSpeed(speed: Float) {
+    override fun setSpeed(speed: Float) {
         val p = playerProvider() ?: return
         p.setPlaybackSpeed(speed.coerceIn(0.25f, 3.0f))
         uiState.update { it.copy(speed = p.playbackParameters.speed) }

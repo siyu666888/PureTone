@@ -28,7 +28,7 @@ internal class PlaybackErrorHandler(
     private val queueOrchestrator: QueueOrchestrator,
     private val scope: CoroutineScope,
     private val stop: () -> Unit,
-) {
+) : PlaybackErrorPort {
     /** 连续「播放失败自动跳过」的计数（防止整条队列都是坏文件时无限空转） */
     private var consecutiveErrorSkips: Int = 0
 
@@ -38,7 +38,7 @@ internal class PlaybackErrorHandler(
     }
 
     /** 处理一次播放错误（由 [PlaybackManager.onError] 转发） */
-    fun handle(error: PlaybackException) {
+    override fun handle(error: PlaybackException) {
         val p = playerProvider() ?: return
         val index = p.currentMediaItemIndex
         val entry = uiState.value.queue.getOrNull(index)
@@ -110,7 +110,7 @@ internal class PlaybackErrorHandler(
     }
 
     /** 真正播起来时归零连续失败计数（由 [PlaybackManager.onIsPlayingChanged] 转发） */
-    fun onPlaying() {
+    override fun onPlaying() {
         consecutiveErrorSkips = 0
     }
 }

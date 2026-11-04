@@ -34,7 +34,7 @@ internal class SleepTimerController(
     private val uiState: MutableStateFlow<PlaybackUiState>,
     private val scope: CoroutineScope,
     private val pause: () -> Unit,
-) {
+) : SleepTimerPort {
     /** 倒计时 job（MINUTES 模式才有；END_OF_TRACK 与 OFF 不持有） */
     private var sleepTimerJob: Job? = null
 
@@ -47,7 +47,7 @@ internal class SleepTimerController(
     private var applied: PureToneSettings = PureToneSettings()
 
     /** 设置变化入口：按模式分派 */
-    fun applySettings(s: PureToneSettings) {
+    override fun applySettings(s: PureToneSettings) {
         applied = s
         when (settings.resolveSleepTimerMode(s)) {
             SleepTimerMode.MINUTES -> applyMinutes(s, settings.sleepRemainingMs(s))
@@ -116,7 +116,7 @@ internal class SleepTimerController(
      * 幂等：重复调用（自动切歌回调与 STATE_ENDED 回调可能同时到达）时，
      * 第二次 [PlaybackUiState.sleepTimerMode] 已是 OFF，直接返回。
      */
-    fun finishEndOfTrack() {
+    override fun finishEndOfTrack() {
         if (uiState.value.sleepTimerMode != SleepTimerMode.END_OF_TRACK) return
         PlaybackEventLog.record("sleep-timer", "END_OF_TRACK 到点 → 暂停")
         pause()

@@ -24,7 +24,7 @@ internal class PlaybackAudioFocus(
     private val isCrossfading: () -> Boolean,
     /** 投屏态：声音在电视上，手机侧不参与焦点（问题2 修复） */
     private val isCasting: () -> Boolean
-) {
+) : AudioFocusPort {
 
     private val controller = AudioFocusController(context, ::handle)
 
@@ -40,7 +40,7 @@ internal class PlaybackAudioFocus(
      * 所有起播路径（点歌、续播、曲间停顿续播、焦点恢复）都经过 [PlaybackManager.onIsPlayingChanged]，
      * 因此不必在每个命令里各申请一次。
      */
-    fun onIsPlayingChanged(isPlaying: Boolean) {
+    override fun onIsPlayingChanged(isPlaying: Boolean) {
         // 投屏态：声音在电视上，手机侧不应申请/持有焦点（否则占着焦点会让其他 App
         // 在手机上静音，或被其他 App 抢焦点误暂停本地播放器、进而经 CastPlaybackPlayer
         // 把电视上的投屏也停掉）。焦点由 startCast 在投屏开始时统一 abandon。

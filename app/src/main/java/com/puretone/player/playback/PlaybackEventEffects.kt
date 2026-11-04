@@ -4,10 +4,7 @@ import android.util.Log
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import com.puretone.player.data.repository.MusicRepository
 import com.puretone.player.data.settings.PureToneSettings
-import com.puretone.player.effect.AudioEffectController
-import com.puretone.player.widget.WidgetUpdater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
@@ -27,17 +24,17 @@ import kotlinx.coroutines.launch
 internal class PlaybackEventEffects(
     private val playerProvider: () -> ExoPlayer?,
     private val uiState: MutableStateFlow<PlaybackUiState>,
-    private val audioEffectController: AudioEffectController,
+    private val audioEffectController: AudioEffectPort,
     private val lastSettingsProvider: () -> PureToneSettings,
-    private val errorHandler: PlaybackErrorHandler,
-    private val playbackFocus: PlaybackAudioFocus,
-    private val widgetUpdater: WidgetUpdater,
-    private val sessionStore: PlaybackSessionStore,
+    private val errorHandler: PlaybackErrorPort,
+    private val playbackFocus: AudioFocusPort,
+    private val widgetUpdater: WidgetUpdatePort,
+    private val sessionStore: SessionStorePort,
     private val scope: CoroutineScope,
-    private val musicRepository: MusicRepository,
-    private val crossfade: CrossfadeCoordinator,
-    private val interTrackGap: InterTrackGap,
-    private val sleepTimer: SleepTimerController,
+    private val musicRepository: PlaybackRepoPort,
+    private val crossfade: CrossfadePort,
+    private val interTrackGap: GapPort,
+    private val sleepTimer: SleepTimerPort,
     private val gaplessEnabledProvider: () -> Boolean,
     private val warmUpFollowingApe: () -> Unit,
     private val applyReplayGainForCurrent: () -> Unit,

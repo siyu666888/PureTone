@@ -51,7 +51,7 @@ internal data class RestoredQueue(
 internal class PlaybackSessionStore(
     private val archive: PlaybackSessionArchive,
     private val scope: CoroutineScope
-) {
+) : SessionStorePort {
 
     /**
      * 去抖保存（毫秒）。连续播放/暂停、快速切歌时每次都新起一个 sleep 协程会堆一串写入。
@@ -66,7 +66,7 @@ internal class PlaybackSessionStore(
      * 播完（STATE_ENDED）时 [rawPositionMs] 等于总时长，直接存会让下次恢复 seek 到结尾
      * 立即再次播完。统一钳到 `duration - 500ms`；时长未知或极短（<500ms）时保底 0。
      */
-    fun positionToSave(rawPositionMs: Long, durationMs: Long): Long {
+    override fun positionToSave(rawPositionMs: Long, durationMs: Long): Long {
         val raw = rawPositionMs.coerceAtLeast(0L)
         // duration 未知时 ExoPlayer 返回 C.TIME_UNSET（远小于 0），由调用方过滤后传 0
         if (durationMs <= 0L) return raw
@@ -79,7 +79,7 @@ internal class PlaybackSessionStore(
      * 快照在**写入时刻**才求值（而不是调用时刻）：去抖的意义就是「以最新状态写一次」，
      * 若用调用时的快照，用户在窗口内切歌后存档会停在上一首。
      */
-    fun saveDebounced(snapshot: () -> SavedSession?) {
+    override fun saveDebounced(snapshot: () -> SavedSession?) {
         debounceJob?.cancel()
         debounceJob = scope.launch {
             delay(debounceMs)
@@ -89,7 +89,7 @@ internal class PlaybackSessionStore(
     }
 
     /** 立即保存（停止 / 暂停 / 切歌等关键节点） */
-    fun saveNow(snapshot: SavedSession) {
+    override fun saveNow(snapshot: SavedSession) {
         debounceJob?.cancel()
         debounceJob = null
         scope.launch { write(snapshot.songIds, snapshot.index, snapshot.positionMs) }
@@ -113,7 +113,7 @@ internal class PlaybackSessionStore(
      * 顺序必须在这里还原：批量查询是 `IN (:ids)`，既不保证顺序也会去重，
      * 直接用它的结果会让队列错位、重复曲目丢失（P0-7）。
      */
-    suspend fun restoreQueue(): RestoredQueue? {
+    override suspend fun restoreQueue(): RestoredQueue? {
         val saved = runCatching { archive.load() }.getOrNull() ?: return null
         if (saved.songIds.isEmpty()) return null
         val byId = runCatching { archive.songsByIds(saved.songIds) }

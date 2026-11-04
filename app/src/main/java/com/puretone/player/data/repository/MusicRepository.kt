@@ -67,7 +67,7 @@ class MusicRepository @Inject constructor(
     private val scanner: MediaStoreScanner,
     private val settings: SettingsRepository,
     private val replayGainExtractor: ReplayGainExtractor
-) {
+) : com.puretone.player.playback.PlaybackRepoPort {
 
     /** 上次清理过期播放历史的时间戳（P3-19，见 [recordPlay]） */
     @Volatile
@@ -333,7 +333,7 @@ class MusicRepository @Inject constructor(
 
     // ---------- 播放历史 ----------
 
-    suspend fun recordPlay(songId: Long) {
+    override suspend fun recordPlay(songId: Long) {
         // 取歌曲时长，供"累计听歌时长"估算（找不到则不记历史）
         val song = songDao.getById(songId)
         if (song != null) {
@@ -358,7 +358,7 @@ class MusicRepository @Inject constructor(
      * 歌曲完整播放完成（自然播完 / 循环回到同曲）：累加 play_count。
      * 这是「最爱歌手 / 最爱歌曲」排行榜的唯一计数来源。
      */
-    suspend fun recordCompletion(songId: Long) {
+    override suspend fun recordCompletion(songId: Long) {
         songDao.incrementPlayCount(songId, System.currentTimeMillis())
     }
 

@@ -143,7 +143,7 @@ internal class ExoCrossfadePlayer(private val player: ExoPlayer) : CrossfadePlay
 internal class CrossfadeCoordinator(
     private val scope: CoroutineScope,
     private val host: Host
-) {
+) : CrossfadePort {
 
     /** 协调器需要宿主提供的上下文；宿主侧只有「所有权在此」的东西才回调出去 */
     internal interface Host {
@@ -190,13 +190,13 @@ internal class CrossfadeCoordinator(
     private var outgoing: CrossfadePlayer? = null
 
     /** 是否处于淡化中（宿主据此跳过常规切歌等命令） */
-    val isCrossfading: Boolean get() = crossfading
+    override val isCrossfading: Boolean get() = crossfading
 
     /** 当前备援（宿主在角色交换后必须把原主重新注入，否则第二次淡化会拿主播放器当备援） */
     internal val currentSecondary: CrossfadePlayer? get() = secondary
 
     /** [player] 是否为本次淡化的淡出方（STATE_ENDED 兜底收尾判定用） */
-    fun isOutgoing(player: ExoPlayer): Boolean =
+    override fun isOutgoing(player: ExoPlayer): Boolean =
         (outgoing as? ExoCrossfadePlayer)?.exo === player
 
     /** 由宿主在 bind 时注入备援播放器及其 ReplayGain 处理器 */
@@ -288,7 +288,7 @@ internal class CrossfadeCoordinator(
      * 淡入结束（或主播放器 STATE_ENDED 兜底）：把备援提升为新主、旧主复位为空备援。
      * 幂等守卫 [crossfading] 保证只执行一次。
      */
-    fun finalize() {
+    override fun finalize() {
         if (!crossfading) return
         val outgoingPlayer = outgoing ?: run { reset(); return }
         val sec = secondary ?: run { reset(); return }

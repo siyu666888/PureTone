@@ -3,7 +3,6 @@ package com.puretone.player.playback
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.puretone.player.data.settings.PureToneSettings
-import com.puretone.player.effect.AudioEffectController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 
@@ -17,9 +16,9 @@ import kotlinx.coroutines.flow.update
 internal class PlaybackSettingsApplier(
     private val uiState: MutableStateFlow<PlaybackUiState>,
     private val playerProvider: () -> ExoPlayer?,
-    private val controller: PlaybackController,
-    private val sleepTimer: SleepTimerController,
-    private val audioEffectController: AudioEffectController,
+    private val controller: SpeedControlPort,
+    private val sleepTimer: SleepTimerPort,
+    private val audioEffectController: AudioEffectPort,
     private val applyReplayGainForCurrent: () -> Unit,
     private val setLastSettings: (PureToneSettings) -> Unit,
     private val setGaplessEnabled: (Boolean) -> Unit

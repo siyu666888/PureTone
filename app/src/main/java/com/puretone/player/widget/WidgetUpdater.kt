@@ -3,6 +3,7 @@ package com.puretone.player.widget
 import android.content.Context
 import android.util.Log
 import androidx.glance.appwidget.GlanceAppWidgetManager
+import com.puretone.player.playback.WidgetUpdatePort
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,12 +29,12 @@ private const val UPDATE_DEBOUNCE_MS = 300L
 @Singleton
 class WidgetUpdater @Inject constructor(
     @ApplicationContext private val context: Context
-) {
+) : WidgetUpdatePort {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var pending: Job? = null
 
     /** 请求刷新桌面上的所有本 App 小部件 */
-    fun requestUpdate() {
+    override fun requestUpdate() {
         pending?.cancel()
         pending = scope.launch {
             delay(UPDATE_DEBOUNCE_MS)

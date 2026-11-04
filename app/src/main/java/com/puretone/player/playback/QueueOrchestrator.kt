@@ -45,7 +45,7 @@ internal class QueueOrchestrator(
     private val apeResolver: ApePlaybackResolver,
     private val scope: CoroutineScope,
     private val sink: PlaybackQueueSink
-) {
+) : QueueApplyPort {
     /** 队列项唯一实例序号（拖拽重排需稳定 key，同一首歌可多次入队） */
     private var queueEntrySeq: Long = 0L
     private fun nextQueueKey(): Long = ++queueEntrySeq
@@ -69,7 +69,7 @@ internal class QueueOrchestrator(
      * - 用户主动播放 / 续播恢复都走这里，恢复时传 false，避免「取决于队列里有没有 APE」
      *   （APE 会在 ensureWav 挂起，pause() 先于 play() 执行 → 恢复后不自动播放，非 APE 又自动播放）。
      */
-    internal suspend fun applyQueueAndPlay(
+    override suspend fun applyQueueAndPlay(
         songs: List<SongEntity>,
         startIndex: Int,
         startPositionMs: Long,

@@ -14,8 +14,8 @@ import androidx.media3.exoplayer.ExoPlayer
  */
 internal class PlaybackSessionRestorer(
     private val playerProvider: () -> ExoPlayer?,
-    private val sessionStore: PlaybackSessionStore,
-    private val queueOrchestrator: QueueOrchestrator
+    private val sessionStore: SessionStorePort,
+    private val queueOrchestrator: QueueApplyPort
 ) {
     /**
      * 恢复上次播放会话；返回 true 表示本次已执行恢复。

@@ -31,7 +31,7 @@ internal class InterTrackGap(
     private val scope: CoroutineScope,
     private val playerProvider: () -> GapPlayer?,
     private val gapMs: Long = DEFAULT_GAP_MS
-) {
+) : GapPort {
 
     private var job: Job? = null
 
@@ -42,7 +42,7 @@ internal class InterTrackGap(
     val isPending: Boolean get() = pending
 
     /** 在自动切歌边界开始一次停顿：立刻暂停，[gapMs] 后自动继续。 */
-    fun start() {
+    override fun start() {
         val target = playerProvider() ?: return
         job?.cancel()
         pending = true

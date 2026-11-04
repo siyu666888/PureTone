@@ -9,7 +9,7 @@
   - 新增代码若触发新规则，会因不在本文件中而让 CI 变红——这正是门禁的目的。
 
   当前存量仅 1 条：
-  - TooManyFunctions:MusicRepository —— 42 个函数（曲库查询 / 统计 / 歌单 /
+  - TooManyFunctions:MusicRepository —— 41 个函数（曲库查询 / 统计 / 歌单 /
     播放历史 / 会话存档 5 类职责混在一起）。这是**下一个该拆分的类**，
     拆完后本条可从 baseline 删除、规则自动恢复全量生效。
     刻意不调高阈值掩盖它——阈值一调，这条信号就消失了。
@@ -20,6 +20,6 @@
 <SmellBaseline>
   <ManuallySuppressedIssues></ManuallySuppressedIssues>
   <CurrentIssues>
-    <ID>TooManyFunctions:MusicRepository.kt$MusicRepository</ID>
+    <ID>TooManyFunctions:MusicRepository.kt$MusicRepository : PlaybackRepoPort</ID>
   </CurrentIssues>
 </SmellBaseline>
