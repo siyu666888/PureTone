@@ -1,0 +1,2 @@
+PureTone 安装包交付输出目录占位文件。
+实际 APK / zip / SHA256SUMS.txt 由 scripts/package-release.sh 生成，二进制不入库。

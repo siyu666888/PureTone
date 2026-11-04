@@ -132,16 +132,19 @@ keyAlias=puretone
 keyPassword=你的密钥口令
 ```
 
-然后构建：
+然后构建，并把交付包收集到工程内唯一输出目录：
 
 ```bash
 ./gradlew assembleRelease
-# 产物：app/build/outputs/apk/release/PureTone-v1.8.0-universal-release.apk
-#       app/build/outputs/apk/release/PureTone-v1.8.0-arm64-v8a-release.apk
+./scripts/package-release.sh          # 三包 → dist/output/ + SHA256SUMS.txt
+# 产物：dist/output/PureTone-v1.9.2-{arm64-v8a,x86_64,universal}-release.apk
+# Gradle 原生中间产物仍在 app/build/outputs/apk/release/（不用于分发）
 ```
 
 > 产物文件名带版本号（`archivesName` 与 `versionName` 同源，不会漂移）。
-> `dist/` 目录存放各版本的发布包、交付摘要与验收证据（验机报告 / 截图 / 签名校验记录）。
+> **安装包统一输出到 `dist/output/`，不再输出到桌面**；历史包按版本 / 交付批次归档在 `dist/archive/`。
+> 完整约定见 `dist/README_安装包输出与归档约定.md`；`dist/` 同时存放交付摘要与验收证据
+> （验机报告 / 截图 / 签名校验记录）。
 
 ### 关于 ffmpeg-kit 依赖
 

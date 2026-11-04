@@ -17,3 +17,8 @@ app/release/
 ~$*
 # 模拟器调试输出（P2-1 采集排障时产生，非项目资产）
 .emu-*.log
+# 安装包交付输出与归档：二进制不入库，只保留目录骨架 / 清单 / 交付文档
+# （*.apk 已在上方全局忽略；这里补 zip 与输出目录）
+/dist/output/*
+!/dist/output/.gitkeep
+/dist/archive/**/*.zip
