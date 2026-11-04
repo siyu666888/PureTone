@@ -388,14 +388,20 @@ class DlnaCastManager @Inject constructor(
                 CastNetworkLog.log("ownssdp 0 台，回退库搜索（${timeoutMs}ms）")
                 searchOnce(timeoutMs).ifEmpty { recentDevices() }
             }
-            CastNetworkLog.logDevices(result)
-            if (result.isEmpty()) {
+            // 同一台设备可能在同 IP 上暴露多个 UPnP 描述（常见于电视：不同端口各一个
+            // friendlyName，例如极光TV 同时有 `623(192.168.101.20)` 与 `客厅极光TV(dlna)`），
+            // 会被当成多条记录。若不处理，投屏弹窗用 IP 当 LazyColumn 的 key 会撞车，
+            // 抛 IllegalArgumentException 直接闪退。按 IP 去重（保留首个），既止血也避免
+            // 同一电视在列表里出现两次。lastDevices/knownDevices 仍按 address 索引、本就唯一，不受影响。
+            val devices = result.distinctBy { it.address }
+            CastNetworkLog.logDevices(devices)
+            if (devices.isEmpty()) {
                 CastNetworkLog.log(
                     "空结果：请确认手机与投屏设备处于同一 Wi-Fi（非访客网络）、" +
                         "手机未开启 VPN/移动数据优先、投屏设备已开机并允许被发现"
                 )
             }
-            result
+            devices
         } catch (e: CancellationException) {
             // 协程被取消（用户关掉弹窗 / 组合离开）**不是**搜索失败：
             // 必须原样抛出，否则协程的取消信号被吞掉，父作用域会继续跑后续逻辑。

@@ -155,7 +155,9 @@ fun CastDevicePickerDialog(
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         if (devices.isNotEmpty()) {
                             item { SectionHeader(stringResource(R.string.pt_player_037)) }
-                            items(devices, key = { "online-${it.address}" }) { d ->
+                            // key 用设备唯一 id（即 UPnP location）而非 IP：即便上游去重有疏漏，
+                            // 也不会再因同 IP 多记录撞车闪退。
+                            items(devices, key = { "online-${it.id}" }) { d ->
                                 CastDeviceRow(
                                     device = d,
                                     lastUsedAt = lastUsedByAddress[d.address],

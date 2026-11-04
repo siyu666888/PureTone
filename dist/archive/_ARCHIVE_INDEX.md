@@ -268,6 +268,11 @@ universal 包 ELF LOAD 段 26 个 `.so` 16KB 全合规、ZIP 层 `zipalign -c -P
   21:16 三包为新增；`交付链路验证.zip` 仍为 15:02 历史包，不在脚本三包范围内）；
 - **本轮复测请用 `真机复测2_20261104` 这一批**，安装 `universal` 最稳妥。
 
+`2026-11-04_2202_构建更新前输出/` — 4 个文件（为 21:04 真机复测2 批次整包位移，内容未重新生成）：
+- 归档的是 21:04 三包 + 其旧清单，哈希与 21:04 批次一致：
+  `5d7dace5…`（arm64-v8a）、`cb3df792…`（x86_64）、`b98eb8ba…`（universal）；
+- 这次位移把 `dist/output/` 腾出来给新的「投屏闪退修复」批次（见末尾当前 output）。
+
 `2026-11-04_2116_构建更新前输出/` — 4 个文件（为 19:55 批次整包位移，内容未重新生成）：
 
 | 文件 | 字节 | sha256 |
@@ -277,8 +282,9 @@ universal 包 ELF LOAD 段 26 个 `.so` 16KB 全合规、ZIP 层 `zipalign -c -P
 | `PureTone-v1.9.2-universal-release.apk` | 39,008,354 | `0de2a29f314bcbcabcc41647d27757dec3023e372edac7cb1306ec590396453c` |
 | `SHA256SUMS.txt` | 590 | 19:55 批次清单（文件名 + 上表三包哈希） |
 
-当前 `dist/output/` 为本次复测批次（同为 v1.9.2 / code 54，v2 签名 `CN=PureTone`）：
-`5d7dace5…`（arm64-v8a）、`cb3df792…`（x86_64）、`b98eb8ba…`（universal），
+当前 `dist/output/` 为投屏闪退修复批次（同为 v1.9.2 / code 54，v2 签名 `CN=PureTone`）：
+`1eb43712…`（arm64-v8a）、`8896ee0c…`（x86_64）、`83fab7b7…`（universal），
 完整哈希见 `dist/output/SHA256SUMS.txt`（commit 待提交）。
 逐包 `apksigner verify` 均为 `Verifies` / `CN=PureTone`；
 universal 包 ELF LOAD 段 26 个 `.so` 16KB 全合规、ZIP 层 `zipalign -c -P 16 -v 4` EXIT=0。
+**本轮复测请用 `投屏闪退修复_20261104` 这一批**，安装 `universal` 或 `arm64-v8a` 均可。
