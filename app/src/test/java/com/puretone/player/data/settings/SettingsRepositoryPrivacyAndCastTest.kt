@@ -24,7 +24,7 @@ import java.io.File
  *
  * - `listeningStatsEnabled`：隐私边界，默认开（不回归既有听歌数据），关闭后两个写库
  *   收口必须短路（写入侧见 ListeningStatsGateTest）。
- * - `castVolumeFollowPhone`：投屏音量跟随手机音量键，默认开。
+ * - `castVolumeFollowPhone`：投屏音量跟随手机音量键，默认关（实验室内开启）。
  *
  * 这里只锁键名接线 / 默认值 / 写读往返 / 互不串扰，避免「用户关了但键写错」这类
  * 静态检查发现不了的接线笔误。
@@ -73,8 +73,8 @@ class SettingsRepositoryPrivacyAndCastTest {
     }
 
     @Test
-    fun `投屏音量跟随默认开启`() = runTest {
-        assertEquals(true, current().castVolumeFollowPhone)
+    fun `投屏音量跟随默认关闭`() = runTest {
+        assertEquals(false, current().castVolumeFollowPhone)
     }
 
     @Test
@@ -93,6 +93,6 @@ class SettingsRepositoryPrivacyAndCastTest {
         assertEquals(false, s.listeningStatsEnabled)
         assertEquals(false, s.castVolumeFollowPhone)
         assertEquals(true, s.networkMetadataEnabled)
-        assertEquals(true, s.labEnabled)
+        assertEquals(false, s.labEnabled)
     }
 }

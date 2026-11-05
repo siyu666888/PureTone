@@ -53,8 +53,8 @@ class SettingsRepositoryLabTest {
     private suspend fun current(): PureToneSettings = repo.settings.first()
 
     @Test
-    fun `实验室开关默认开启（保留现有响度设置可见性）`() = runTest {
-        assertEquals(true, current().labEnabled)
+    fun `实验室开关默认关闭（实验性功能默认收起）`() = runTest {
+        assertEquals(false, current().labEnabled)
     }
 
     @Test

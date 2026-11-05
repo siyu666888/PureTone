@@ -85,13 +85,13 @@ data class PureToneSettings(
      */
     val crossfadeMs: Int = 0,
     /**
-     * 投屏音量是否跟随手机音量键（默认开）。
+     * 投屏音量是否跟随手机音量键（默认关；实验性功能，实验室内开启）。
      *
      * DLNA 投屏时手机本地不发声，`STREAM_MUSIC` 是一路「空转」的输入；开启后把
      * MediaSession 声明为远程播放，音量键 / 系统音量条 / 线控会直接调到电视上，
      * 且起点取自电视当前音量，不会出现「一调就突然变大」。关闭则回到 App 内滑块。
      */
-    val castVolumeFollowPhone: Boolean = true,
+    val castVolumeFollowPhone: Boolean = false,
 
     // ---------- replaygain_ ----------
     /** ReplayGain 总开关 */
@@ -122,10 +122,11 @@ data class PureToneSettings(
      * 实验室（实验性功能）总开关。
      *
      * 关闭时，设置页「实验室」分类下的所有子项（入口 + 设置项，如响度 ReplayGain）
-     * 全部隐藏。默认值取 true：**保留现有 ReplayGain 可见性、不回归**，
-     * 用户可主动关闭以收起实验性功能。开关本身常驻可见，便于重新开启。
+     * 全部隐藏。默认值取 **false**：实验性功能默认收起，保持主设置页清爽；
+     * 用户可主动开启实验室以露出这些功能。开关本身常驻可见，便于重新开启。
+     * 各实验项（如投屏音量跟随、ReplayGain）自身默认也为关闭。
      */
-    val labEnabled: Boolean = true,
+    val labEnabled: Boolean = false,
 
     // ---------- privacy_ ----------
     /**

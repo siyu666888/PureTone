@@ -20,8 +20,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.InsertChart
-import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
@@ -50,8 +48,10 @@ import androidx.navigation.NavHostController
 import com.puretone.player.data.local.dao.PlaylistWithSongs
 import com.puretone.player.ui.LibraryViewModel
 import com.puretone.player.ui.PlayerViewModel
+import com.puretone.player.ui.SettingsViewModel
 import com.puretone.player.ui.Routes
 import com.puretone.player.ui.components.SongRow
+import com.puretone.player.ui.components.StatsAndReportIcons
 import com.puretone.player.ui.theme.PureToneBrand
 
 /** 我的：最近播放、我喜欢、歌单、听歌统计入口、曲库统计（扫描与封面补全已移至音乐页） */
@@ -59,12 +59,15 @@ import com.puretone.player.ui.theme.PureToneBrand
 fun MeScreen(
     navController: NavHostController,
     libVm: LibraryViewModel = hiltViewModel(),
-    playerVm: PlayerViewModel = hiltViewModel()
+    playerVm: PlayerViewModel = hiltViewModel(),
+    settingsVm: SettingsViewModel = hiltViewModel()
 ) {
     val recently by libVm.recentlyPlayed.collectAsStateWithLifecycle()
     val favorites by libVm.favorites.collectAsStateWithLifecycle()
     val playlists by libVm.playlists.collectAsStateWithLifecycle()
     val m3uMessage by libVm.m3uMessage.collectAsStateWithLifecycle()
+    // 听歌数据统计开关：关闭时「我的」页隐藏听歌数据 / 听歌报告入口（与设置隐私开关联动）
+    val s by settingsVm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showCreate by remember { mutableStateOf(false) }
 
@@ -110,42 +113,51 @@ fun MeScreen(
     ) {
         Text(stringResource(R.string.pt_me_002), style = MaterialTheme.typography.headlineSmall)
 
-        // 听歌数据入口（点击进入详情页）
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            // P3-27：launchSingleTop，避免连点压入多个统计页
-            onClick = { navController.navigate(Routes.STATS) { launchSingleTop = true } }
-        ) {
+        // 听歌数据 / 听歌报告：并列一行（2026-11-05 设置整理，原为两行独立卡片）
+        // 受「听歌数据统计」隐私开关控制：关闭时整行隐藏，不暴露任何统计入口
+        if (s.listeningStatsEnabled) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Icon(Icons.Rounded.InsertChart, contentDescription = null, tint = PureToneBrand.Primary)
-                Spacer(Modifier.size(12.dp))
-                    Text(
-                        stringResource(R.string.pt_me_003),
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.weight(1f)
-                    )
-            }
-        }
+                // 听歌数据入口（点击进入详情页）
+                Card(
+                    modifier = Modifier.weight(1f),
+                    // P3-27：launchSingleTop，避免连点压入多个统计页
+                    onClick = { navController.navigate(Routes.STATS) { launchSingleTop = true } }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(StatsAndReportIcons.Stats, contentDescription = null, tint = PureToneBrand.Primary)
+                        Spacer(Modifier.size(12.dp))
+                        Text(
+                            stringResource(R.string.pt_me_003),
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
 
-        // 听歌报告入口（需求4 阶段2：周报 + 分享海报）
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = { navController.navigate(Routes.REPORT) { launchSingleTop = true } }
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Filled.BarChart, contentDescription = null, tint = PureToneBrand.Primary)
-                Spacer(Modifier.size(12.dp))
-                Text(
-                    stringResource(R.string.pt_report_entry),
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f)
-                )
+                // 听歌报告入口（需求4 阶段2：周报 + 分享海报）
+                Card(
+                    modifier = Modifier.weight(1f),
+                    onClick = { navController.navigate(Routes.REPORT) { launchSingleTop = true } }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(StatsAndReportIcons.Report, contentDescription = null, tint = PureToneBrand.Primary)
+                        Spacer(Modifier.size(12.dp))
+                        Text(
+                            stringResource(R.string.pt_report_entry),
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
             }
         }
 

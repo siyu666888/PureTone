@@ -73,7 +73,7 @@ class SettingsRepositoryNetworkTest {
     @Test
     fun `关闭联网不影响实验室开关（两个开关彼此独立）`() = runTest {
         repo.setNetworkMetadataEnabled(false)
-        // 隐私开关与实验室开关分属不同键，不能互相串扰
-        assertEquals(true, current().labEnabled)
+        // 隐私开关与实验室开关分属不同键，不能互相串扰（实验室默认关闭）
+        assertEquals(false, current().labEnabled)
     }
 }

@@ -302,6 +302,16 @@
     <string name="pt_player_040" formatted="false">本次未发现，点击仍会尝试投送</string>
     <!-- 投屏「跟随手机音量」开启时的提示：说明蓝牙绝对音量会截走手机音量键，App 内滑块才是可靠控制 -->
     <string name="pt_player_042" formatted="false">已开启「跟随手机音量」：音量键通常直接调电视；但手机连着蓝牙音箱（绝对音量）时，按键会被蓝牙截走、调不动电视，请用下方滑块</string>
+    <!-- 投屏遥控器：连接状态-已连接 -->
+    <string name="pt_player_043" formatted="false">已连接</string>
+    <!-- 投屏遥控器：连接状态-连接中（转码/握手） -->
+    <string name="pt_player_044" formatted="false">连接中…</string>
+    <!-- 投屏遥控器：连接状态-设备失联（断网回退） -->
+    <string name="pt_player_045" formatted="false">设备失联</string>
+    <!-- 投屏遥控器：断开投屏按钮 -->
+    <string name="pt_player_046" formatted="false">断开投屏</string>
+    <!-- 投屏遥控器：渲染器未上报进度 -->
+    <string name="pt_player_047" formatted="false">进度未知</string>
     <!-- 歌单 -->
     <string name="pt_playlist_001" formatted="false">歌单</string>
     <!-- 返回 -->
@@ -434,12 +444,14 @@
     <string name="pt_settings_047" formatted="false">深色</string>
     <!-- 纯黑 -->
     <string name="pt_settings_048" formatted="false">纯黑</string>
-    <!-- 投屏音量跟随手机音量键 -->
-    <string name="pt_settings_049" formatted="false">投屏音量跟随手机音量键</string>
-    <!-- 已开启：投屏时按手机音量键通常直接调电视；连蓝牙音箱（绝对音量）时按键会被截走，请用应用内滑块 -->
-    <string name="pt_settings_050" formatted="false">已开启：投屏时按手机音量键通常直接调电视（起点为电视当前音量）；连蓝牙音箱（绝对音量）时按键会被截走，请用应用内滑块</string>
-    <!-- 已关闭：改用应用内滑块调节，音量键仍控制手机 -->
-    <string name="pt_settings_051" formatted="false">已关闭：改用应用内滑块调节，音量键仍控制手机</string>
+    <!-- 投屏音量（实验室分类：投屏音量跟随手机设置的分组标题） -->
+    <string name="pt_settings_055" formatted="false">投屏音量</string>
+    <!-- 跟随手机：实验室设置项（原「播放」分类迁入，改名精简）；开启后手机音量键直接调电视 -->
+    <string name="pt_settings_049" formatted="false">跟随手机</string>
+    <!-- 已开启：音量键通常直接调电视；连蓝牙音箱（绝对音量）时按键会被截走，请用应用内滑块 -->
+    <string name="pt_settings_050" formatted="false">已开启：音量键通常直接调电视；连蓝牙时按键会被截走，请用应用内滑块</string>
+    <!-- 已关闭：用应用内滑块调节电视音量（音量键仍控制手机） -->
+    <string name="pt_settings_051" formatted="false">已关闭：用应用内滑块调电视音量（音量键仍控制手机）</string>
     <!-- 听歌数据统计 -->
     <string name="pt_settings_052" formatted="false">听歌数据统计</string>
     <!-- 已开启：记录播放历史与播放次数，仅保存在本机 -->

@@ -198,6 +198,24 @@ fun PlayerScreen(
             vm.loadLyrics(entry.filePath)
         }
 
+        // 投屏态（isCasting / isPreparing）：正文整体切换为遥控器面板，手机只做远程控制；
+        // 否则仍展示本地播放器。两者互斥，避免「本地封面 + 投屏状态卡」叠在一起的混乱。
+        if (castState.isCasting || castState.isPreparing) {
+            CastRemoteControlPanel(
+                castState = castState,
+                title = displayTitle,
+                artist = displayArtist,
+                coverUri = displayCover,
+                onTogglePlay = vm::togglePlay,
+                onSeek = vm::seek,
+                onSeekCommitted = vm::notifyCastSeekOptimistic,
+                onVolume = vm::setCastVolume,
+                onPrev = vm::prev,
+                onNext = vm::next,
+                onDisconnect = vm::stopCast,
+                modifier = Modifier.fillMaxSize().padding(padding)
+            )
+        } else {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -570,6 +588,7 @@ fun PlayerScreen(
                 }
             }
         }
+        }  // 关闭本地播放器 Column 的 else 分支
     }
 
     // 歌曲信息浮层（长按封面唤起；含查看/编辑 + 联网匹配）

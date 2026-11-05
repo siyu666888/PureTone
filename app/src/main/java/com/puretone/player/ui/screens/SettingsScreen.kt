@@ -57,6 +57,9 @@ import kotlinx.coroutines.delay
  * - 分类标题字号/行高比子项大一级：titleLarge(22sp) / 63dp 行高 vs 子项 bodyLarge(16sp) / 55dp 行高；
  * - 所有分类头行高一致（63dp）、所有子项行高一致（55dp），全页同一节奏；
  * - 内外边距适度放大，内容铺满整屏为宜（超出可滚动）。
+ * - **新增设置项归类原则（2026-11-05 确立）**：新增设置先与用户确认，默认放进「实验室」
+ *   分类（保持主设置页「外观 / 播放 / 音效 / 隐私」四段精简）；确需进入主设置页的，
+ *   先征求用户意见再归类，不擅自塞进主分类。
  */
 /** 设置页子项统一行高（分类头 63dp，子项 55dp，全页同一节奏） */
 private val SETTINGS_ROW_HEIGHT = 55.dp
@@ -92,23 +95,6 @@ fun SettingsScreen(
         SettingsGroup(title = stringResource(R.string.pt_settings_004)) {
             SwitchRow(label = stringResource(R.string.pt_settings_005), checked = s.gapless) { vm.setGapless(it) }
             SwitchRow(label = stringResource(R.string.pt_settings_006), checked = s.resumeOnStart) { vm.setResumeOnStart(it) }
-            // 投屏音量跟随手机音量键：开启后 MediaSession 声明为远程播放，
-            // 音量键 / 系统音量条直接调到电视，起点取自电视真实音量（不再从假 100% 起跳）。
-            SwitchRow(
-                label = stringResource(R.string.pt_settings_049),
-                checked = s.castVolumeFollowPhone,
-                onChanged = { vm.setCastVolumeFollowPhone(it) }
-            )
-            Text(
-                if (s.castVolumeFollowPhone) {
-                    stringResource(R.string.pt_settings_050)
-                } else {
-                    stringResource(R.string.pt_settings_051)
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3
-            )
             // 交叉淡化（Crossfade）：0 = 关；1~12 秒，步长 500ms。
             // 仅常规格式生效；APE 等需转码格式在边界退化为无缝/曲间停顿。
             SliderRow(
@@ -238,6 +224,28 @@ fun SettingsScreen(
         }
 
         if (s.labEnabled) {
+            // 投屏音量跟随手机（2026-11-05 由「播放」分类迁入实验室：非日常设置项，
+            // 保持主设置页「外观 / 播放 / 音效 / 隐私」四段清爽结构）。
+            // 开启后 MediaSession 声明为远程播放，手机音量键 / 系统音量条直接调到电视，
+            // 起点取自电视真实音量；连蓝牙音箱（绝对音量）时按键会被截走，用 App 内滑块兜底。
+            SettingsGroup(title = stringResource(R.string.pt_settings_055)) {
+                SwitchRow(
+                    label = stringResource(R.string.pt_settings_049),
+                    checked = s.castVolumeFollowPhone,
+                    onChanged = { vm.setCastVolumeFollowPhone(it) }
+                )
+                Text(
+                    if (s.castVolumeFollowPhone) {
+                        stringResource(R.string.pt_settings_050)
+                    } else {
+                        stringResource(R.string.pt_settings_051)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3
+                )
+            }
+
             // 桌面小部件：系统入口（长按桌面 → 小组件 → 翻列表找 App）路径很深，
             // 且部分第三方桌面压根不列出新装 App，这里提供一键「固定到桌面」。
             //
