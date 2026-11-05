@@ -107,7 +107,7 @@ fun SettingsScreen(
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2
+                maxLines = 3
             )
             // 交叉淡化（Crossfade）：0 = 关；1~12 秒，步长 500ms。
             // 仅常规格式生效；APE 等需转码格式在边界退化为无缝/曲间停顿。
