@@ -701,7 +701,7 @@
     <!-- 系统分享面板标题 -->
     <string name="pt_report_share_title" formatted="false">分享听歌报告</string>
     <!-- 空态：本周无听歌记录 -->
-    <string name="pt_report_empty" formatted="false">这一周还没有听歌记录，去播放几首歌后再来看看吧～</string>
+    <string name="pt_report_empty" formatted="true">%1$s还没有听歌记录，去播放几首歌后再来看看吧～</string>
     <!-- 隐私关闭：标题 -->
     <string name="pt_report_privacy_title" formatted="false">听歌统计已关闭</string>
     <!-- 隐私关闭：说明（历史仍可见，但不可生成新海报） -->
@@ -737,21 +737,21 @@
     <!-- 含历史估算值注记 -->
     <string name="pt_report_estimate" formatted="false">含历史估算值</string>
     <!-- 环比上涨（%1$s 为百分比，已含 %） -->
-    <string name="pt_report_delta_up" formatted="true">较上周 ↑ %1$s%%</string>
+    <string name="pt_report_delta_up" formatted="true">较%1$s ↑ %2$s%%</string>
     <!-- 环比下降 -->
-    <string name="pt_report_delta_down" formatted="true">较上周 ↓ %1$s%%</string>
+    <string name="pt_report_delta_down" formatted="true">较%1$s ↓ %2$s%%</string>
     <!-- 环比持平 -->
-    <string name="pt_report_delta_flat" formatted="false">较上周持平</string>
+    <string name="pt_report_delta_flat" formatted="true">较%1$s持平</string>
     <!-- 上周无数据 -->
-    <string name="pt_report_delta_none" formatted="false">上周无数据</string>
+    <string name="pt_report_delta_none" formatted="true">%1$s无数据</string>
     <!-- 趣味标签：最爱歌手（%1$s 歌手名） -->
-    <string name="pt_report_fun_artist" formatted="true">🎤 本周最爱：%1$s</string>
+    <string name="pt_report_fun_artist" formatted="true">🎤 %1$s最爱：%2$s</string>
     <!-- 趣味标签：深夜听众（%1$d 小时） -->
     <string name="pt_report_fun_night" formatted="true">🌙 深夜听众：最爱在 %1$d:00 听歌</string>
     <!-- 趣味标签：日常听众（%1$d 小时） -->
     <string name="pt_report_fun_day" formatted="true">☀️ 日常听众：高频时段 %1$d:00</string>
     <!-- 趣味标签：活跃天数（%1$d 天） -->
-    <string name="pt_report_fun_active" formatted="true">📅 本周有 %1$d 天在听歌</string>
+    <string name="pt_report_fun_active" formatted="true">📅 %1$s有 %2$d 天在听歌</string>
     <!-- 页脚隐私声明 -->
     <string name="pt_report_footer" formatted="false">数据仅保存在本机 · 未上传</string>
     <!-- 生成日期（%1$s 为 yyyy-MM-dd） -->
@@ -766,4 +766,17 @@
     <string name="pt_report_theme_title" formatted="false">海报主题</string>
     <!-- 海报主题选择区说明 -->
     <string name="pt_report_theme_desc" formatted="false">选择分享海报的配色主题（浅色 / 深色 / 纯黑）</string>
+
+    <string name="pt_report_delta_period_month" formatted="false">上月</string>
+    <string name="pt_report_delta_period_week" formatted="false">上周</string>
+    <string name="pt_report_delta_period_year" formatted="false">去年</string>
+    <string name="pt_report_label_trend_month" formatted="false">每周听歌</string>
+    <string name="pt_report_label_trend_year" formatted="false">每月听歌</string>
+    <string name="pt_report_period_month" formatted="false">本月</string>
+    <string name="pt_report_period_week" formatted="false">本周</string>
+    <string name="pt_report_period_year" formatted="false">今年</string>
+    <string name="pt_report_tab_month" formatted="false">月报</string>
+    <string name="pt_report_tab_week" formatted="false">周报</string>
+    <string name="pt_report_tab_year" formatted="false">年报</string>
+    <string name="pt_report_trend_empty" formatted="false">暂无数据</string>
 </resources>

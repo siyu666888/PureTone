@@ -6,11 +6,11 @@ import com.puretone.player.data.local.dao.NamedCountRow
 import com.puretone.player.data.local.dao.TopSongRow
 
 /**
- * 听歌报告周期类型（需求4 阶段2）。
+ * 听歌报告周期类型（需求4 阶段2 定义，阶段3 全部上线）。
  *
- * 阶段2 仅上线 [WEEK]，[MONTH]/[YEAR] 的数据聚合已在同一套 `played_at BETWEEN` 查询上
- * 通用实现（见 [com.puretone.player.data.repository.StatsRepository.getReport]），
- * 阶段3 再补周期切换 UI 与月/年差异化图表（日历热力、12 月柱）。
+ * 三种周期共用同一套 `played_at BETWEEN` 聚合（见
+ * [com.puretone.player.data.repository.StatsRepository.getReport]），差异只在周期边界与
+ * 趋势分桶粒度（见 [ReportTrend]）：周 7 日柱 / 月 W1…W5 周柱 / 年 12 月柱。
  */
 enum class PeriodType {
     WEEK, MONTH, YEAR

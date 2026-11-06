@@ -48,7 +48,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.puretone.player.R
-import com.puretone.player.domain.report.ReportData
+import com.puretone.player.domain.report.PeriodType
 import com.puretone.player.data.local.dao.TopSongRow
 import com.puretone.player.ui.PlayerViewModel
 import com.puretone.player.ui.ReportFormat
@@ -59,16 +59,14 @@ import com.puretone.player.ui.report.PosterShare
 import com.puretone.player.ui.report.PosterTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 /**
- * 听歌报告页（需求4 阶段2）：周报 + 分享海报。
+ * 听歌报告页（需求4 阶段2 周报 + 阶段3 月报/年报）：周期切换 + 差异化趋势图 + 分享海报。
  *
  * 通过 [ReportFormat.toPosterContent] 一次性产出全部本地化文案，屏幕展示与分享海报
- * 共用同一份 [PosterContent]，保证口径与措辞完全一致。隐私开关（[ReportViewModel]
- * 的 [ReportUiState.statsEnabled]）关闭时仍可查看存量，但禁用「生成分享海报」并说明原因。
+ * 共用同一份 [PosterContent]，保证口径与措辞完全一致（趋势柱也共用 [PosterContent.trendBuckets]）。
+ * 隐私开关（[ReportViewModel] 的 [ReportUiState.statsEnabled]）关闭时仍可查看存量，
+ * 但禁用「生成分享海报」并说明原因。
  *
  * 复用根部下发的 [playerVm]（与 [StatsScreen] 同模式），避免重复恢复播放会话打断播放。
  */
@@ -125,7 +123,7 @@ fun ReportScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        stringResource(R.string.pt_report_empty),
+                        ReportFormat.formatEmpty(context, state.period),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -141,11 +139,12 @@ fun ReportScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
+                    PeriodSelector(selected = state.period, onSelect = vm::setPeriod)
                     if (!state.statsEnabled) {
                         ReportPrivacyBanner()
                     }
                     ReportHero(content = c)
-                    ReportTrendCard(content = c, data = data)
+                    ReportTrendCard(content = c)
                     ReportCapsules(content = c)
                     if (data.topSongs.isNotEmpty()) {
                         ReportTopSongs(content = c, songs = data.topSongs)
@@ -270,10 +269,37 @@ private fun ReportHero(content: PosterContent) {
     }
 }
 
-/** 每日听歌趋势（周报即 7 根柱 + 星期标签，高亮峰值） */
+/**
+ * 周期切换（阶段3）：周报 / 月报 / 年报。
+ * 直接接 [ReportViewModel.setPeriod]，数据层三周期分支在阶段2 已就绪。
+ */
 @Composable
-private fun ReportTrendCard(content: PosterContent, data: ReportData) {
-    val peakIdx = data.dailyTrend.withIndex()
+private fun PeriodSelector(selected: PeriodType, onSelect: (PeriodType) -> Unit) {
+    val options = listOf(
+        PeriodType.WEEK to R.string.pt_report_tab_week,
+        PeriodType.MONTH to R.string.pt_report_tab_month,
+        PeriodType.YEAR to R.string.pt_report_tab_year
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { (type, labelRes) ->
+            FilterChip(
+                selected = selected == type,
+                onClick = { onSelect(type) },
+                label = { Text(stringResource(labelRes)) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+/**
+ * 趋势图（阶段3）：柱序列与标签统一取自 [PosterContent.trendBuckets]，与分享海报同口径。
+ * 周 7 根日柱 / 月 W1…W5 周柱 / 年 12 月柱，无数据的桶已补 0。
+ */
+@Composable
+private fun ReportTrendCard(content: PosterContent) {
+    val buckets = content.trendBuckets
+    val peakIdx = buckets.withIndex()
         .filter { it.value.listenMs > 0 }
         .maxByOrNull { it.value.listenMs }?.index ?: -1
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -284,23 +310,23 @@ private fun ReportTrendCard(content: PosterContent, data: ReportData) {
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(Modifier.height(12.dp))
-            if (data.dailyTrend.all { it.listenMs == 0L }) {
+            if (buckets.all { it.listenMs == 0L }) {
                 Text(
-                    stringResource(R.string.pt_report_empty),
+                    stringResource(R.string.pt_report_trend_empty),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
                 BarChart(
-                    values = data.dailyTrend.map { it.listenMs },
+                    values = buckets.map { it.listenMs },
                     highlightIndex = peakIdx,
                     barColor = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.fillMaxWidth().height(120.dp)
                 )
                 Spacer(Modifier.height(6.dp))
                 Row(modifier = Modifier.fillMaxWidth()) {
-                    data.dailyTrend.forEach { row ->
+                    buckets.forEach { bucket ->
                         Text(
-                            weekdayLabel(row.dayKey),
+                            bucket.label,
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -407,8 +433,3 @@ private fun ThemeSelector(theme: PosterTheme, onTheme: (PosterTheme) -> Unit) {
         }
     }
 }
-
-/** day_key(yyyy-MM-dd) → 星期标签（周一..周日） */
-private fun weekdayLabel(dayKey: String): String = runCatching {
-    LocalDate.parse(dayKey).format(DateTimeFormatter.ofPattern("EEE", Locale.CHINA))
-}.getOrDefault("")

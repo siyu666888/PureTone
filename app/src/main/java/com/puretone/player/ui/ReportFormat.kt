@@ -5,6 +5,7 @@ import com.puretone.player.R
 import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.domain.report.PeriodType
 import com.puretone.player.domain.report.ReportData
+import com.puretone.player.domain.report.ReportTrend
 import com.puretone.player.ui.report.PosterContent
 import com.puretone.player.ui.report.PosterTheme
 import java.text.SimpleDateFormat
@@ -62,13 +63,33 @@ object ReportFormat {
         }
     }
 
-    /** 环比文案：上涨/下跌/持平/上周无数据 */
-    fun formatDelta(context: Context, deltaPct: Double, prevListenMs: Long): String {
-        if (prevListenMs <= 0) return context.getString(R.string.pt_report_delta_none)
+    /** 趋势区标题按周期切换：每日听歌 / 每周听歌 / 每月听歌（与分桶粒度一致） */
+    fun formatTrendTitle(context: Context, type: PeriodType): String =
+        context.getString(
+            when (type) {
+                PeriodType.WEEK -> R.string.pt_report_label_trend
+                PeriodType.MONTH -> R.string.pt_report_label_trend_month
+                PeriodType.YEAR -> R.string.pt_report_label_trend_year
+            }
+        )
+
+    /** 空态文案按周期切换，避免月/年报仍提示「这一周」 */
+    fun formatEmpty(context: Context, type: PeriodType): String =
+        context.getString(R.string.pt_report_empty, context.getString(periodWordRes(type)))
+
+    /** 环比文案：上涨/下跌/持平/上一周期无数据（周期词随 type 变化） */
+    fun formatDelta(
+        context: Context,
+        deltaPct: Double,
+        prevListenMs: Long,
+        type: PeriodType
+    ): String {
+        val prev = context.getString(deltaPeriodRes(type))
+        if (prevListenMs <= 0) return context.getString(R.string.pt_report_delta_none, prev)
         return when {
-            deltaPct > 0.5 -> context.getString(R.string.pt_report_delta_up, formatPct(deltaPct))
-            deltaPct < -0.5 -> context.getString(R.string.pt_report_delta_down, formatPct(-deltaPct))
-            else -> context.getString(R.string.pt_report_delta_flat)
+            deltaPct > 0.5 -> context.getString(R.string.pt_report_delta_up, prev, formatPct(deltaPct))
+            deltaPct < -0.5 -> context.getString(R.string.pt_report_delta_down, prev, formatPct(-deltaPct))
+            else -> context.getString(R.string.pt_report_delta_flat, prev)
         }
     }
 
@@ -78,19 +99,20 @@ object ReportFormat {
         return if (s.endsWith(".0")) s.dropLast(2) else s
     }
 
-    /** 趣味标签（可多行，用 \n 分隔） */
+    /** 趣味标签（可多行，用 \n 分隔）；阶段3 起带「本周/本月/今年」周期词，不再写死本周 */
     fun buildFunTag(context: Context, data: ReportData): String {
+        val periodWord = context.getString(periodWordRes(data.type))
         val lines = mutableListOf<String>()
         val favArtist = data.topArtists.firstOrNull()?.name
         if (favArtist != null && data.plays > 0) {
-            lines += context.getString(R.string.pt_report_fun_artist, favArtist)
+            lines += context.getString(R.string.pt_report_fun_artist, periodWord, favArtist)
         }
         if (data.peakHour >= 0) {
             if (data.isNightOwl) lines += context.getString(R.string.pt_report_fun_night, data.peakHour)
             else lines += context.getString(R.string.pt_report_fun_day, data.peakHour)
         }
         if (data.activeDays > 0) {
-            lines += context.getString(R.string.pt_report_fun_active, data.activeDays)
+            lines += context.getString(R.string.pt_report_fun_active, periodWord, data.activeDays)
         }
         return lines.joinToString("\n")
     }
@@ -112,13 +134,14 @@ object ReportFormat {
             leadText = context.getString(leadRes(data.type)),
             mainNumber = formatListenMs(context, data.listenMs),
             rangeText = formatRangeText(context, data.type, data.rangeStart, data.rangeEnd),
-            deltaText = formatDelta(context, data.deltaPct, data.prevListenMs),
+            deltaText = formatDelta(context, data.deltaPct, data.prevListenMs, data.type),
             estimateNote = if (data.hasEstimate) context.getString(R.string.pt_report_estimate) else "",
             capsulePlays = context.getString(R.string.pt_report_capsule_plays, data.plays),
             capsuleSongs = context.getString(R.string.pt_report_capsule_songs, data.distinctSongs),
             capsuleActiveDays = context.getString(R.string.pt_report_capsule_active, data.activeDays),
             topSongsTitle = context.getString(topTitleRes(data.type)),
-            trendTitle = context.getString(R.string.pt_report_label_trend),
+            trendTitle = formatTrendTitle(context, data.type),
+            trendBuckets = ReportTrend.buckets(data),
             funTag = buildFunTag(context, data),
             funTagTitle = context.getString(R.string.pt_report_label_fun),
             footer = context.getString(R.string.pt_report_footer),
@@ -136,5 +159,19 @@ object ReportFormat {
         PeriodType.WEEK -> R.string.pt_report_top_week
         PeriodType.MONTH -> R.string.pt_report_top_month
         PeriodType.YEAR -> R.string.pt_report_top_year
+    }
+
+    /** 当前周期词：本周 / 本月 / 今年（趣味标签、空态复用） */
+    private fun periodWordRes(type: PeriodType): Int = when (type) {
+        PeriodType.WEEK -> R.string.pt_report_period_week
+        PeriodType.MONTH -> R.string.pt_report_period_month
+        PeriodType.YEAR -> R.string.pt_report_period_year
+    }
+
+    /** 上一周期词：上周 / 上月 / 去年（环比文案复用） */
+    private fun deltaPeriodRes(type: PeriodType): Int = when (type) {
+        PeriodType.WEEK -> R.string.pt_report_delta_period_week
+        PeriodType.MONTH -> R.string.pt_report_delta_period_month
+        PeriodType.YEAR -> R.string.pt_report_delta_period_year
     }
 }

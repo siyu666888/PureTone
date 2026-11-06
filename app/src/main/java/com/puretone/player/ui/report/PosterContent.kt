@@ -1,6 +1,7 @@
 package com.puretone.player.ui.report
 
 import com.puretone.player.domain.report.ReportData
+import com.puretone.player.domain.report.ReportTrend
 
 /**
  * 海报主题（需求4 阶段2 6.4）。
@@ -44,8 +45,13 @@ data class PosterContent(
     val capsuleActiveDays: String,
     /** Top 歌曲区标题，如「本周最爱」 */
     val topSongsTitle: String,
-    /** 趋势区标题，如「每日听歌」 */
+    /** 趋势区标题，按周期切换：每日听歌 / 每周听歌 / 每月听歌 */
     val trendTitle: String,
+    /**
+     * 趋势柱（阶段3）：由 [ReportTrend.buckets] 一次性折好，屏幕与海报共用同一份，
+     * 避免两边分别处理日粒度导致的柱数/标签口径不一致。周 7 根 / 月 W1…W5 / 年 12 根。
+     */
+    val trendBuckets: List<ReportTrend.TrendBucket>,
     /** 趣味标签（可多行，用 \n 分隔） */
     val funTag: String,
     /** 趣味标签区标题，如「趣味标签」 */

@@ -48,7 +48,7 @@ class ReportViewModel @Inject constructor(
     private val period = MutableStateFlow(PeriodType.WEEK)
     private val refreshTick = MutableStateFlow(0L)
 
-    /** 切换周期（阶段2 仅 WEEK 可用，阶段3 扩展 MONTH/YEAR） */
+    /** 切换周期（阶段3：周报 / 月报 / 年报） */
     fun setPeriod(type: PeriodType) {
         if (period.value != type) period.value = type
     }

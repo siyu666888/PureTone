@@ -6,10 +6,6 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
-import com.puretone.player.domain.report.PeriodType
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /**
  * 听歌报告分享海报渲染器（需求4 阶段2，方案 7 方案A）。
@@ -253,22 +249,13 @@ object PosterRenderer {
         return "$s…"
     }
 
-    private fun buildBars(content: PosterContent): List<Bar> {
-        val trend = content.data.dailyTrend
-        return if (content.data.type == PeriodType.WEEK) {
-            val map = trend.associate { it.dayKey to it.listenMs }
-            val start = Instant.ofEpochMilli(content.data.rangeStart).atZone(ZoneId.systemDefault()).toLocalDate()
-            val wd = listOf("一", "二", "三", "四", "五", "六", "日")
-            (0..6).map { i ->
-                val d = start.plusDays(i.toLong())
-                val key = d.format(DateTimeFormatter.ISO_LOCAL_DATE)
-                val label = "周${wd[(d.dayOfWeek.value - 1).coerceIn(0, 6)]}"
-                Bar(map[key] ?: 0L, label)
-            }
-        } else {
-            trend.map { Bar(it.listenMs, it.dayKey.takeLast(5)) }
-        }
-    }
+    /**
+     * 阶段3：直接消费 [PosterContent.trendBuckets]。
+     * 分桶与补齐已在 [com.puretone.player.domain.report.ReportTrend] 完成，
+     * 这里不再按周期各自处理日粒度，保证屏幕与海报同图同标签。
+     */
+    private fun buildBars(content: PosterContent): List<Bar> =
+        content.trendBuckets.map { Bar(it.listenMs, it.label) }
 
     private fun List<Bar>.indexOfMaxOrNull(): Int {
         if (isEmpty()) return -1

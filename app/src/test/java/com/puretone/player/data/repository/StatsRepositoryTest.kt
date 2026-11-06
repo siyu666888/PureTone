@@ -223,4 +223,85 @@ class StatsRepositoryTest {
         assertTrue(data.isEmpty)
         assertEquals(0L, data.plays)
     }
+
+    /** 种子歌曲：报告聚合需要 JOIN songs 才能取到 Top 展示信息 */
+    private suspend fun seedSong() {
+        db.songDao().upsertAll(
+            listOf(
+                SongEntity(
+                    id = 1L, mediaStoreId = 1L, title = "SongA", artist = "ArtistX",
+                    album = "Al", albumId = 1L, duration = 200_000, path = "/a.mp3",
+                    size = 1_000L, mimeType = "audio/mpeg"
+                )
+            )
+        )
+    }
+
+    /** 在指定本地日期 01:00 插一条完整播放，dayKey 与写入口径一致 */
+    private suspend fun insertAt(zoneId: ZoneId, date: LocalDate, listenMs: Long) {
+        val playedAt = date.atStartOfDay(zoneId).toInstant().toEpochMilli() + 3_600_000L
+        db.playHistoryDao().insert(
+            PlayHistoryEntity(
+                songId = 1L,
+                playedAt = playedAt,
+                durationMs = listenMs,
+                dayKey = ReportPeriod.dayKeyFromEpoch(playedAt, zoneId),
+                playedMs = listenMs,
+                completed = 1
+            )
+        )
+    }
+
+    /** 阶段3：月报取最近一个已结束的自然月，环比窗口为上个月；进行中的本月不混入 */
+    @Test
+    fun `getReport month uses completed natural month and previous month`() = runTest {
+        val zoneId = ZoneId.of("Asia/Shanghai")
+        val now = LocalDate.of(2026, 11, 10).atTime(10, 0).atZone(zoneId).toInstant().toEpochMilli()
+        val cur = ReportPeriod.lastCompletedMonths(2, now, zoneId)[0]
+        seedSong()
+
+        insertAt(zoneId, LocalDate.of(2026, 10, 1), 30_000L)
+        insertAt(zoneId, LocalDate.of(2026, 10, 31), 70_000L)
+        insertAt(zoneId, LocalDate.of(2026, 9, 15), 50_000L)
+        // 进行中的 11 月、更早的 8 月都不属于当前月 / 上月窗口
+        insertAt(zoneId, LocalDate.of(2026, 11, 1), 999_000L)
+        insertAt(zoneId, LocalDate.of(2026, 8, 31), 888_000L)
+
+        val data = repo.getReport(PeriodType.MONTH, now, zoneId)
+
+        assertEquals(PeriodType.MONTH, data.type)
+        assertEquals(cur.start, data.rangeStart)
+        assertEquals(cur.end, data.rangeEnd)
+        assertEquals(2L, data.plays)
+        assertEquals(100_000L, data.listenMs)
+        assertEquals(50_000L, data.prevListenMs)
+        assertEquals(2, data.activeDays)
+        assertEquals(2, data.dailyTrend.size)
+        assertTrue("deltaPct=${data.deltaPct}", data.deltaPct > 99.0 && data.deltaPct < 101.0)
+    }
+
+    /** 阶段3：年报取最近一个已结束的自然年，环比窗口为上一年；进行中的本年不混入 */
+    @Test
+    fun `getReport year uses completed natural year and previous year`() = runTest {
+        val zoneId = ZoneId.of("Asia/Shanghai")
+        val now = LocalDate.of(2026, 11, 10).atTime(10, 0).atZone(zoneId).toInstant().toEpochMilli()
+        val cur = ReportPeriod.lastCompletedYears(2, now, zoneId)[0]
+        seedSong()
+
+        insertAt(zoneId, LocalDate.of(2025, 1, 1), 20_000L)
+        insertAt(zoneId, LocalDate.of(2025, 12, 31), 30_000L)
+        insertAt(zoneId, LocalDate.of(2024, 6, 1), 25_000L)
+        insertAt(zoneId, LocalDate.of(2026, 1, 1), 999_000L)
+
+        val data = repo.getReport(PeriodType.YEAR, now, zoneId)
+
+        assertEquals(PeriodType.YEAR, data.type)
+        assertEquals(cur.start, data.rangeStart)
+        assertEquals(cur.end, data.rangeEnd)
+        assertEquals(2L, data.plays)
+        assertEquals(50_000L, data.listenMs)
+        assertEquals(25_000L, data.prevListenMs)
+        assertEquals(2, data.activeDays)
+        assertTrue("deltaPct=${data.deltaPct}", data.deltaPct > 99.0 && data.deltaPct < 101.0)
+    }
 }
