@@ -1,30 +1,9 @@
 package com.puretone.player.ui.screens
+
 import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
-
-import android.animation.ValueAnimator
 import android.net.Uri
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedContentTransitionScope
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationVector1D
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.SpringSpec
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,8 +11,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -43,22 +20,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.DragHandle
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.filled.CastConnected
-import androidx.compose.material.icons.automirrored.filled.VolumeOff
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.outlined.Cast
 import androidx.compose.material.icons.outlined.Equalizer
-import androidx.compose.material.icons.rounded.AddCircleOutline
-import androidx.compose.material.icons.rounded.RemoveCircleOutline
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -67,7 +34,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -75,33 +41,19 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
-import coil.compose.AsyncImage
-import com.puretone.player.lyrics.ParsedLyrics
-import com.puretone.player.playback.QueueEntry
 import com.puretone.player.playback.toPlayMode
 import com.puretone.player.ui.MetadataViewModel
 import com.puretone.player.ui.PlayerViewModel
@@ -111,18 +63,6 @@ import com.puretone.player.ui.components.ControlIcons
 import com.puretone.player.ui.components.FavoriteButton
 import com.puretone.player.ui.components.PlayModeIconButton
 import com.puretone.player.ui.components.PlayPauseButton
-import com.puretone.player.ui.components.PlaybackProgressBar
-import com.puretone.player.ui.components.derivePlaybackState
-import com.puretone.player.ui.components.SongRow
-import com.puretone.player.ui.components.formatTime
-import com.puretone.player.ui.components.DefaultCover
-import com.puretone.player.ui.components.VinylCenterLabel
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlin.math.abs
-import kotlin.math.roundToInt
-import kotlin.math.tanh
 
 /** 全屏播放页（Item 1/2/3：布局重构 + 封面翻转歌词 + 视差切歌） */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -139,7 +79,7 @@ fun PlayerScreen(
     val favorite by vm.favorite.collectAsStateWithLifecycle()
     val currentSong by vm.currentSong.collectAsStateWithLifecycle()
     val castState by vm.castState.collectAsStateWithLifecycle()
-    val followPhoneVolume by vm.castVolumeFollowPhone.collectAsStateWithLifecycle()
+    val castActive = castState.isCasting || castState.isPreparing
     val entry = state.currentEntry
     var showQueue by remember { mutableStateOf(false) }
     var showInfo by remember { mutableStateOf(false) }
@@ -164,7 +104,13 @@ fun PlayerScreen(
         contentWindowInsets = WindowInsets(0),
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.pt_player_001)) },
+                title = {
+                    Text(
+                        stringResource(R.string.pt_player_001),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                },
                 windowInsets = WindowInsets(0),
                 navigationIcon = {
                     IconButton(onClick = navController::popBackStack) {
@@ -172,17 +118,17 @@ fun PlayerScreen(
                     }
                 },
                 actions = {
-                    // M1：投屏入口。投屏进行中显示「已连接」图标，点击仍打开设备选择（可换设备/停止）。
-                    IconButton(onClick = { showCastPicker = true }) {
-                        Icon(
-                            if (castState.isCasting) Icons.Filled.CastConnected else Icons.Outlined.Cast,
-                                contentDescription = if (castState.isCasting) stringResource(R.string.pt_player_003)
-                                    else stringResource(R.string.pt_player_004)
-                        )
+                    // 投屏态隐藏右上角入口：连接状态已由正文的状态胶囊合并承担，
+                    // 换设备改从「设备详情」二级页进入，避免两处图标语义重复。
+                    if (!castActive) {
+                        IconButton(onClick = { showCastPicker = true }) {
+                            Icon(
+                                Icons.Outlined.Cast,
+                                contentDescription = stringResource(R.string.pt_player_004)
+                            )
+                        }
                     }
                 }
-                // 右上角三个功能按钮已按建议移除：均衡器→进度条上方左侧，
-                // 歌词→封面翻转，播放队列→底部右侧按钮。
             )
         }
     ) { padding ->
@@ -200,9 +146,16 @@ fun PlayerScreen(
 
         // 投屏态（isCasting / isPreparing）：正文整体切换为遥控器面板，手机只做远程控制；
         // 否则仍展示本地播放器。两者互斥，避免「本地封面 + 投屏状态卡」叠在一起的混乱。
-        if (castState.isCasting || castState.isPreparing) {
+        if (castActive) {
+            // 投屏期只有遥控页需要逐帧进度：在这个分支内收集，别把整屏拖进 2Hz 重组（P2-10）。
+            // 它与播放页 / 迷你条 / 通知栏读的是同一份 uiState（已镜像电视轮询 + 外推），
+            // 不再各自直读 1Hz 的 castState.progressMs，避免三处进度互相对不上。
+            val castPositionMs by vm.positionMs.collectAsStateWithLifecycle()
+            val castDurationMs = state.durationMs.takeIf { it > 0L } ?: (entry?.durationMs ?: 0L)
             CastRemoteControlPanel(
                 castState = castState,
+                positionMs = castPositionMs,
+                durationMs = castDurationMs,
                 title = displayTitle,
                 artist = displayArtist,
                 coverUri = displayCover,
@@ -213,6 +166,7 @@ fun PlayerScreen(
                 onPrev = vm::prev,
                 onNext = vm::next,
                 onDisconnect = vm::stopCast,
+                onPickDevice = { showCastPicker = true },
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
         } else {
@@ -261,124 +215,6 @@ fun PlayerScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
-
-            // M1/M2：投屏状态条——投屏中显示当前设备名并支持一键停止；设备名/错误随 castState 实时刷新。
-            // M2 补充：APE 等需转码的格式在真正投出去之前有一段时间 isCasting 仍为 false
-            // （isPreparing=true），此阶段同样要显示状态条，否则用户会以为点了没反应。
-            if (castState.isCasting || castState.isPreparing) {
-                // 投射音量（M3）：仅真正投出去后（isCasting）才允许调；转码准备期渲染器尚无媒体。
-                // 本地 castVol 与 castState.castVolume 双向同步：拖动写本地并下发，
-                // 渲染器回写状态后（LaunchedEffect）再同步回来，避免二者分叉。
-                var castVol by remember { mutableFloatStateOf(castState.castVolume / 100f) }
-                LaunchedEffect(castState.castVolume) { castVol = castState.castVolume / 100f }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        if (castState.isPreparing) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(
-                                Icons.Filled.CastConnected,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                if (castState.isPreparing) {
-                                    stringResource(R.string.pt_player_006)
-                                } else {
-                                    stringResource(R.string.pt_player_007, castState.deviceName ?: "设备")
-                                },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            if (castState.isPreparing) {
-                                Text(
-                                    stringResource(R.string.pt_player_008, castState.deviceName ?: "设备"),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            if (castState.error != null) {
-                                Text(
-                                    castState.error ?: "",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-                        TextButton(onClick = vm::stopCast) {
-                                Text(
-                                    if (castState.isPreparing) stringResource(R.string.pt_player_010)
-                                    else stringResource(R.string.pt_player_011)
-                                )
-                        }
-                    }
-                        if (castState.isCasting && castState.volumeSupported == false) {
-                            // 渲染器没有 RenderingControl 服务（设备描述里就没有，
-                            // 不是靠某次回读猜的）：如实提示用遥控器，别给假滑块。
-                            Text(
-                                stringResource(R.string.pt_player_036),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.fillMaxWidth()
-                                    .padding(start = 16.dp, end = 16.dp, bottom = 10.dp)
-                            )
-                        }
-                        if (castState.isCasting && castState.volumeSupported != false) {
-                            // 投射音量：始终提供 App 内滑块作为可靠控制。
-                            // 蓝牙绝对音量场景下手机音量键会被蓝牙设备截走、到不了 MediaSession，
-                            // 滑块是与设备无关的保底；开启「跟随手机音量」时再附一行提示。
-                            Row(
-                                modifier = Modifier.fillMaxWidth()
-                                    .padding(start = 16.dp, end = 16.dp, bottom = if (followPhoneVolume) 4.dp else 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                val volIcon = if (castVol <= 0f) {
-                                    Icons.AutoMirrored.Filled.VolumeOff
-                                } else {
-                                    Icons.AutoMirrored.Filled.VolumeUp
-                                }
-                                Icon(
-                                    volIcon,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Slider(
-                                    value = castVol,
-                                    onValueChange = {
-                                        castVol = it
-                                        vm.setCastVolume((it * 100).roundToInt())
-                                    },
-                                    valueRange = 0f..1f,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    stringResource(R.string.pt_player_035, (castVol * 100).roundToInt()),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            if (followPhoneVolume) {
-                                Text(
-                                    stringResource(R.string.pt_player_042),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.fillMaxWidth()
-                                        .padding(start = 16.dp, end = 16.dp, bottom = 10.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
 
             if (state.isTranscoding) {
                 Row(
@@ -588,7 +424,7 @@ fun PlayerScreen(
                 }
             }
         }
-        }  // 关闭本地播放器 Column 的 else 分支
+        }  // 关闭播放队列浮层 if (showQueue)
     }
 
     // 歌曲信息浮层（长按封面唤起；含查看/编辑 + 联网匹配）
@@ -601,582 +437,3 @@ fun PlayerScreen(
         )
     }
 }
-
-/**
- * 进度条 + 起止时间标签（P2-10）。
- *
- * positionMs 是 2Hz 高频字段，收集放在本组件内部：重组范围被限制在进度条这一小块，
- * 而旧实现在 PlayerScreen 根部收集整个 state，导致封面/按钮/队列每 500ms 跟着重组一遍。
- */
-@Composable
-private fun ProgressSection(vm: PlayerViewModel, durationMs: Long) {
-    val positionMs by vm.positionMs.collectAsStateWithLifecycle()
-    val discrete by vm.discreteState.collectAsStateWithLifecycle()
-    val duration = durationMs.coerceAtLeast(1L)
-    val position = positionMs.coerceAtMost(durationMs)
-    val playbackState = derivePlaybackState(
-        isPlaying = discrete.isPlaying,
-        isPreparing = discrete.isBuffering || discrete.isTranscoding,
-        positionMs = position,
-        durationMs = durationMs
-    )
-    PlaybackProgressBar(
-        playedFraction = (position.toFloat() / duration).coerceIn(0f, 1f),
-        durationMs = durationMs,
-        playbackState = playbackState,
-        onSeek = vm::seek,
-        modifier = Modifier.fillMaxWidth()
-    )
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(formatTime(position), style = MaterialTheme.typography.labelMedium)
-        Text(formatTime(durationMs), style = MaterialTheme.typography.labelMedium)
-    }
-}
-
-/**
- * 可滑动 + 可翻转封面：
- * - 上滑/下滑切歌：拖动带阻尼（tanh），当前封面随拖动缩小淡出，过阈值切歌；
- *   切歌时新封面从对应方向滑入并放大（AnimatedContent 视差过渡，与拖动方向一致），
- *   松手后容器位移以同时长补间归位，避免瞬移跳变，GPU 硬件加速；
- * - 单击（延迟 300ms 与双击区分）→ 3D 翻转显示背面歌词，再点翻回；
- * - 双击 → 播放 / 暂停；长按 → 唤起歌曲信息弹窗。
- */
-@Composable
-private fun SwipeableCover(
-    entry: QueueEntry,
-    isPlaying: Boolean,
-    onSwipePrev: () -> Unit,
-    onSwipeNext: () -> Unit,
-    onDoubleTap: () -> Unit,
-    onLongPress: () -> Unit,
-    backContent: @Composable () -> Unit,
-    modifier: Modifier = Modifier,
-    // P0-8：Room 实时封面（编辑/匹配后刷新）；null 时用 entry 快照里的封面
-    coverOverride: Uri? = null,
-    // P2-4：翻转态提升到调用方——播放页需要「歌词」可见按钮与封面翻转共享同一状态
-    flipped: Boolean = false,
-    onFlippedChange: (Boolean) -> Unit = {}
-) {
-    val density = LocalDensity.current
-    val scope = rememberCoroutineScope()
-    val springBack = SpringSpec<Float>(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow)
-    val offsetAnim = remember { Animatable(0f) }
-    var dragAccum by remember { mutableFloatStateOf(0f) }
-    // 切歌方向：>0 下一首（向上滑），<0 上一首（向下滑）；决定 AnimatedContent 过渡方向
-    var swipeDir by remember { mutableIntStateOf(1) }
-
-    // CD 旋转角：播放时匀速持续旋转，暂停即停（保留当前角度），切歌不重置。
-    // 该 Animatable 位于 SwipeableCover 作用域，跨 entry 变化保持同一实例。
-    val discAngle = remember { Animatable(0f) }
-    // P1-10：页面退后台（ON_PAUSE）时停转，避免不可见状态下持续产出 frame 耗电；
-    // 导航离开本页时组合已被销毁，效果天然取消。
-    var foreground by remember { mutableStateOf(true) }
-    LifecycleResumeEffect(Unit) {
-        foreground = true
-        onPauseOrDispose { foreground = false }
-    }
-    LaunchedEffect(isPlaying, flipped, foreground) {
-        // 尊重系统「移除动画」设置（开发者选项「动画程序时长缩放」关闭 /
-        // 省电模式可全局关闭动画）：关闭时停转，仅展示静态封面。
-        // Compose 动画不受该开关影响，故此处显式判断（切换设置后下次
-        // 播放态变化/翻面/前后台切换时生效）。
-        if (isPlaying && !flipped && foreground && ValueAnimator.areAnimatorsEnabled()) {
-            while (true) {
-                discAngle.animateTo(
-                    targetValue = discAngle.value + 360f,
-                    animationSpec = tween(durationMillis = 14000, easing = LinearEasing)
-                )
-            }
-        }
-    }
-
-    val rotation by animateFloatAsState(
-        targetValue = if (flipped) 180f else 0f,
-        animationSpec = tween(550),
-        label = "CoverFlip"
-    )
-
-    val maxDrag = with(density) { 240.dp.toPx() }
-    // P2-4：阈值按 dp 声明再换算成像素——旧实现是裸 90f 像素，
-    // 在 320dpi 设备上仅约 29dp，与 160dpi 设备手感差异巨大
-    val swipeThreshold = with(density) { 90.dp.toPx() }
-    // 阻尼函数：越拖位移增量越小，产生"拉橡皮筋"手感
-    fun damp(drag: Float): Float = maxDrag * tanh(drag / maxDrag)
-    val damped = damp(dragAccum + offsetAnim.value)
-    val progress = (damped / maxDrag).coerceIn(-1f, 1f)
-    val cardScale = 1f - 0.12f * abs(progress)
-    val cardAlpha = 1f - 0.55f * abs(progress)
-
-    fun endDrag(total: Float) {
-        // 过阈值切歌：容器位移从当前阻尼位置以与过渡同时长的补间归位，
-        // 与 AnimatedContent 的滑入/滑出衔接，避免瞬移跳变
-        val settle = {
-            scope.launch {
-                offsetAnim.snapTo(damp(total))
-                offsetAnim.animateTo(0f, tween(380))
-            }
-        }
-        if (total > swipeThreshold) {
-            swipeDir = -1
-            dragAccum = 0f
-            settle()
-            onSwipePrev()
-        } else if (total < -swipeThreshold) {
-            swipeDir = 1
-            dragAccum = 0f
-            settle()
-            onSwipeNext()
-        } else {
-            // 未过阈值：从阻尼位移弹回中线
-            scope.launch {
-                dragAccum = 0f
-                offsetAnim.snapTo(damp(total))
-                offsetAnim.animateTo(0f, springBack)
-            }
-        }
-    }
-
-    AnimatedContent(
-        targetState = entry,
-        transitionSpec = {
-            // 上滑切下一首：新封面自底部滑入、旧封面向上滑出；下滑相反，与手势方向一致
-            val dir = if (swipeDir >= 0) AnimatedContentTransitionScope.SlideDirection.Up
-            else AnimatedContentTransitionScope.SlideDirection.Down
-            (slideIntoContainer(dir, tween(380)) + fadeIn(tween(320)) +
-                scaleIn(tween(380), initialScale = 0.82f)) togetherWith
-                (slideOutOfContainer(dir, tween(380)) + fadeOut(tween(300)) +
-                    scaleOut(tween(380), targetScale = 0.82f))
-        },
-        label = "CoverParallax",
-        modifier = modifier
-            .aspectRatio(1f)
-            .graphicsLayer {
-                translationY = damped
-                scaleX = cardScale
-                scaleY = cardScale
-                alpha = cardAlpha
-                rotationY = rotation
-                cameraDistance = 18f * density.density
-            }
-            .clip(RoundedCornerShape(24.dp))
-    ) { e ->
-        // 正/背面按翻转态排序：交互面始终置于最上层，避免透明背面抢占手势
-        Box(Modifier.fillMaxSize()) {
-            if (flipped) {
-                // 已翻转：封面退到背后（不再交互），歌词面朝上（可滚动 / 点按翻回）
-                CoverFace(
-                    entry = e,
-                    discAngle = discAngle,
-                    coverAlpha = if (rotation <= 90f) 1f else 0f,
-                    interactive = false,
-                    onSingleTap = {}, onDoubleTap = {}, onLongPress = {},
-                    onDragDelta = {}, onDragEnd = {},
-                    coverOverride = coverOverride
-                )
-                LyricsBackFace(
-                    backAlpha = if (rotation > 90f) 1f else 0f,
-                    onTapFlipBack = { onFlippedChange(false) },
-                    content = backContent
-                )
-            } else {
-                // 未翻转：歌词面垫底（透明），封面朝上并接管全部手势
-                LyricsBackFace(
-                    backAlpha = if (rotation > 90f) 1f else 0f,
-                    onTapFlipBack = { onFlippedChange(false) },
-                    content = backContent
-                )
-                CoverFace(
-                    entry = e,
-                    discAngle = discAngle,
-                    coverAlpha = if (rotation <= 90f) 1f else 0f,
-                    interactive = true,
-                    onSingleTap = { onFlippedChange(true) },
-                    onDoubleTap = onDoubleTap,
-                    onLongPress = onLongPress,
-                    onDragDelta = { total -> dragAccum = total.coerceIn(-maxDrag, maxDrag) },
-                    onDragEnd = { total -> endDrag(total) },
-                    coverOverride = coverOverride
-                )
-            }
-        }
-    }
-}
-
-/**
- * 封面正面：展示专辑封面，并在 [interactive] 为 true 时接管
- * 单击(翻转) / 双击(播放暂停) / 长按(歌曲信息) / 垂直拖动(切歌) 手势。
- * 手势合并为单一 awaitEachGesture，避免多个 pointerInput 相互抢占。
- * 拖动方向约定：上滑=下一首，下滑=上一首（位移累加为负=上滑）。
- */
-@Composable
-private fun CoverFace(
-    entry: QueueEntry,
-    discAngle: Animatable<Float, AnimationVector1D>,
-    coverAlpha: Float,
-    interactive: Boolean,
-    onSingleTap: () -> Unit,
-    onDoubleTap: () -> Unit,
-    onLongPress: () -> Unit,
-    onDragDelta: (Float) -> Unit,
-    onDragEnd: (Float) -> Unit,
-    // P0-8：Room 实时封面（编辑/匹配后刷新）；null 时用 entry 快照封面
-    coverOverride: Uri? = null
-) {
-    val scope = rememberCoroutineScope()
-    var lastTapTime by remember { mutableLongStateOf(0L) }
-    val tapJob = remember { mutableStateOf<Job?>(null) }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .graphicsLayer { alpha = coverAlpha }
-            .then(
-                if (interactive) {
-                    Modifier.pointerInput(entry.songId) {
-                        val slop = viewConfiguration.touchSlop
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            down.consume()
-                            var dragY = 0f
-                            var dragging = false
-                            var longPressed = false
-                            val longPressJob = scope.launch {
-                                delay(500L)
-                                longPressed = true
-                                onLongPress()
-                            }
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                if (!change.pressed) {
-                                    longPressJob.cancel()
-                                    when {
-                                        dragging -> onDragEnd(dragY)
-                                        !longPressed -> {
-                                            val now = android.os.SystemClock.uptimeMillis()
-                                            if (now - lastTapTime < 300L) {
-                                                tapJob.value?.cancel()
-                                                lastTapTime = 0L
-                                                onDoubleTap()
-                                            } else {
-                                                lastTapTime = now
-                                                tapJob.value?.cancel()
-                                                tapJob.value = scope.launch {
-                                                    delay(300L)
-                                                    onSingleTap()
-                                                }
-                                            }
-                                        }
-                                    }
-                                    break
-                                }
-                                val dy = change.position.y - change.previousPosition.y
-                                if (!dragging && abs(change.position.y - down.position.y) > slop) {
-                                    dragging = true
-                                    longPressJob.cancel()
-                                }
-                                if (dragging) {
-                                    dragY += dy
-                                    onDragDelta(dragY)
-                                    change.consume()
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    Modifier
-                }
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        // CD 唱片：深色盘体外圈 + 圆形封面 + 中心孔；播放时整体随 discAngle 匀速旋转
-        val scheme = MaterialTheme.colorScheme
-        // 圆形专辑封面（优先 Room 实时封面——P0-8）。
-        // 提到旋转层之外，因为下方不旋转的中心标签需要判断「有无封面」来决定是否印音符。
-        val coverModel = coverOverride ?: entry.coverUri
-        Box(
-            modifier = Modifier
-                .fillMaxSize(0.96f)
-                .graphicsLayer { rotationZ = discAngle.value },
-            contentAlignment = Alignment.Center
-        ) {
-            // 盘体
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(CircleShape)
-                    .background(Color(0xFF161616))
-            )
-            // 内圈细高光，模拟唱片纹路
-            Box(
-                modifier = Modifier
-                    .fillMaxSize(0.93f)
-                    .clip(CircleShape)
-                    .border(1.dp, Color.White.copy(alpha = 0.10f), CircleShape)
-            )
-            // 圆形专辑封面（优先 Room 实时封面——P0-8）
-            if (coverModel != null) {
-                AsyncImage(
-                    model = coverModel,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(0.86f).clip(CircleShape),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                // P2-4：无封面时旧实现渲染纯灰圆盘 + 小黑点，观感像加载失败。
-                // 改为品牌渐变盘体 + 黑胶纹路，任何主题下都像"设计如此"。
-                // 2026-11-02：统一改为 DefaultCover 组件（固定品牌紫渐变，与其余
-                // 10 处无封面回退完全一致）；vinyl 模式只画旋转对称的盘面，
-                // 中心标签（带音符）另画在下方不旋转的图层上。
-                DefaultCover(
-                    modifier = Modifier.fillMaxSize(0.86f),
-                    shape = CircleShape,
-                    vinyl = true,
-                )
-            }
-        }
-
-        // 中心标签（深色贴纸 + 轴孔 + 音符）。
-        //
-        // 必须画在**不随唱片旋转**的图层上：唱片播放时持续旋转，若标签跟着转，
-        // 偏心的音符会转到任意角度，看着像渲染 bug。固定标签、只转盘面最稳。
-        // 真封面时也用同一套标签（glyph = null），与无封面时观感一致。
-        Box(
-            modifier = Modifier.fillMaxSize(0.22f),
-            contentAlignment = Alignment.Center,
-        ) {
-            VinylCenterLabel(
-                modifier = Modifier.fillMaxSize(),
-                glyph = if (coverModel == null) Icons.Rounded.MusicNote else null,
-            )
-        }
-    }
-}
-
-/** 封面背面：预旋转 180°，随容器翻转正面朝观众；点按翻回封面（仅朝上时可交互） */
-@Composable
-private fun LyricsBackFace(
-    backAlpha: Float,
-    onTapFlipBack: () -> Unit,
-    content: @Composable () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-            .graphicsLayer {
-                rotationY = 180f
-                alpha = backAlpha
-            }
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = { onTapFlipBack() })
-            }
-    ) {
-        content()
-    }
-}
-
-/**
- * 封面背面歌词页：字号调节 + 高亮当前行并「上下居中悬浮」显示。
- *
- * 居中悬浮方案：歌词区上下各留 (区域高 - 行高)/2 的对称内边距，使当前高亮行始终
- * 停在歌词区的垂直中线；前/后歌词随播放位置从两侧平滑流过（animateScrollToItem
- * 自带过渡），当前行切换时自动滚动到新行的中心。保留原交互：用户手动拖动浏览
- * 歌词后，自动居中避让 4 秒，避免强制拉回打断阅读。
- */
-@Composable
-private fun LyricsFace(
-    lyrics: ParsedLyrics?,
-    positionMs: Long,
-    fontSizeSp: Int,
-    onFontSize: (Int) -> Unit
-) {
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            ControlIconButton(
-                icon = Icons.Rounded.RemoveCircleOutline,
-                contentDescription = stringResource(R.string.pt_player_023),
-                onClick = { onFontSize((fontSizeSp - 2).coerceAtLeast(12)) },
-                buttonSize = 48.dp,
-                iconSize = 18.dp
-            )
-            Text(stringResource(R.string.pt_player_015), style = MaterialTheme.typography.titleMedium)
-            ControlIconButton(
-                icon = Icons.Rounded.AddCircleOutline,
-                contentDescription = stringResource(R.string.pt_player_024),
-                onClick = { onFontSize((fontSizeSp + 2).coerceAtMost(30)) },
-                buttonSize = 48.dp,
-                iconSize = 18.dp
-            )
-        }
-        if (lyrics == null || lyrics.lines.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    stringResource(R.string.pt_player_025),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            }
-            return
-        }
-
-        val currentIndex = lyrics.lineIndexAt(positionMs)
-        val listState = rememberLazyListState()
-        // 歌词区实际高度（px）：用于计算上下对称内边距，把当前行精确居中
-        var areaHeightPx by remember { mutableStateOf(0) }
-        // 估算单行高度（px）= 字号(sp, 含系统字体缩放) + 上下各 6.dp 内边距，
-        // 作为居中内边距与行高的近似
-        val density = LocalDensity.current
-        val lineHeightPx = with(density) { ((fontSizeSp * fontScale + 12).dp).toPx() }
-        val halfPadDp = with(density) {
-            ((areaHeightPx - lineHeightPx) / 2f).coerceAtLeast(0f).toDp()
-        }
-
-        // 用户手动滚动歌词后，自动居中避让几秒（沿用原交互逻辑）
-        var userScrollPauseUntil by remember { mutableLongStateOf(0L) }
-        LaunchedEffect(listState) {
-            listState.interactionSource.interactions.collect { interaction ->
-                if (interaction is DragInteraction.Start) {
-                    userScrollPauseUntil = android.os.SystemClock.uptimeMillis() + 4_000L
-                }
-            }
-        }
-        // 当前行变化时平滑滚动到该行中心；处于手动浏览窗口内则不打断
-        LaunchedEffect(currentIndex, areaHeightPx) {
-            if (currentIndex < 0) return@LaunchedEffect
-            if (android.os.SystemClock.uptimeMillis() < userScrollPauseUntil) return@LaunchedEffect
-            listState.animateScrollToItem(currentIndex)
-        }
-
-        Box(modifier = Modifier.fillMaxSize().onSizeChanged { areaHeightPx = it.height }) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(vertical = halfPadDp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                items(lyrics.lines.size) { i ->
-                    Text(
-                        text = lyrics.lines[i].text,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = fontSizeSp.sp),
-                        color = if (i == currentIndex) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        },
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(vertical = 6.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * 播放队列行（P2-4）。
- *
- * 旧实现为复用 [SongRow] 而构造 `album=""` 的假 SongEntity：副标题出现
- * "artist · " 尾点，媒体类型/封面等字段也都是凑数的；且队列不标当前曲、
- * 不能移除单曲。这里直接基于 [QueueEntry] 渲染——当前曲整行高亮 +
- * 「正在播放」标注，行尾移除按钮。
- */
-@Composable
-private fun QueueRow(
-    entry: QueueEntry,
-    isCurrent: Boolean,
-    onClick: () -> Unit,
-    onRemove: () -> Unit,
-    modifier: Modifier = Modifier,
-    dragHandle: Modifier = Modifier
-) {
-    val scheme = MaterialTheme.colorScheme
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(if (isCurrent) scheme.primaryContainer else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(8.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            if (entry.coverUri != null) {
-                AsyncImage(
-                    model = entry.coverUri,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                // 无封面：显示默认海报
-                DefaultCover(
-                    modifier = Modifier.fillMaxSize(),
-                    shape = RoundedCornerShape(8.dp),
-                )
-            }
-        }
-
-        Spacer(Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                entry.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = if (isCurrent) scheme.primary else Color.Unspecified,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                entry.artist,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-
-        if (isCurrent) {
-            Text(
-                stringResource(R.string.pt_player_001),
-                style = MaterialTheme.typography.labelSmall,
-                color = scheme.primary,
-                modifier = Modifier.padding(end = 4.dp)
-            )
-        }
-        if (entry.isApe) {
-            Text(
-                "APE",
-                style = MaterialTheme.typography.labelSmall,
-                color = scheme.primary,
-                modifier = Modifier.padding(end = 8.dp)
-            )
-        }
-        IconButton(onClick = onRemove) {
-            Icon(
-                Icons.Rounded.RemoveCircleOutline,
-                contentDescription = stringResource(R.string.pt_player_026),
-                tint = scheme.onSurfaceVariant
-            )
-        }
-        IconButton(onClick = {}, modifier = dragHandle) {
-            Icon(
-                Icons.Rounded.DragHandle,
-                contentDescription = stringResource(R.string.pt_player_027),
-                tint = scheme.onSurfaceVariant.copy(alpha = 0.55f)
-            )
-        }
-    }
-}
-

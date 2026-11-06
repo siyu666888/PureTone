@@ -24,7 +24,7 @@ internal class PlaybackAudioFocus(
     private val isCrossfading: () -> Boolean,
     /** 投屏态：声音在电视上，手机侧不参与焦点（问题2 修复） */
     private val isCasting: () -> Boolean
-) : AudioFocusPort {
+) : AudioFocusPort, CastSessionFocusPort {
 
     private val controller = AudioFocusController(context, ::handle)
 
@@ -32,7 +32,7 @@ internal class PlaybackAudioFocus(
     fun request(): Boolean = controller.request()
 
     /** 放弃焦点（暂停 / 停止 / 服务解绑） */
-    fun abandon() = controller.abandon()
+    override fun abandon() = controller.abandon()
 
     /**
      * 播放态变化入口：跟着「真的在发声」申请/放弃焦点。

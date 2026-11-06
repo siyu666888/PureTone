@@ -7,6 +7,7 @@ import androidx.media3.session.MediaSession
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.playback.cast.CastDevice
 import com.puretone.player.playback.cast.CastNetworkLog
+import com.puretone.player.playback.cast.CastProgressPolicy
 import com.puretone.player.playback.cast.CastQueueSink
 import com.puretone.player.playback.cast.CastResult
 import com.puretone.player.playback.cast.CastResumePolicy
@@ -37,8 +38,8 @@ import java.util.concurrent.atomic.AtomicLong
  */
 @OptIn(UnstableApi::class)
 internal class CastSessionController(
-    private val dlnaCast: DlnaCastManager,
-    private val playbackFocus: PlaybackAudioFocus,
+    private val dlnaCast: CastSessionCastPort,
+    private val playbackFocus: CastSessionFocusPort,
     private val uiState: MutableStateFlow<PlaybackUiState>,
     private val scope: CoroutineScope,
     private val playerProvider: () -> ExoPlayer?,
@@ -54,6 +55,16 @@ internal class CastSessionController(
 
     private companion object {
         const val TAG = "CastSessionController"
+
+        /**
+         * 外推锚点的最长可用时长（毫秒）。
+         *
+         * 锚点由 1Hz 轮询刷新，正常间隔约 1000ms。拖动进度的乐观窗口里镜像被挂起，
+         * 锚点会变旧；窗口结束后若继续用「旧锚点 + 累积墙钟」外推，会瞬间把进度条
+         * 推到一个根本没播到的位置，再被下一帧轮询拉回——用户看到的就是「跳一下」。
+         * 锚点过旧宁可停一帧不写，等下一次轮询重设。
+         */
+        const val PROJECTION_ANCHOR_MAX_AGE_MS = 1_500L
     }
 
     /** 投屏态的 MediaSession 门面。在 bind 时按当前 player 重建（player 换了就要换包装） */
@@ -100,11 +111,19 @@ internal class CastSessionController(
                         anchorMs.set(st.progressMs.coerceAtLeast(0L))
                         anchorWallMs.set(System.currentTimeMillis())
                     }
-                    uiState.update {
-                        it.copy(
+                    uiState.update { current ->
+                        // 渲染器只回 RelTime、不回 TrackDuration 是常态（真机 185000/0）。
+                        // 总时长退到本地已知值；本地播放器若从未起播过（冷启动直接投屏），
+                        // 再退到队列条目里 Room 记录的时长，否则进度条会整个没有刻度。
+                        current.copy(
                             isPlaying = st.isPlaying,
-                            positionMs = if (mirror) anchorMs.get() else it.positionMs,
-                            durationMs = if (mirror && st.durationMs > 0L) st.durationMs else it.durationMs
+                            positionMs = if (mirror) anchorMs.get() else current.positionMs,
+                            durationMs = CastProgressPolicy.displayDurationMs(
+                                rendererDurationMs = st.durationMs,
+                                mirrorRenderer = mirror,
+                                uiDurationMs = current.durationMs,
+                                entryDurationMs = current.currentEntry?.durationMs
+                            )
                         )
                     }
                 }
@@ -128,9 +147,9 @@ internal class CastSessionController(
                     System.currentTimeMillis() >= dlnaCast.progressHoldUntilMs
                 if (!mirror) continue
                 val elapsed = System.currentTimeMillis() - anchorWallMs.get()
-                if (elapsed <= 0) continue
-                val projected = (anchorMs.get() + elapsed)
-                    .coerceAtMost(if (st.durationMs > 0L) st.durationMs else Long.MAX_VALUE)
+                if (!CastProgressPolicy.isAnchorFresh(elapsed, PROJECTION_ANCHOR_MAX_AGE_MS)) continue
+                val cap = CastProgressPolicy.projectionCapMs(st.durationMs, uiState.value.durationMs)
+                val projected = (anchorMs.get() + elapsed).coerceAtMost(cap)
                 uiState.update { it.copy(positionMs = projected) }
             }
         }
@@ -228,7 +247,7 @@ internal class CastSessionController(
             val target = CastResumePolicy.takeOverPositionMs(snapshot, localDuration)
             // 真机复测抓手：一眼看出是「接管电视进度」还是「设备没给进度、保持本地」
             CastNetworkLog.log(
-                "cast-resume takeOver=${target ?: "keep-local"} " +
+                "cast-resume source=ui-disconnect takeOver=${target ?: "keep-local"} " +
                     "tv=${snapshot.progressMs}/${snapshot.durationMs} " +
                     "progressKnown=${snapshot.hasProgressInfo} localDuration=$localDuration"
             )
@@ -245,6 +264,8 @@ internal class CastSessionController(
      * 分支去命令渲染器播放，而渲染器已经不可用了。
      */
     internal suspend fun fallbackToLocalPlayback(reason: String) {
+        // 与「用户点断开」区分开：这条才是被动失去投屏（设备离线 / 流错误 / 重投失败）。
+        CastNetworkLog.log("cast-fallback reason=$reason")
         try {
             dlnaCast.stopCast()
         } catch (e: Exception) {
@@ -266,6 +287,9 @@ internal class CastSessionController(
      * [next] 内部已带重投（本地推进后调 recastCurrentIfCasting），故这里不再单独投送。
      */
     override fun onCastTrackEnded() {
+        // 曲末决策的落地证据：看到这一行说明策略判定为「播完」并已推进队列；
+        // 只有 own-state STOPPED 却没有它，说明又卡在判据上（见 CastQueuePolicy）。
+        CastNetworkLog.log("cast-track-ended advance=1")
         next()
     }
 
@@ -284,6 +308,21 @@ internal class CastSessionController(
 
     override val castState: CastState
         get() = dlnaCast.state.value
+
+    /** 对外进度/时长统一取自 uiState：它已镜像电视轮询，并叠加外推与乐观窗口 */
+    override val displayPositionMs: Long
+        get() = uiState.value.positionMs
+
+    override val displayDurationMs: Long
+        get() {
+            val ui = uiState.value
+            return CastProgressPolicy.displayDurationMs(
+                rendererDurationMs = 0L,
+                mirrorRenderer = false,
+                uiDurationMs = ui.durationMs,
+                entryDurationMs = ui.currentEntry?.durationMs
+            )
+        }
 
     override val castVolumeFollowPhone: Boolean
         get() = followPhoneVolume()

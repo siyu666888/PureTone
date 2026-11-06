@@ -19,6 +19,7 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.puretone.player.MainActivity
+import com.puretone.player.playback.cast.CastKeepAlivePolicy
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -192,8 +193,15 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (::player.isInitialized && (!player.playWhenReady || player.mediaItemCount == 0)) {
-            stopSelf()
+        // 投屏期本地 ExoPlayer 恒暂停，旧判据会把「正在电视上放歌」误判成空闲并停服务；
+        // 而手机此时还是电视拉流的 HTTP 源，服务一停电视立刻断流、队列轮询也没了。
+        if (::player.isInitialized) {
+            val stop = CastKeepAlivePolicy.shouldStopServiceOnTaskRemoved(
+                isCasting = if (::playbackManager.isInitialized) playbackManager.isCasting else false,
+                playWhenReady = player.playWhenReady,
+                hasMediaItems = player.mediaItemCount > 0
+            )
+            if (stop) stopSelf()
         }
         super.onTaskRemoved(rootIntent)
     }

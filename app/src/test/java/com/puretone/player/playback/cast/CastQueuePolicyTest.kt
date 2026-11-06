@@ -14,6 +14,11 @@ import org.junit.Test
  * 此时「进度未知」是常态而非异常，判据不能再把它一票否决；
  * PAUSED（用户暂停）仍保持全部严格条件。
  *
+ * v1.9.3 真机再补充（两份诊断）：STOPPED 时刻渲染器回报的 RelTime 完全不可预测
+ * （185000/0、8000/193000、甚至直接 500），据此反推「是否停在曲中」必然误判。
+ * 现 STOPPED 一律推进；所有「不应推进」的用例都必须在 PAUSED 态下验证。
+ * PAUSED 的严格判据（含归零只在渲染器自报时长时才当播完）保持不动。
+ *
  * 注意 [CastQueuePolicy] 是纯函数——不碰播放器、不发网络请求、不读协程状态，
  * 因此这里无需任何替身。
  */
@@ -110,13 +115,18 @@ class CastQueuePolicyTest {
     }
 
     @Test
-    fun `进度远未到末尾不推进`() {
-        assertFalse(shouldAdvance(progressMs = 100_000L))
+    fun `PAUSED 且进度远未到末尾不推进`() {
+        assertFalse(shouldAdvance(playbackState = CastQueuePolicy.STATE_PAUSED, progressMs = 100_000L))
     }
 
     @Test
-    fun `进度超出容差范围不推进`() {
-        assertFalse(shouldAdvance(progressMs = total - CastQueuePolicy.END_TOLERANCE_MS - 1))
+    fun `PAUSED 且进度超出容差范围不推进`() {
+        assertFalse(
+            shouldAdvance(
+                playbackState = CastQueuePolicy.STATE_PAUSED,
+                progressMs = total - CastQueuePolicy.END_TOLERANCE_MS - 1
+            )
+        )
     }
 
     @Test
@@ -170,8 +180,10 @@ class CastQueuePolicyTest {
     }
 
     @Test
-    fun `STOPPED 但明确停在曲中时不推进（用户在电视上按了 Stop）`() {
-        assertFalse(
+    fun `STOPPED 且进度落在曲中也推进（保守分支已移除）`() {
+        // DLNA 的 STOPPED 不含「自然播完 / 用户按 Stop」的区分信息，
+        // 宁可在用户按 Stop 时投下一首，也不能让播完卡死在曲末。
+        assertTrue(
             shouldAdvance(
                 playbackState = CastQueuePolicy.STATE_STOPPED,
                 progressMs = 100_000L,
@@ -189,6 +201,79 @@ class CastQueuePolicyTest {
                 playbackState = CastQueuePolicy.STATE_STOPPED,
                 rendererDurationMs = 0L,
                 localDurationMs = 0L
+            )
+        )
+    }
+
+    // ---------- v1.9.3 真机回归：623(192.168.101.20) 只回 RelTime ----------
+
+    @Test
+    fun `STOPPED 且渲染器不给时长时中段进度也推进（真机 185000 比 0）`() {
+        // 诊断原文：tv=185000/0，本地时长 207345。旧判据拿本地时长兜底算出
+        // 「明确停在曲中」→ 判成用户在电视上按 Stop → 不续投、投屏卡在曲末。
+        assertTrue(
+            shouldAdvance(
+                playbackState = CastQueuePolicy.STATE_STOPPED,
+                progressMs = 185_000L,
+                hasProgressInfo = true,
+                rendererDurationMs = 0L,
+                localDurationMs = 207_345L
+            )
+        )
+    }
+
+    @Test
+    fun `STOPPED 且渲染器自报时长但进度复位到 8 秒仍推进（真机 20_43_58）`() {
+        // 诊断原文：20:43:58 own-state STOPPED，此后 14 秒没有 cast-attempt，
+        // 20:44:12 cast-resume takeOver=8000 tv=8000/193000 localDuration=193866。
+        // 本曲实际已播约 3 分钟，电视却在 STOPPED 时把 RelTime 复位到 8 秒；
+        // 上一版「渲染器自报时长>0 才启用曲中否决」在这里仍会误判，故彻底移除。
+        assertTrue(
+            shouldAdvance(
+                playbackState = CastQueuePolicy.STATE_STOPPED,
+                progressMs = 8_000L,
+                hasProgressInfo = true,
+                rendererDurationMs = 193_000L,
+                localDurationMs = 193_866L
+            )
+        )
+    }
+
+    @Test
+    fun `STOPPED 且渲染器自报时长且明确停在曲中也推进`() {
+        assertTrue(
+            shouldAdvance(
+                playbackState = CastQueuePolicy.STATE_STOPPED,
+                progressMs = 100_000L,
+                hasProgressInfo = true,
+                rendererDurationMs = total,
+                localDurationMs = total
+            )
+        )
+    }
+
+    @Test
+    fun `PAUSED 且渲染器自报时长并把进度归零仍判定播完`() {
+        assertTrue(
+            shouldAdvance(
+                playbackState = CastQueuePolicy.STATE_PAUSED,
+                progressMs = 0L,
+                hasProgressInfo = true,
+                rendererDurationMs = total,
+                localDurationMs = total
+            )
+        )
+    }
+
+    @Test
+    fun `PAUSED 且渲染器不给时长时进度归零不推进（按暂停不能跳歌）`() {
+        assertFalse(
+            shouldAdvance(
+                playbackState = CastQueuePolicy.STATE_PAUSED,
+                progressMs = 0L,
+                hasProgressInfo = true,
+                rendererDurationMs = 0L,
+                localDurationMs = total
             )
         )
     }

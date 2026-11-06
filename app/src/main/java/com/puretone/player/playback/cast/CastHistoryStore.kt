@@ -24,7 +24,7 @@ import kotlinx.coroutines.flow.map
  * 这类数据量极小（≤8 条），单独开文件只会多一份 IO 与迁移负担；
  * 键名独立成 `cast_history`，与设置项不冲突。
  *
- * 与 [DlnaCastManager.knownDevices] 的分工：那个是**进程内**的 IP 缓存，用于空结果时
+ * 与 [CastDeviceDiscovery] 内 knownDevices 缓存的分工：那个是**进程内**的 IP 缓存，用于空结果时
  * 发 unicast M-SEARCH 唤醒设备；这里存的是**跨会话**的「投成功过」清单，用于 UI 展示。
  */
 @Singleton

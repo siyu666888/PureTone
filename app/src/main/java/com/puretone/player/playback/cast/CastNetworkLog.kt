@@ -78,13 +78,13 @@ object CastNetworkLog {
     @Volatile
     private var lastWifiIp: String? = null
 
-    /** 记录本次搜索是否成功把进程绑定到 Wi-Fi 网络（由 [DlnaCastManager] 调用） */
+    /** 记录本次搜索是否成功把进程绑定到 Wi-Fi 网络（由 [CastNetworkBridge] 调用） */
     fun markWifiBound(bound: Boolean, ip: String?) {
         lastWifiBound = bound
         lastWifiIp = ip
     }
 
-    /** 记录一次组播锁的真实获取结果（由 [DlnaCastManager] 在 acquire 后调用） */
+    /** 记录一次组播锁的真实获取结果（由 [CastNetworkBridge] 在 acquire 后调用） */
     fun markLockAcquired(acquired: Boolean) {
         lastLockAcquired = acquired
         lastLockAt = System.currentTimeMillis()

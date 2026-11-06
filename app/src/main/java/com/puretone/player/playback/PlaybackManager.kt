@@ -118,6 +118,12 @@ class PlaybackManager @Inject constructor(
     val uiState: StateFlow<PlaybackUiState> = _uiState.asStateFlow()
 
     /**
+     * 是否处于投屏会话。供 [PlaybackService.onTaskRemoved] 判断划掉任务卡时
+     * 能否停前台服务：投屏期本地播放器恒暂停，但手机仍是电视的 HTTP 媒体源。
+     */
+    val isCasting: Boolean get() = dlnaCast.state.value.isCasting
+
+    /**
      * APE 按需转码统一入口（P1-1 拆分第三刀）。
      *
      * 转码引擎仍是 [ApeTranscoder]（缓存 / 同曲并发去重 / LRU 都在那一层），

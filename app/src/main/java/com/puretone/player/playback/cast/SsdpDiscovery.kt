@@ -274,22 +274,43 @@ internal object SsdpDiscovery {
         matched ?: all.firstOrNull { it.name.startsWith("wlan") }
     }.getOrNull()
 
-    /** 逐台取设备描述拿 friendlyName / deviceType（并发；取不到用 USN 兜底，不影响可用性） */
+    /**
+     * 逐台取设备描述拿 friendlyName / deviceType，并按 [CastDeviceFilter] 剔除非渲染器。
+     *
+     * 并发解析期间**不直接写诊断日志**：`CastNetworkLog.log` 没有跨线程同步，
+     * 多协程同时 append 可能把行写花。剔除信息先收集，awaitAll 之后统一落一条。
+     */
     private suspend fun resolveDevices(found: List<Located>): List<CastDevice> = coroutineScope {
-        found.take(MAX_DESCRIPTIONS).map { located ->
-            async {
+        val outcomes = found.take(MAX_DESCRIPTIONS).map { located ->
+            async<Pair<CastDevice?, String?>> {
                 val host = hostOf(located.location).orEmpty()
                 val body = runCatching { SoapClient.get(located.location) }.getOrNull()
                     ?.takeIf { it.ok }?.body
                 val parsed = body?.let { CastProbe.parseDescription(it) }
+                val verdict = CastDeviceFilter.evaluate(
+                    descriptionFetched = parsed != null,
+                    deviceType = parsed?.deviceType,
+                    serviceTypes = parsed?.services?.map { it.serviceType }.orEmpty()
+                )
+                if (!verdict.keep) {
+                    // 宽泛 ST（rootdevice / ssdp:all）会引来路由器与媒体服务器，
+                    // 点进去必然投送失败。诊断里留一行，便于确认「设备少了」不是漏搜。
+                    return@async null to "name=${parsed?.friendlyName ?: host} " +
+                        "type=${parsed?.deviceType ?: "?"} st=${located.st} reason=${verdict.reason}"
+                }
                 CastDevice(
                     id = located.location,
                     name = parsed?.friendlyName ?: located.usn.ifBlank { host.ifBlank { "DLNA 设备" } },
                     address = host,
-                    // 只把真正的 MediaRenderer 标成 TV：库里 isTV 也用于图标区分
-                    isTV = parsed?.deviceType?.contains("MediaRenderer", true) == true
-                )
+                    // 只把确认过的 MediaRenderer 标成 TV；描述取不到时保守保留但用普通图标
+                    isTV = verdict.isRenderer
+                ) to null
             }
-        }.awaitAll().filter { it.address.isNotBlank() }
+        }.awaitAll()
+        val dropped = outcomes.mapNotNull { it.second }
+        if (dropped.isNotEmpty()) {
+            CastNetworkLog.log("ssdp-filter 剔除 ${dropped.size} 台非渲染器：${dropped.joinToString(" | ")}")
+        }
+        outcomes.mapNotNull { it.first }.filter { it.address.isNotBlank() }
     }
 }

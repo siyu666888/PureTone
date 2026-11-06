@@ -22,16 +22,30 @@ package com.puretone.player.playback.cast
  *    （`PAUSED_PLAYBACK` → [STATE_PAUSED]）天然分开，故不再要求进度可验证；
  *    `PAUSED` 则必须靠「进度已到末尾 / 已归零」排除用户按暂停的误判。
  *
- * ## 为什么 STOPPED 要放宽（v1.9.2 真机故障）
+ * ## 为什么 STOPPED 一律推进（v1.9.2 / v1.9.3 三次真机故障）
  *
- * DLNA 自有通道用 `GetPositionInfo` 取进度，但不少电视在**曲目结束后**直接对该动作
- * 返回 500，于是 [hasProgressInfo] 为 false、进度与时长都是 0。旧判据把「进度未知」
- * 一票否决，协调器便永远等不到 `onCastTrackEnded()`：投屏停在曲末，而手动点下一首
- * 因为**完全不经过本判据**（`next()` → `recastCurrentIfCasting()`）反而能续投。
- * 这正是「播完就退出投屏、手动下一首却继续投」的根因。
+ * DLNA 自有通道用 `GetPositionInfo` 取进度，但电视在**曲目结束后**对该动作的回报
+ * 完全不可预测。同一台 623(192.168.101.20) 在三份真机诊断里给出三种组合：
+ * - `GetPositionInfo` 返回 500 → 进度/时长皆 0、`hasProgressInfo=false`（v1.9.2）；
+ * - `tv=185000/0` → 只回 `RelTime`、不回 `TrackDuration`（19:50:30）；
+ * - `tv=8000/193000` → 自报了完整时长，进度却复位到 8 秒（20:43:58，本曲实际
+ *   已播约 3 分钟，STOPPED 后 14 秒没有 `cast-attempt`，20:44:12 才 `cast-resume`）。
  *
- * 放宽只在 `STOPPED` 生效，且保留「有明确进度且落在曲中 → 不推进」的保守分支；
- * `PAUSED` 的严格判据一字未动，用户按暂停仍不会擅自跳歌。
+ * 旧判据用「进度落在曲中」否决推进，三种组合里两种被误判成「用户在电视上按了
+ * Stop」→ 队列不推进 → 电视静音，用户回来看见的就是「投屏自动退出」，于是点断开
+ * 重连（诊断里的 `cast-resume`）；重投后又能正常播——这就是「偶尔」的由来。
+ * v1.9.3 第一次修正只把尺子从「本地时长」换成「渲染器自报时长」，挡住了
+ * `185000/0`，却挡不住 `8000/193000`（自报时长 >0 时仍会启用曲中否决）。
+ *
+ * 根子在于：UPnP AVTransport 的 `STOPPED` 只表示「当前 URI 的传输已终止」，
+ * **不含**「自然播完 / 用户按 Stop」的区分信息，STOPPED 时刻的 `RelTime` 可能归零、
+ * 复位到上次 seek 位置或干脆不给，不足以反推是否播完。故 STOPPED 一律推进；
+ * 防误跳交给 [CastQueueCoordinator] 的三道时序保险：必须经历「在播 → 不在播」
+ * 跃迁、代次变化后第一轮不采信、推进后重新观测到在播才允许下一次推进。
+ *
+ * 唯一取舍：用户在电视上按 Stop 时手机会自动投下一首。DLNA push 模式无法区分，
+ * 且远比「播完卡死、投屏像自动退出」可接受。`PAUSED` 仍保持严格判据，
+ * 用户按暂停不会擅自跳歌。
  */
 internal object CastQueuePolicy {
 
@@ -74,10 +88,10 @@ internal object CastQueuePolicy {
      * @param playbackState 渲染器本次上报的播放态名（[STATE_STOPPED] 等）
      * @param progressMs 渲染器上报的播放进度（毫秒）
      * @param hasProgressInfo 渲染器是否**提供了**进度信息（`GetPositionInfo` 返回非 null）。
-     *        `STOPPED` 下不再作为前置条件；`PAUSED` 下仍严格区分「未知」与「真的是 0」。
-     * @param rendererDurationMs 渲染器上报的总时长（毫秒，0 = 未知）
+     *        仅 `PAUSED` 使用：严格区分「未知」与「真的是 0」。
+     * @param rendererDurationMs 渲染器上报的总时长（毫秒，0 = 未知）。仅 `PAUSED` 使用。
      * @param localDurationMs 本地歌曲记录的总时长（毫秒，0 = 未知）。
-     *        渲染器不上报时长时用它兜底——App 自己知道这首歌有多长。
+     *        `PAUSED` 且渲染器不上报时长时用它兜底。
      * @param hasNext 队列是否还有下一首（与本地 `next()` 的循环语义对齐后传入）
      */
     fun shouldAutoAdvance(
@@ -99,27 +113,23 @@ internal object CastQueuePolicy {
         // （出错由失联回退处理，见 DlnaCastManager.markConnectionLost）。
         if (playbackState != STATE_STOPPED && playbackState != STATE_PAUSED) return false
 
-        // 总时长：优先用渲染器上报的（进度是相对渲染器时间轴量的），
-        // 渲染器不上报时用本地时长兜底。
-        val total = rendererDurationMs.takeIf { it > 0 } ?: localDurationMs
-
-        if (playbackState == STATE_STOPPED) {
-            // STOPPED = 渲染器明确终止了本条 URI。真机上此时常拿不到 GetPositionInfo，
-            // 「进度未知」绝不能等价于「还没播完」，否则队列永久卡在曲末。
-            // 唯一保守分支：确实拿到了进度，且明确停在曲中（用户在电视上按了 Stop）。
-            val clearlyMidTrack = hasProgressInfo && total > 0L &&
-                progressMs > 0L && progressMs < total - END_TOLERANCE_MS
-            return !clearlyMidTrack
-        }
+        // STOPPED = 当前 URI 的传输已终止，是「本首结束」唯一可靠的信号。
+        // 绝不拿 progressMs / durationMs 反推「是不是停在曲中」：真机上 STOPPED 时刻的
+        // RelTime 会归零、复位到上次 seek 位置或直接不给（见类注释三次真机故障）。
+        // 防误推进由 CastQueueCoordinator 的「在播→不在播」跃迁与代次跳过负责。
+        if (playbackState == STATE_STOPPED) return true
 
         // PAUSED 保持 M3 原判据：用户中途暂停也落在此态，必须靠进度排除误跳。
+        // 总时长优先用渲染器上报的，不上报时用本地歌曲时长兜底。
+        val total = rendererDurationMs.takeIf { it > 0 } ?: localDurationMs
         if (total <= 0L) return false
         // 进度信息本身不可用 → 无法判定是否到末尾，宁可不推进也不误跳
         if (!hasProgressInfo && progressMs <= 0L) return false
         // 进度已接近末尾 → 判定为播完
         if (progressMs >= total - END_TOLERANCE_MS) return true
-        // 渲染器播完后常把进度复位为 0（GetPositionInfo 归零）——同样视为已到末尾。
-        // 注意这与「进度未知」不同，故上面已用 hasProgressInfo 把两者区分开。
-        return progressMs <= 0L
+        // 渲染器播完后把进度复位为 0：只有它自报了总时长（说明有完整时间轴）时，
+        // 才把「归零」当作播完。渲染器不给时长时，0 也可能只是「刚投出去 / 暂停时
+        // 不上报位置」，拿它跳歌会在用户按暂停后凭空切到下一首。
+        return progressMs <= 0L && rendererDurationMs > 0L
     }
 }

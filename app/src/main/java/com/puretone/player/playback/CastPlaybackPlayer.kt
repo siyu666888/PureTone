@@ -16,6 +16,18 @@ internal interface CastCommandSink {
     /** 当前投屏状态。必须实时读取（内部是 1Hz 轮询刷新的 StateFlow），不可缓存。 */
     val castState: CastState
 
+    /**
+     * 投屏期**对外展示**的进度与时长。
+     *
+     * 不要直接用 [CastState.progressMs] / [CastState.durationMs]：那是 1Hz 原始轮询值，
+     * 既没有两次轮询之间的外推，也不含拖动后的乐观窗口；而不少渲染器只回 RelTime、
+     * 不回 TrackDuration（真机 `GetPositionInfo` 为 `185000/0`），直接拿它当总时长会把
+     * 进度条整个禁用。这里由宿主提供已经「镜像 + 外推 + 本地时长兜底」过的一份，
+     * 播放页、投屏遥控页、通知栏共用，才不会出现三处进度各不相同。
+     */
+    val displayPositionMs: Long
+    val displayDurationMs: Long
+
     /** 投屏音量是否跟随手机音量键（设置项，实时读取） */
     val castVolumeFollowPhone: Boolean
 
@@ -53,8 +65,11 @@ internal interface CastCommandSink {
  *
  * ## 状态来源
  *
- * - 播放/暂停态、进度、时长：投屏期来自 [CastState]（由 `DlnaCastManager` 1Hz 轮询
- *   渲染器填充），因此通知栏进度条会走；
+ * - 播放/暂停态：投屏期来自 [CastState]（由 `DlnaCastManager` 1Hz 轮询渲染器填充）；
+ * - 进度 / 时长：投屏期来自 [CastCommandSink.displayPositionMs] 与
+ *   [CastCommandSink.displayDurationMs]，即宿主已「镜像轮询 + 250ms 外推 + 本地时长兜底」
+ *   的那一份，与播放页、投屏遥控页同源。直读 1Hz 的 [CastState.progressMs] 会让通知栏
+ *   比电视慢一拍，拖动后还会被旧值拉回；渲染器不报 `TrackDuration` 时更会显示 0/0；
  * - 队列与元数据：始终来自本地播放器（本地与投屏是同一份队列）；
  * - playbackState 投屏期固定为 [Player.STATE_READY]：渲染器已收到媒体，是可控状态。
  *
@@ -153,13 +168,14 @@ internal class CastPlaybackPlayer(
         if (casting) Player.STATE_READY else super.getPlaybackState()
 
     override fun getCurrentPosition(): Long =
-        if (casting) sink.castState.progressMs.coerceAtLeast(0L) else super.getCurrentPosition()
+        if (casting) sink.displayPositionMs.coerceAtLeast(0L) else super.getCurrentPosition()
 
     override fun getDuration(): Long =
         if (casting) {
-            val remote = sink.castState.durationMs
-            // 渲染器上报的时长可能短暂为 0（刚投出去还没拿到），退回本地已知时长
-            if (remote > 0L) remote else super.getDuration()
+            // 与 App 内进度条同源：渲染器不报 TrackDuration 时由本地时长兜底，
+            // 避免通知栏出现「进度 0 / 总时长 0」而与电视实际播放脱节。
+            val shown = sink.displayDurationMs
+            if (shown > 0L) shown else super.getDuration()
         } else {
             super.getDuration()
         }

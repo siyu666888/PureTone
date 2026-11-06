@@ -1,230 +1,70 @@
 package com.puretone.player.ui.screens
-import androidx.compose.foundation.background
+/**
+ * 音乐页主框架：搜索 / 排序 / 扫描 / 页签切换 / 歌曲列表。
+ * 智能歌单、弹层与页签内容已按职责搬到同包下的
+ * [BrowseSections]、[BrowseDialogs]（纯 UI 搬移，零行为改动）。
+ */
+
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
-import com.puretone.player.ui.components.SmartPlaylistBrandIcon
-
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
-import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoFixHigh
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.FavoriteBorder
-import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SwapVert
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
-import coil.compose.AsyncImage
-import com.puretone.player.data.local.dao.PlaylistWithSongs
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.SongSortOrder
-import com.puretone.player.domain.grouping.AlbumSummary
-import com.puretone.player.domain.grouping.ArtistSummary
-import com.puretone.player.domain.grouping.FolderSummary
 import com.puretone.player.ui.LibraryViewModel
 import com.puretone.player.ui.MetadataViewModel
 import com.puretone.player.ui.PlayerViewModel
-import com.puretone.player.ui.components.FavoriteRed
-import com.puretone.player.ui.components.SmartPlaylistGlyph
-import com.puretone.player.ui.components.SmartPlaylistKind
 import com.puretone.player.ui.components.SongRow
-import com.puretone.player.ui.components.DefaultCover
-import com.puretone.player.ui.components.DefaultCoverGlyph
 import com.puretone.player.ui.Routes
 import kotlinx.coroutines.delay
-
-/**
- * P1 智能歌单卡片数据（仅 UI 聚合，不落库）。
- */
-private data class SmartPlaylist(
-    val title: String,
-    val kind: SmartPlaylistKind,
-    val songs: List<SongEntity>
-)
-
-/**
- * P1 智能歌单快捷入口：横向卡片行，点击整卡即把对应自动歌单送入播放队列。
- * 三类自动歌单均由既有数据聚合而来：
- * - 最近添加：按 date_added 倒序；
- * - 我的最爱：按 play_count 倒序（Top N）；
- * - 最近播放：play_history 倒序去重。
- * 列表为空时卡片禁用（暂无数据）。
- */
-/**
- * 「智能歌单」分区标题：品牌图标 + 标题文字 + 右侧「自动生成」标签。
- * 仅作视觉分区，不响应点击；图标与文字随深浅主题自动适配。
- */
-@Composable
-private fun SmartPlaylistSectionHeader(modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        SmartPlaylistBrandIcon(modifier = Modifier.size(22.dp))
-        Spacer(Modifier.width(8.dp))
-        Text(
-            stringResource(R.string.pt_smart_playlist_000),
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Spacer(Modifier.weight(1f))
-        Text(
-            stringResource(R.string.pt_smart_playlist_001),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier
-                .background(
-                    MaterialTheme.colorScheme.primaryContainer,
-                    RoundedCornerShape(999.dp)
-                )
-                .padding(horizontal = 8.dp, vertical = 3.dp)
-        )
-    }
-}
-
-@Composable
-private fun SmartPlaylistsRow(
-    recentlyAdded: List<SongEntity>,
-    topSongs: List<SongEntity>,
-    recentlyPlayed: List<SongEntity>,
-    onPlay: (List<SongEntity>) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val items = listOf(
-        SmartPlaylist(stringResource(R.string.pt_browse_001), SmartPlaylistKind.RECENTLY_ADDED, recentlyAdded),
-        SmartPlaylist(stringResource(R.string.pt_browse_002), SmartPlaylistKind.MY_FAVORITES, topSongs),
-        SmartPlaylist(stringResource(R.string.pt_browse_003), SmartPlaylistKind.RECENTLY_PLAYED, recentlyPlayed)
-    )
-    // 三卡按 weight 均分整屏宽度：固定内边距 + 等分，杜绝横向滚动与卡片溢出（用户诉求）。
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        items.forEach { sp ->
-            SmartPlaylistCard(sp, onPlay, Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun SmartPlaylistCard(
-    sp: SmartPlaylist,
-    onPlay: (List<SongEntity>) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val enabled = sp.songs.isNotEmpty()
-    Card(
-        modifier = modifier
-            .clickable(enabled = enabled) { onPlay(sp.songs) },
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer
-        )
-    ) {
-        // 竖向布局：大图标居中在上方、标题居中在下方；卡片设最小高度与充足内边距，
-        // 保证图标完整渲染、标题不被截断，整体排版协调、无横向滚动。
-        // 底部「歌曲数量」文字已按需求移除；空歌单仅置灰标题并禁用点击。
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 108.dp)
-                .padding(vertical = 18.dp, horizontal = 10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            SmartPlaylistGlyph(
-                kind = sp.kind,
-                modifier = Modifier.size(44.dp)
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                sp.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSecondaryContainer
-                    .copy(alpha = if (enabled) 1f else 0.5f),
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 
 /** 音乐页页签 */
 enum class MusicTab { SONGS, ALBUMS, ARTISTS, FOLDERS }
@@ -662,424 +502,5 @@ fun BrowseScreen(
             metadataVm = metadataVm,
             onDismiss = { infoSheetSong = null }
         )
-    }
-}
-
-/**
- * 歌曲长按操作面板：下一首播放 / 加入队列 / 加入歌单 / 收藏 / 歌曲信息。
- *
- * 顶部展示封面缩略与曲名副标题确认目标，下方为等高的图标 + 文案操作行。
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun SongActionSheet(
-    song: SongEntity,
-    favorite: Boolean,
-    onPlayNext: () -> Unit,
-    onEnqueue: () -> Unit,
-    onAddToPlaylist: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onShowInfo: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (song.coverUri != null) {
-                        AsyncImage(
-                            model = song.coverUri,
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        // 无封面：显示默认海报
-                        DefaultCover(
-                            modifier = Modifier.fillMaxSize(),
-                            shape = RoundedCornerShape(8.dp),
-                        )
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        song.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        "${song.artist} · ${song.album}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-            ActionItem(Icons.AutoMirrored.Rounded.PlaylistPlay, stringResource(R.string.pt_browse_033), onPlayNext)
-            ActionItem(Icons.AutoMirrored.Rounded.PlaylistAdd, stringResource(R.string.pt_browse_034), onEnqueue)
-            ActionItem(Icons.Rounded.Add, stringResource(R.string.pt_browse_026), onAddToPlaylist)
-            ActionItem(
-                imageVector = if (favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                label = if (favorite) stringResource(R.string.pt_browse_035) else stringResource(R.string.pt_browse_036),
-                tint = if (favorite) FavoriteRed else MaterialTheme.colorScheme.onSurface,
-                onClick = onToggleFavorite
-            )
-            ActionItem(Icons.Rounded.Info, stringResource(R.string.pt_browse_037), onShowInfo)
-        }
-    }
-}
-
-/** 操作面板里的一行：图标 + 文案 */
-@Composable
-private fun ActionItem(
-    imageVector: ImageVector,
-    label: String,
-    onClick: () -> Unit,
-    tint: Color = Color.Unspecified
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector,
-            contentDescription = null,
-            tint = if (tint != Color.Unspecified) tint else MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.size(22.dp)
-        )
-        Spacer(Modifier.width(16.dp))
-        Text(label, style = MaterialTheme.typography.bodyLarge)
-    }
-}
-
-@Composable
-fun EmptyState(modifier: Modifier = Modifier, text: String) {
-    Column(
-        modifier = modifier.padding(32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
-    ) {
-        Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-/** 排序菜单项：当前排序项右侧显示勾选 */
-@Composable
-private fun SortOption(
-    label: String,
-    order: SongSortOrder,
-    current: SongSortOrder,
-    onSelect: (SongSortOrder) -> Unit
-) {
-    DropdownMenuItem(
-        text = { Text(label) },
-        onClick = { onSelect(order) },
-        trailingIcon = {
-            if (order == current) {
-                    Icon(
-                        Icons.Rounded.Check,
-                        contentDescription = stringResource(R.string.pt_browse_038),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-            }
-        }
-    )
-}
-
-/**
- * 「加入歌单」弹窗：可新建歌单并加入，或点选已有歌单加入。
- */
-@Composable
-fun AddToPlaylistDialog(
-    songIds: List<Long>,
-    playlists: List<PlaylistWithSongs>,
-    onAddTo: (Long) -> Unit,
-    onCreateAndAdd: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var newName by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-            title = {
-                Text(
-                    if (songIds.size == 1) stringResource(R.string.pt_browse_026)
-                    else stringResource(R.string.pt_browse_039, songIds.size)
-                )
-            },
-        text = {
-            Column(
-                modifier = Modifier
-                    .heightIn(max = 420.dp)
-                    .verticalScroll(rememberScrollState())
-            ) {
-                // 新建歌单并加入
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = newName,
-                        onValueChange = { newName = it },
-                        placeholder = { Text(stringResource(R.string.pt_browse_040)) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(
-                        onClick = { onCreateAndAdd(newName) },
-                        enabled = newName.isNotBlank()
-                    ) { Text(stringResource(R.string.pt_browse_041)) }
-                }
-                Spacer(Modifier.size(12.dp))
-                Text(
-                    stringResource(R.string.pt_browse_042),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.size(4.dp))
-                if (playlists.isEmpty()) {
-                    Text(
-                        stringResource(R.string.pt_browse_043),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                } else {
-                    playlists.forEach { pw ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                                .clickableRow { onAddTo(pw.playlist.id) },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(pw.playlist.name, style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    stringResource(R.string.pt_browse_044, pw.songs.size),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.pt_browse_045)) }
-        }
-    )
-}
-
-/** 行点击（无涟漪依赖的轻量封装） */
-private fun Modifier.clickableRow(onClick: () -> Unit): Modifier =
-    this.then(Modifier.clickable(onClick = onClick))
-
-/** 专辑封面网格墙 */
-@Composable
-private fun AlbumsTabContent(
-    vm: LibraryViewModel,
-    onAlbumClick: (AlbumSummary) -> Unit
-) {
-    // P3-14：仅在「专辑」页签被组合时才订阅该流；停留在其它页签（如「歌曲」）时
-    // 本 composable 不参与组合，albums 的 StateFlow 无下游订阅 → 上游分组计算不触发，
-    // 避免任何曲库变化都白白跑三次全库分组。
-    val albums by vm.albums.collectAsStateWithLifecycle()
-    if (albums.isEmpty()) {
-        EmptyState(modifier = Modifier.fillMaxSize(), text = stringResource(R.string.pt_browse_046))
-        return
-    }
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 118.dp),
-        modifier = Modifier.fillMaxSize().padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        items(albums, key = { "${it.volumeName}|${it.albumId}|${it.album}" }) { album ->
-            AlbumCard(album = album, onClick = { onAlbumClick(album) })
-        }
-    }
-}
-
-/** 专辑卡片：方形封面 + 专辑名 + 歌手·数量 */
-@Composable
-private fun AlbumCard(album: AlbumSummary, onClick: () -> Unit) {
-    Column(modifier = Modifier.clickable(onClick = onClick)) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f)
-                .clip(RoundedCornerShape(10.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            if (album.coverUri != null) {
-                AsyncImage(
-                    model = album.coverUri,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                // 无封面：显示默认海报（此处为 1:1 大卡，走「带黑胶纹」档位）
-                DefaultCover(
-                    modifier = Modifier.fillMaxSize(),
-                    shape = RoundedCornerShape(10.dp),
-                )
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            album.album,
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            stringResource(R.string.pt_browse_047, album.artist, album.songCount),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-/** 歌手列表 */
-@Composable
-private fun ArtistsTabContent(
-    vm: LibraryViewModel,
-    onArtistClick: (ArtistSummary) -> Unit
-) {
-    // P3-14：见 AlbumsTabContent——仅在「歌手」页签组合时订阅。
-    val artists by vm.artists.collectAsStateWithLifecycle()
-    if (artists.isEmpty()) {
-        EmptyState(modifier = Modifier.fillMaxSize(), text = stringResource(R.string.pt_browse_048))
-        return
-    }
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        itemsIndexed(artists, key = { _, a -> a.artist }) { _, artist ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onArtistClick(artist) }
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (artist.coverUri != null) {
-                        AsyncImage(
-                            model = artist.coverUri,
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize().clip(CircleShape),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        // 无封面：显示默认海报（歌手用人物符号）
-                        DefaultCover(
-                            modifier = Modifier.fillMaxSize(),
-                            shape = CircleShape,
-                            glyph = DefaultCoverGlyph.PERSON,
-                        )
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        artist.artist,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        stringResource(R.string.pt_browse_049, artist.songCount),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
-                    )
-                }
-            }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-        }
-    }
-}
-
-/** 文件夹列表 */
-@Composable
-private fun FoldersTabContent(
-    vm: LibraryViewModel,
-    onFolderClick: (FolderSummary) -> Unit
-) {
-    // P3-14：见 AlbumsTabContent——仅在「文件夹」页签组合时订阅。
-    val folders by vm.folders.collectAsStateWithLifecycle()
-    if (folders.isEmpty()) {
-        EmptyState(modifier = Modifier.fillMaxSize(), text = stringResource(R.string.pt_browse_050))
-        return
-    }
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        itemsIndexed(folders, key = { _, f -> f.folder }) { _, folder ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onFolderClick(folder) }
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(10.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Rounded.Folder,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        folder.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        stringResource(R.string.pt_browse_051, folder.songCount),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-        }
     }
 }
