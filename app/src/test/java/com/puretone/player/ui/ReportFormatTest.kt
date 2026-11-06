@@ -28,10 +28,17 @@ import java.time.ZoneId
 class ReportFormatTest {
 
     private val context: Context get() = ApplicationProvider.getApplicationContext()
-    private val zone = ZoneId.of("Asia/Shanghai")
 
-    private fun buildData(type: PeriodType, start: String, endExclusive: String): ReportData =
-        ReportData(
+    /**
+     * 造数据必须用**系统默认时区**：toPosterContent 内部的 ReportTrend.buckets(data)
+     * 默认按 ZoneId.systemDefault() 把 rangeStart / rangeEnd 折算回 LocalDate。这里若固定
+     * Asia/Shanghai，UTC 的 CI 会把「2026-01-01 00:00 +08」回推成 2025-12-31，年报按
+     * 2025 年聚合、与 dayKey=2026-01-01 对不上，趋势总和变 0（本地 GMT+8 恰好掩盖）。
+     * 项目里其它报告测试能固定 Asia/Shanghai，是因为被测函数都接受显式 zoneId 入参。
+     */
+    private fun buildData(type: PeriodType, start: String, endExclusive: String): ReportData {
+        val zone = ZoneId.systemDefault()
+        return ReportData(
             type = type,
             rangeStart = LocalDate.parse(start).atStartOfDay(zone).toInstant().toEpochMilli(),
             rangeEnd = LocalDate.parse(endExclusive).atStartOfDay(zone).toInstant().toEpochMilli() - 1,
@@ -48,6 +55,7 @@ class ReportFormatTest {
             prevListenMs = 100_000L,
             deltaPct = 50.0
         )
+    }
 
     private fun ranges(type: PeriodType): Pair<String, String> = when (type) {
         PeriodType.WEEK -> "2026-11-02" to "2026-11-09"
