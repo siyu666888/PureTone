@@ -16,6 +16,11 @@
 #   3. TODO：具备真机/模拟器条件后改用 Macrobenchmark 实测生成，本文件作兜底；
 #   4. 启用 R8 后（release）AGP 会按 mapping 自动重写这些规则为混淆后名字，
 #      因此这里写的是**源码名**，不要手抄 mapping.txt。
+#   5. Hilt/Dagger 生成的 Factory 类名会随 DI 注解变化：例如删掉 companion object
+#      里 @Provides 上的 @JvmStatic 后，TranscoderModule_ProvideApeCachePolicyFactory
+#      不再生成、只剩 TranscoderModule_Companion_ProvideApeCachePolicyFactory。
+#      改动 DI 模块注解后必须重跑 tools/gen_baseline_profile.py 或 CI 的
+#      scripts/verify-baseline-profile.sh，同步清理失效规则（AGP 会静默丢弃）。
 #
 # ---------------------------------------------------------------------------
 # 一、应用自身（冷启动即执行的代码，含 Hilt/Room 生成的类）
@@ -89,7 +94,6 @@ Lcom/puretone/player/di/ImageLoaderModule_ProvideImageLoaderFactory;
 Lcom/puretone/player/di/MetadataModule;
 Lcom/puretone/player/di/TranscoderModule;
 Lcom/puretone/player/di/TranscoderModule_Companion_ProvideApeCachePolicyFactory;
-Lcom/puretone/player/di/TranscoderModule_ProvideApeCachePolicyFactory;
 Lcom/puretone/player/domain/grouping/AlbumSummary;
 Lcom/puretone/player/domain/grouping/ArtistSummary;
 Lcom/puretone/player/domain/grouping/DayBucket;
