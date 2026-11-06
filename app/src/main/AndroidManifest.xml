@@ -73,9 +73,13 @@
             </intent-filter>
         </activity>
 
+        <!-- MediaSessionService 必须 exported：系统 / 外部 MediaController 通过
+             androidx.media3.session.MediaSessionService action 绑定并控制播放。
+             加 android:permission 会挡掉合法控制器，故就地豁免 ExportedService。 -->
         <service
             android:name=".playback.PlaybackService"
             android:exported="true"
+            tools:ignore="ExportedService"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />

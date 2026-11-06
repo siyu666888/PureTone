@@ -33,10 +33,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -55,6 +58,15 @@ import com.puretone.player.ui.components.DefaultCover
 import com.puretone.player.util.ChineseText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/**
+ * rememberSaveable 专用：把 MutableIntState 存成 Bundle 可承载的 Int。
+ * 用 autoSaver 直接保存 state 对象不可靠，显式 Saver 既免装箱又保住进程重建恢复。
+ */
+private val IntStateSaver: Saver<MutableIntState, Int> = Saver(
+    save = { it.intValue },
+    restore = { mutableIntStateOf(it) }
+)
 
 /**
  * 歌曲信息半模态弹窗：查看 / 编辑信息 + 联网匹配（Item 1 长按封面唤起，Item 5 手动修正）。
@@ -87,7 +99,7 @@ fun SongInfoSheet(
     // P2-11：年份同样本地缓存——弹窗没有年份输入框，而 autoFill/apply 会把
     // 候选年份直接写库；保存时若仍传 song.year（打开弹窗时的旧值），刚
     // 自动填充的年份会被旧值覆盖（表现为「填了年份，保存后又变回去」）。
-    var year by rememberSaveable(song.id) { mutableStateOf(song.year) }
+    var year by rememberSaveable(song.id, saver = IntStateSaver) { mutableIntStateOf(song.year) }
     // 预填搜索词：跳过「未知艺术家/空」，避免污染搜索；统一转简体
     val artistPart = (ChineseText.toSimplified(song.artist) ?: song.artist)
         .takeIf { it.isNotBlank() && it != "<unknown>" && it != stringResource(R.string.pt_songinfo_001) }

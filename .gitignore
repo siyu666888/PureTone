@@ -17,8 +17,11 @@ app/release/
 ~$*
 # 模拟器调试输出（P2-1 采集排障时产生，非项目资产）
 .emu-*.log
-# 安装包交付输出与归档：二进制不入库，只保留目录骨架 / 清单 / 交付文档
-# （*.apk 已在上方全局忽略；这里补 zip 与输出目录）
+# 安装包交付输出与归档：二进制与自动生成的校验清单不入库，只保留目录骨架
+# （*.apk 已在上方全局忽略；这里补 zip / 输出目录 / 归档里的 SHA256SUMS.txt）
 /dist/output/*
 !/dist/output/.gitkeep
 /dist/archive/**/*.zip
+/dist/archive/**/SHA256SUMS.txt
+# 本地真机/模拟器复测证据（截图 + 自动化脚本），不入库
+/dist/verify/

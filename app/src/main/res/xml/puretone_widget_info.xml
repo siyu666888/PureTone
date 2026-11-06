@@ -3,8 +3,14 @@
   桌面小部件描述。
   updatePeriodMillis=0：不做轮询刷新（系统最短 30 分钟且会让进程空转），
   内容更新一律由 App 在播放状态变化时主动推（见 WidgetUpdater）。
+
+  targetCellWidth/Height 自 API 31 起定义桌面默认网格尺寸（4×2）。minSdk 26 下 lint
+  判为 UnusedAttribute，但删掉会让 Android 12+ 回退到按 minWidth 估算，故保留属性，
+  并在根元素用 tools:ignore 就地豁免（比冻结在 baseline 里更可追溯）。
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="UnusedAttribute"
     android:description="@string/app_widget_description"
     android:initialLayout="@layout/glance_default_loading_layout"
     android:minWidth="180dp"

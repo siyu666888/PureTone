@@ -3,7 +3,6 @@ package com.puretone.player.widget
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -17,7 +16,7 @@ import javax.inject.Singleton
  * [AppWidgetManager.requestPinAppWidget]，由系统弹窗确认后 launcher 自己放置，
  * 不依赖本报 res/any 拖拽手势。
  *
- * 不可用时的态度明确：[isSupported] 返回 false（低于 API 26 或桌面不支持 pin），
+ * 不可用时的态度明确：[isSupported] 返回 false（桌面不支持 pin），
  * UI 直接禁用入口，而不是让用户点一下没反应。
  */
 @Singleton
@@ -27,7 +26,8 @@ class WidgetPinner @Inject constructor(
 
     /** 当前桌面是否支持「固定到桌面」 */
     fun isSupported(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        // minSdk 26 = Android 8.0，requestPinAppWidget 自 O 起全版本可用，
+        // 无需再判 SDK_INT（lint: ObsoleteSdkInt）。
         return runCatching { AppWidgetManager.getInstance(context).isRequestPinAppWidgetSupported }
             .getOrDefault(false)
     }

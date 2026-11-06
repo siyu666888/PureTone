@@ -29,7 +29,8 @@ abstract class TranscoderModule {
     companion object {
 
         /** 缓存上限策略；抽成 Provider 便于按 BuildConfig / 设备存储调整 */
-        @JvmStatic
+        // companion object 里的 @Provides 由 Dagger 直接按实例方法调用，@JvmStatic 多余
+        // （lint: JvmStaticProvidesInObjectDetector），删掉不改变生成的调用语义。
         @Provides
         @Singleton
         fun provideApeCachePolicy(): ApeCachePolicy = ApeCachePolicy()

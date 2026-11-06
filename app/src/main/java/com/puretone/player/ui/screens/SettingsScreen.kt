@@ -28,6 +28,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -130,7 +132,7 @@ fun SettingsScreen(
             // 到期后 deadline 清零，本行自动消失。
             if (s.sleepTimerDeadlineMs > 0L) {
                 var remainingMs by remember(s.sleepTimerDeadlineMs) {
-                    mutableStateOf(
+                    mutableLongStateOf(
                         (s.sleepTimerDeadlineMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
                     )
                 }
@@ -265,7 +267,7 @@ fun SettingsScreen(
                 onPauseOrDispose {}
             }
             // 发起添加后补一次刷新：系统那层确认插页不在 App 内，无法拿到完成回调
-            var pinRequested by remember { mutableStateOf(0) }
+            var pinRequested by remember { mutableIntStateOf(0) }
             LaunchedEffect(pinRequested) {
                 if (pinRequested > 0) {
                     delay(1_200)

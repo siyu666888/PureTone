@@ -30,8 +30,14 @@
      换库前「52 个中 44 个 p_align=4096」的历史实测见 dist/v1.7.24 交付文档。
   本配置的 cleartext 放行与 targetSdk 无关——DLNA 局域网场景无论如何都需要明文。
 -->
-<network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <!-- lint: InsecureBaseConfiguration —— 明文是 DLNA 局域网投屏的硬性需求
+         （向渲染设备 LAN IP 发明文 HTTP SOAP，本机另起 HTTP 取流服务）。
+         NSC 的 domain-config 只认主机名、不支持 CIDR，无法收窄为「仅局域网」；
+         公网端点全部 HTTPS，审计见文件头。故就地豁免而非关闭明文。 -->
+    <base-config
+        tools:ignore="InsecureBaseConfiguration"
+        cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

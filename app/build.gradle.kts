@@ -347,7 +347,7 @@ dependencies {
 
     // DLNA/UPnP 投屏（M1）：设备发现 + 本地文件直投 + 播控，coroutine-first Kotlin API。
     // 仅发布在 JitPack（见 settings.gradle.kts 仓库声明）。
-    implementation("com.github.yinnho:UPnPCast:v1.3.0")
+    implementation(libs.upnp.cast)
 
     // 协程
     implementation(libs.kotlinx.coroutines.android)
