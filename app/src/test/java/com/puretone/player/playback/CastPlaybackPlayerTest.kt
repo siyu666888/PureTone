@@ -63,6 +63,8 @@ class CastPlaybackPlayerTest {
             castVolume = castVolume,
             volumeSupported = volumeSupported
         )
+        // 门面的播放态现在读统一展示态，替身必须同步喂进去
+        sink.displayIsPlaying = isPlaying
         sink.castVolumeFollowPhone = true
     }
 
@@ -119,14 +121,35 @@ class CastPlaybackPlayerTest {
     // ---------- 状态替换 ----------
 
     @Test
-    fun `投屏期播放态取自渲染器且 playbackState 固定 READY`() {
+    fun `投屏期播放态取自统一展示态且 playbackState 固定 READY`() {
         casting(isPlaying = true)
         assertTrue(subject.isPlaying)
         assertTrue(subject.playWhenReady)
         assertEquals(Player.STATE_READY, subject.playbackState)
 
+        // 只改 1Hz 轮询的原始值不应翻转门面：瞬时 PAUSED 会让媒体按键判反方向
         sink.castState = sink.castState.copy(isPlaying = false)
+        assertTrue(subject.isPlaying)
+        assertTrue(subject.playWhenReady)
+
+        sink.displayIsPlaying = false
         assertFalse(subject.isPlaying)
+        // 展示态暂停不能撤销前台服务等级：playWhenReady 恒 true 才能保住 FGS
+        assertTrue(subject.playWhenReady)
+    }
+
+    @Test
+    fun `投屏期渲染器暂停也保持前台服务等级`() {
+        casting(isPlaying = false)
+        assertFalse(subject.isPlaying)
+        assertTrue(subject.playWhenReady)
+    }
+
+    @Test
+    fun `结束投屏后 playWhenReady 回到本地播放器真实值`() {
+        casting()
+        assertTrue(subject.playWhenReady)
+        sink.castState = CastState(isCasting = false)
         assertFalse(subject.playWhenReady)
     }
 
@@ -152,6 +175,38 @@ class CastPlaybackPlayerTest {
         casting()
         sink.displayDurationMs = 0L
         assertEquals(local.duration, subject.duration)
+    }
+
+    @Test
+    fun `投屏期锁屏 content 进度与时长取镜像值而非本地播放器`() {
+        casting()
+        sink.displayPositionMs = 61_000L
+        sink.displayDurationMs = 287_000L
+
+        assertEquals(61_000L, subject.contentPosition)
+        assertEquals(287_000L, subject.contentDuration)
+        // 四个 getter 必须同源，不能出现 current 用镜像、content 用本地的分叉
+        assertEquals(subject.currentPosition, subject.contentPosition)
+        assertEquals(subject.duration, subject.contentDuration)
+    }
+
+    @Test
+    fun `投屏期缓冲位置也不回落本地播放器`() {
+        casting()
+        sink.displayPositionMs = 42_000L
+
+        assertEquals(42_000L, subject.bufferedPosition)
+        assertEquals(42_000L, subject.contentBufferedPosition)
+    }
+
+    @Test
+    fun `结束投屏后 content getter 回到本地播放器`() {
+        casting()
+        sink.displayPositionMs = 42_000L
+        assertEquals(42_000L, subject.contentPosition)
+
+        sink.castState = CastState(isCasting = false)
+        assertEquals(local.currentPosition, subject.contentPosition)
     }
 
     // ---------- 远程音量通道 ----------
@@ -241,6 +296,7 @@ class CastPlaybackPlayerTest {
         override var castState: CastState = CastState()
         override var displayPositionMs: Long = 0L
         override var displayDurationMs: Long = 0L
+        override var displayIsPlaying: Boolean = false
         override var castVolumeFollowPhone: Boolean = false
 
         val commands = mutableListOf<String>()

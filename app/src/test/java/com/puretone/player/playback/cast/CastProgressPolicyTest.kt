@@ -91,4 +91,56 @@ class CastProgressPolicyTest {
         assertFalse(CastProgressPolicy.isAnchorFresh(-1L, 1_500L))
         assertFalse(CastProgressPolicy.isAnchorFresh(1_501L, 1_500L))
     }
+
+    // ---------- 轮询静默期的连续外推（2026-11-06 真机回归） ----------
+
+    @Test
+    fun `轮询间隔内按墙钟线性外推`() {
+        assertEquals(
+            112_750L,
+            CastProgressPolicy.projectedPositionMs(112_000L, 750L, local)
+        )
+    }
+
+    @Test
+    fun `轮询静默两分钟仍继续外推而不是冻结在最后一次成功值`() {
+        // 真机 18:26:36 own-poll-null quiet=126252ms，旧实现在锚点超过 1.5s 后
+        // 直接停写，手机进度钉死在 112s，电视却已播到约 155s。
+        assertEquals(
+            238_000L,
+            CastProgressPolicy.projectedPositionMs(112_000L, 126_000L, 300_000L)
+        )
+    }
+
+    @Test
+    fun `静默外推钳到总时长不会越过曲目末尾`() {
+        assertEquals(
+            local,
+            CastProgressPolicy.projectedPositionMs(112_000L, 600_000L, local)
+        )
+    }
+
+    @Test
+    fun `锚点未初始化或时钟回拨时本帧不写`() {
+        assertEquals(null, CastProgressPolicy.projectedPositionMs(112_000L, 0L, local))
+        assertEquals(null, CastProgressPolicy.projectedPositionMs(112_000L, -1L, local))
+    }
+
+    @Test
+    fun `负锚点外推结果不会小于零`() {
+        assertEquals(0L, CastProgressPolicy.projectedPositionMs(-5_000L, 250L, local))
+    }
+
+    @Test
+    fun `停写窗口结束后重锚不会把停写时长累计进进度`() {
+        // 暂停 / 拖动 / 非投屏期间投影停写，但锚点墙钟仍在走。恢复时若沿用旧锚点，
+        // 10 秒暂停会一次外推出 122000（甚至钳到曲末）；正确做法是以当前展示位置
+        // 112000 重新锚定，恢复后第一帧只推进 250ms。
+        val staleProjection = CastProgressPolicy.projectedPositionMs(112_000L, 10_250L, local)
+        assertEquals(122_250L, staleProjection)
+        val reanchored = CastProgressPolicy.projectedPositionMs(
+            /* 恢复时以展示位置重锚 */ 112_000L, 250L, local
+        )
+        assertEquals(112_250L, reanchored)
+    }
 }

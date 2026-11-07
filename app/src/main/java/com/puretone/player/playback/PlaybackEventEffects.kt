@@ -121,7 +121,20 @@ internal class PlaybackEventEffects(
     override fun onPlaybackEnded() {
         // 末首自然播完（无 AUTO/REPEAT 过渡）的收尾。完成去重已由事件层在触发处负责，
         // 此处只做：睡眠定时归零 + 立即存档 + 空闲停服。
-        PlaybackEventLog.record("playback-ended", endedSnapshot())
+        val snapshot = endedSnapshot()
+        PlaybackEventLog.record("playback-ended", snapshot)
+        val state = uiState.value
+        if (PlaybackEndDiagnostics.isUnexpected(
+                repeatMode = state.repeatMode,
+                queueSize = state.queue.size,
+                playWhenReady = playerProvider()?.playWhenReady == true,
+                crossfading = crossfade.isCrossfading
+            )
+        ) {
+            // 循环模式 + 队列非空 + 用户没暂停，却进了 STATE_ENDED：引擎状态与 UI 镜像脱节。
+            // 只留证据，不在这里抢播放控制权（修复在换主重放，自动回绕兜底另议）。
+            PlaybackEventLog.record("playback-ended-unexpected", snapshot)
+        }
         sleepTimer.finishEndOfTrack()
         saveSessionNow()
         stopServiceIfIdle()
@@ -177,7 +190,12 @@ internal class PlaybackEventEffects(
     private fun currentDuration(): Long = playerProvider()?.duration?.takeIf { it > 0 } ?: 0L
 
     /** 播放结束类事件的现场快照（诊断报告靠它把「停服」与「淡化中的角色交换」对上账） */
-    private fun endedSnapshot(): String =
-        "idx=${playerProvider()?.currentMediaItemIndex} count=${playerProvider()?.mediaItemCount ?: 0} " +
-            "cf=${crossfade.isCrossfading}"
+    private fun endedSnapshot(): String {
+        val p = playerProvider()
+        val state = uiState.value
+        return "idx=${p?.currentMediaItemIndex} count=${p?.mediaItemCount ?: 0} " +
+            "cf=${crossfade.isCrossfading} repeat=${state.repeatMode} shuffle=${state.shuffle} " +
+            "queue=${state.queue.size} pwr=${p?.playWhenReady} state=${p?.playbackState} " +
+            "pos=${p?.currentPosition} dur=${p?.duration}"
+    }
 }

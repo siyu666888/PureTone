@@ -151,9 +151,10 @@ fun PlayerScreen(
             // 它与播放页 / 迷你条 / 通知栏读的是同一份 uiState（已镜像电视轮询 + 外推），
             // 不再各自直读 1Hz 的 castState.progressMs，避免三处进度互相对不上。
             val castPositionMs by vm.positionMs.collectAsStateWithLifecycle()
-            val castDurationMs = state.durationMs.takeIf { it > 0L } ?: (entry?.durationMs ?: 0L)
+            val castDurationMs by vm.durationMs.collectAsStateWithLifecycle()
             CastRemoteControlPanel(
                 castState = castState,
+                isPlaying = state.isPlaying,
                 positionMs = castPositionMs,
                 durationMs = castDurationMs,
                 title = displayTitle,
@@ -269,7 +270,7 @@ fun PlayerScreen(
 
             // 进度（加热区 + 拖动时间气泡）
             // P2-10：progress 是唯一需要高频刷新的部分，收集下沉到 ProgressSection 内部
-            val duration = if (state.durationMs > 0) state.durationMs else entry.durationMs
+            val duration by vm.durationMs.collectAsStateWithLifecycle()
             ProgressSection(vm = vm, durationMs = duration)
 
             Spacer(Modifier.height(2.dp))

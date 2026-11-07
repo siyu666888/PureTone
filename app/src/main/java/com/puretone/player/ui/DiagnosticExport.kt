@@ -3,6 +3,7 @@ package com.puretone.player.ui
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.PowerManager
 import androidx.core.content.FileProvider
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.puretone.player.BuildConfig
@@ -53,6 +54,12 @@ object DiagnosticExport {
         sb.appendLine(context.getString(R.string.pt_diag_013, Build.SUPPORTED_ABIS.joinToString()))
         sb.appendLine(context.getString(R.string.pt_diag_014, Locale.getDefault()))
         sb.appendLine()
+        appendBackgroundSelfCheck(context, sb)
+        sb.appendLine()
+        // 本地播放音频自检（2026-11-07 蓝牙后台「自动暂停」）：焦点事件类型、
+        // 输出设备类型与音量三态。判读说明见 LocalAudioDiagnostics / pt_diag_038。
+        LocalAudioDiagnostics.append(context, sb)
+        sb.appendLine()
         sb.appendLine(context.getString(R.string.pt_diag_015, PureToneApplication.CRASH_FILE))
         sb.appendLine(readCrash(context) ?: context.getString(R.string.pt_diag_016))
         sb.appendLine()
@@ -70,6 +77,36 @@ object DiagnosticExport {
         sb.appendLine(context.getString(R.string.pt_diag_024, CastNetworkLog.FILE_NAME))
         sb.appendLine(readCastNetwork(context))
         return sb.toString()
+    }
+
+    /**
+     * 后台投屏自检（2026-11-06 20:08 真机）。
+     *
+     * 投屏是 push 模式，手机同时是电视的 HTTP 音源与 1Hz 轮询遥控器；进程一旦被
+     * 系统冻结，电视会缓冲耗尽后 PAUSED / STOPPED（用户看到的「电视退出投屏」），
+     * 曲末也不会自动续投，直到切回前台。WakeLock 只保证 CPU 不睡，Doze 应用待机
+     * 与国产 ROM 的后台冻结都不看 WakeLock，必须靠电池优化白名单放行。
+     * 那次诊断里四个保活锁全 true、`own-poll-null quiet=176747ms failures=1`，
+     * 就是「锁在但进程仍被冻结」——把这两项直接写进报告，下次一眼可判。
+     */
+    private fun appendBackgroundSelfCheck(context: Context, sb: StringBuilder) {
+        // 诊断文本用「是/否/未知」三态：读取失败不能伪装成「否」，否则会误导排查
+        fun label(value: Boolean?): String = when (value) {
+            true -> "是"
+            false -> "否"
+            null -> "未知"
+        }
+        val pm = runCatching {
+            context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        }.getOrNull()
+        val ignored = runCatching {
+            pm?.isIgnoringBatteryOptimizations(context.packageName)
+        }.getOrNull()
+        val idle = runCatching { pm?.isDeviceIdleMode }.getOrNull()
+        sb.appendLine(context.getString(R.string.pt_diag_026))
+        sb.appendLine(context.getString(R.string.pt_diag_027, label(ignored)))
+        sb.appendLine(context.getString(R.string.pt_diag_028, label(idle)))
+        sb.appendLine(context.getString(R.string.pt_diag_029))
     }
 
     private fun readCastNetwork(context: Context): String = runCatching {

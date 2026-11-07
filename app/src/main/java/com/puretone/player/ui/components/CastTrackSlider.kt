@@ -44,6 +44,17 @@ private val ThumbActiveSize = 22.dp
 private val ThumbBorderWidth = 2.dp
 private val SliderHitHeight = 48.dp
 
+/**
+ * 轨道可视端点相对外层 24dp 栅格的内缩量。
+ *
+ * M3 Slider 为了让 thumb 中心能停在 0 / 1 端点，会把 track 左右各内收约一个
+ * thumb 半径；因此整宽 `fillMaxWidth()` 的轨道实际起止点并不贴父容器边界。
+ * 进度条左右时间、音量图标与百分比统一按这个值向内缩进，文字/图标边缘才落在
+ * 轨道端点上而不是贴在栅格线上（2026-11-06 用户确认的「数值与进度条对齐」）。
+ * 只作用于标注行，轨道自身位置不变；真机需要微调时改这一处即可。
+ */
+internal val CastTrackInset = 12.dp
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CastTrackSlider(

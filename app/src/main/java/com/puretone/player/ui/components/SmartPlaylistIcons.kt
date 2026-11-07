@@ -27,7 +27,8 @@ import kotlin.math.sin
  *
  * 极简单色矢量图标：仅保留核心符号（时钟 / 爱心 / 环形箭头），去掉了原先的「+」与「音符」，
  * 三个图标在 24 坐标系内均居中于 x12，视觉更干净统一：
- * - 环形箭头用填充式扇环绘制，不依赖 Stroke API；
+ * - 环形箭头用填充式扇环绘制，不依赖 Stroke API；箭头三角骑在环带圆线中心
+ *   （r=radius）上，箭尾中心与圆线中心重合，不再挂在外缘；
  * - 时钟为描边式（钟面 + 指针），按 2026-11-02 确认的 v5 预览规格实现；
  * - 配色复用品牌体系：最近添加=primary、我的最爱=FavoriteRed（与红心开关同源）、
  *   最近播放=tertiary，深浅三套主题自动适配。
@@ -123,7 +124,20 @@ private fun DrawScope.drawLoopArrows(color: Color) {
     drawCircularArrow(c, 8.5f, 130f, 70f, color)
 }
 
-/** 填充式扇环 + 实心箭头三角，避免依赖 Stroke API */
+/**
+ * 箭头三角的基准点：扇环末端处、落在**环带圆线中心**（r = [radius]）上的点。
+ *
+ * 这是「最近播放」图标的几何契约：三角底边中点取此锚点，箭尾中心才与圆线中心
+ * 重合，整块箭头骑在环带上。旧实现误用外缘点（r = radius + 0.9），箭尾中心
+ * r=9.4、尖端再沿切线飞到 r≈9.87，箭头整块挂在圆环外侧。抽成纯函数便于
+ * 纯 JVM 单测锁死半径，避免以后有人把基准点改回外缘。
+ *
+ * @param endRad 扇环末端角度（弧度），与 `startDeg + sweepDeg` 的换算结果一致
+ */
+internal fun circularArrowAnchor(center: Offset, radius: Float, endRad: Float): Offset =
+    Offset(center.x + radius * cos(endRad), center.y + radius * sin(endRad))
+
+/** 填充式扇环 + 实心箭头三角，避免依赖 Stroke API；三角形状与切向长度保持不变 */
 private fun DrawScope.drawCircularArrow(
     center: Offset, radius: Float, startDeg: Float, sweepDeg: Float, color: Color
 ) {
@@ -134,7 +148,6 @@ private fun DrawScope.drawCircularArrow(
     val sR = startDeg * PI.toFloat() / 180f
     val eR = (startDeg + sweepDeg) * PI.toFloat() / 180f
     val oS = Offset(center.x + outerR * cos(sR), center.y + outerR * sin(sR))
-    val oE = Offset(center.x + outerR * cos(eR), center.y + outerR * sin(eR))
     val iE = Offset(center.x + innerR * cos(eR), center.y + innerR * sin(eR))
     val seg = Path().apply {
         moveTo(oS.x, oS.y)
@@ -144,12 +157,16 @@ private fun DrawScope.drawCircularArrow(
         close()
     }
     drawPath(seg, color)
+    // 方案 A（2026-11-07 用户确认）：只把箭头基准径向内移 0.9（外缘 → 圆线中心）。
+    // 扇环、切向长度 ah、底边半宽 ah*0.7 全部不动，三段箭头同步生效；
+    // 尖端仍沿切线前伸，r≈9.01，是切线方向的自然结果，不再刻意压回圆上。
+    val base = circularArrowAnchor(center, radius, eR)
     val tx = -sin(eR); val ty = cos(eR)
     val ah = 3.0f
-    val tipX = oE.x + tx * ah; val tipY = oE.y + ty * ah
+    val tipX = base.x + tx * ah; val tipY = base.y + ty * ah
     val px = -ty; val py = tx
-    val lx = oE.x - px * ah * 0.7f; val ly = oE.y - py * ah * 0.7f
-    val rx = oE.x + px * ah * 0.7f; val ry = oE.y + py * ah * 0.7f
+    val lx = base.x - px * ah * 0.7f; val ly = base.y - py * ah * 0.7f
+    val rx = base.x + px * ah * 0.7f; val ry = base.y + py * ah * 0.7f
     val tri = Path().apply { moveTo(tipX, tipY); lineTo(lx, ly); lineTo(rx, ry); close() }
     drawPath(tri, color)
 }

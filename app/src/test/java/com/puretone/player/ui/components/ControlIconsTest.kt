@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 验证 v1.1.6 自绘线形图标：全部 8 枚在访问（触发 lazy 构造）时不应抛异常，
+ * 验证自绘线形图标：全部 9 枚在访问（触发 lazy 构造）时不应抛异常，
  * 且生成合法的 ImageVector（name 非空、path 节点已构建）。
  * 这是矢量图标主要的运行时风险点（arcTo / 闭环参数非法会在 build() 时抛错）。
  */
@@ -17,6 +17,7 @@ class ControlIconsTest {
         ControlIcons.SkipNext,
         ControlIcons.Play,
         ControlIcons.Pause,
+        ControlIcons.Volume,
         ControlIcons.Queue,
         ControlIcons.RepeatAll,
         ControlIcons.RepeatOne,

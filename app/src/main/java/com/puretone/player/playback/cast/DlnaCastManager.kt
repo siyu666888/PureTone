@@ -147,6 +147,30 @@ class DlnaCastManager @Inject constructor(
         progressHoldUntilMs = System.currentTimeMillis() + 2_500L
     }
 
+    /**
+     * 本地刚下发的 Play/Pause 期望态，以及忽略渲染器过渡帧的截止时刻。
+     *
+     * 1Hz 轮询比命令滞后 1~2 帧：`pause()` 已把 uiState 写成暂停，下一帧轮询却还报
+     * `PLAYING`，`CastSessionController` 会立刻把 uiState 覆盖回去；反之 `play()` 后
+     * 渲染器还停在 `PAUSED`，UI 就闪一下「已暂停」。宽限期内一律以期望态为准，
+     * 详见 [CastPlayStatePolicy]。
+     */
+    @Volatile
+    private var expectedPlaying: Boolean? = null
+
+    @Volatile
+    private var playStateGuardUntilMs = 0L
+
+    private fun notePlayStateCommand(expected: Boolean) {
+        expectedPlaying = expected
+        playStateGuardUntilMs = System.currentTimeMillis() + CastPlayStatePolicy.COMMAND_GUARD_MS
+    }
+
+    private fun clearPlayStateCommand() {
+        expectedPlaying = null
+        playStateGuardUntilMs = 0L
+    }
+
     init {
         // 音量下发通道常驻：合并连发的请求，并对最终值做一次回读校验
         scope.launch { drainVolumeRequests() }
@@ -240,6 +264,12 @@ class DlnaCastManager @Inject constructor(
         }
         val epoch = castEpoch.incrementAndGet()
         lastCastStartMs = System.currentTimeMillis()
+        // 这里**不能**登记「期望在播」：此刻新曲还没投出去，旧轮询读到的仍是上一首的
+        // STOPPED / PAUSED。命令宽限会把这些旧曲帧伪装成「新曲正在播」，令
+        // CastQueueCoordinator.playingSeen 提前置位；宽限一过又读到 STOPPED，就会被
+        // CastQueuePolicy 判成曲末而凭空多跳一首（慢速换曲 / APE 转码时可能连锁跳）。
+        // 起播缓冲的一帧 PAUSED 由 CastPlayStatePolicy 的 2s 去抖过滤，不需要再借命令
+        // 宽限；STOPPED 则必须立即采信，那是曲末推进的唯一信号。详见 onCastSucceeded。
         val needsTranscode = CastSourcePolicy.requiresTranscode(path)
 
         if (needsTranscode) {
@@ -320,7 +350,7 @@ class DlnaCastManager @Inject constructor(
         net.beginCastSession()
         var casted = false
         return try {
-            val failure = castByPreferredEngine(device, target, title, mimeType, upnpClass)
+            val failure = castByPreferredEngine(device, target, title, mimeType, upnpClass, epoch)
             if (failure == null) {
                 casted = true
                 CastResult.Success
@@ -329,7 +359,13 @@ class DlnaCastManager @Inject constructor(
                 CastResult.Failed(failure)
             }
         } finally {
-            if (!casted) net.endCastSession()
+            // 只归还「本次投送失败且仍是当前代次」的会话。投送途中 castEpoch 变化有两种：
+            // stopCast()（已自行 endCastSession）与新一轮 castSong()（已重新接管会话），
+            // 二者都不能在这里释放——beginCastSession/endCastSession 是布尔标记而非引用
+            // 计数，旧发一句无条件 endCastSession 就会把新会话刚拿到的保活锁与 Wi-Fi
+            // 绑定一起撤掉（2026-11-06 06:57 真机老坑的并发变体）。成功但已过期的那一发
+            // 由 onCastSucceeded() 按 epoch 作废状态，不动网络资源。
+            if (!casted && epoch == castEpoch.get()) net.endCastSession()
         }
     }
 
@@ -343,26 +379,27 @@ class DlnaCastManager @Inject constructor(
         target: File,
         title: String,
         mimeType: String,
-        upnpClass: String
+        upnpClass: String,
+        epoch: Long
     ): String? {
         // 已确认库通道必然被拒的设备（真机上的 QQLiveTV 渲染器），后续投送直连自有通道：
         // 否则每首歌都要先白等一轮库的超时失败，用户会觉得「投屏就是慢」。
         if (ownOnlyDevices.contains(device.id)) {
             CastNetworkLog.log("cast-engine 该设备已确认库通道被拒，直接走自有通道")
-            val ownFailure = castViaOwn(device, target, title, mimeType, upnpClass)
+            val ownFailure = castViaOwn(device, target, title, mimeType, upnpClass, epoch)
             if (ownFailure == null) return null
             CastNetworkLog.log("cast-engine 自有通道也不再成功，回退库通道重试")
-            return castViaLibrary(device, target, title, mimeType, upnpClass)
+            return castViaLibrary(device, target, title, mimeType, upnpClass, epoch)
         }
 
-        val libraryFailure = castViaLibrary(device, target, title, mimeType, upnpClass)
+        val libraryFailure = castViaLibrary(device, target, title, mimeType, upnpClass, epoch)
         if (libraryFailure == null) return null
 
         // 库只抛「Device rejected the cast request」、不带状态码与 cause，单看这句话
         // 无法区分「控制地址错 / SOAP 被拒 / 格式不支持」。失败后先异步补一次只读取证
         // （不阻塞），再换自有通道重试一次。
         launchProbe(device)
-        val ownFailure = castViaOwn(device, target, title, mimeType, upnpClass)
+        val ownFailure = castViaOwn(device, target, title, mimeType, upnpClass, epoch)
         if (ownFailure == null) {
             ownOnlyDevices.add(device.id)
             return null
@@ -377,7 +414,8 @@ class DlnaCastManager @Inject constructor(
         target: File,
         title: String,
         mimeType: String,
-        upnpClass: String
+        upnpClass: String,
+        epoch: Long
     ): String? {
         val error = runCatching {
             DLNACast.castLocalFile(
@@ -391,7 +429,7 @@ class DlnaCastManager @Inject constructor(
             engine = CastEngine.LIBRARY
             transport = null
             syncInitialVolumeNow()
-            onCastSucceeded(device, mimeType, "library")
+            onCastSucceeded(device, mimeType, "library", epoch)
             if (probedDevices.add(device.id)) launchProbe(device)
             return null
         }
@@ -408,17 +446,37 @@ class DlnaCastManager @Inject constructor(
         target: File,
         title: String,
         mimeType: String,
-        upnpClass: String
+        upnpClass: String,
+        epoch: Long
     ): String? {
         if (!tryOwnCast(device, target, title, mimeType, upnpClass)) return "自有通道投送失败"
         engine = CastEngine.OWN
         syncInitialVolumeNow()
-        onCastSucceeded(device, mimeType, "own")
+        onCastSucceeded(device, mimeType, "own", epoch)
         return null
     }
 
-    /** 投送成功后的统一收尾：状态、轮询、日志 */
-    private fun onCastSucceeded(device: Device, mimeType: String, engineName: String) {
+    /**
+     * 投送成功后的统一收尾：状态、轮询、日志。
+     *
+     * [epoch] 二次校验是「状态回魂」的唯一闸门：投送期间用户点「结束投屏」或又发了
+     * 新一轮投送时，[castEpoch] 已被刷新；此时不能再把 `isCasting` 写回 true，否则
+     * 明明已经断开，下一首投送完成又会自己「连上」（castSong 只在转码后校验过一次
+     * epoch，挡不住已经进入 SOAP 投送阶段的这一发）。
+     *
+     * 这里也**不要**补登记 `notePlayStateCommand(true)`：命令宽限期内的 PAUSED /
+     * PLAYING 都算「伪造的在播观测」，会让 CastQueueCoordinator.playingSeen 提前置位，
+     * 起播慢时下一次 STOPPED 就会被判成曲末而连跳队列。起播缓冲帧交给
+     * [CastPlayStatePolicy] 的 PAUSED 去抖，曲末 STOPPED 则必须立即采信。
+     */
+    private fun onCastSucceeded(device: Device, mimeType: String, engineName: String, epoch: Long) {
+        if (epoch != castEpoch.get()) {
+            CastNetworkLog.log(
+                "cast-ok-superseded epoch=$epoch current=${castEpoch.get()} " +
+                    "device=${device.name} engine=$engineName"
+            )
+            return
+        }
         _state.update {
             it.copy(
                 isCasting = true,
@@ -609,9 +667,19 @@ class DlnaCastManager @Inject constructor(
         false
     }
 
-    override suspend fun play(): Boolean = dispatch("play", { it.play() }, { DLNACast.play() })
+    override suspend fun play(): Boolean {
+        notePlayStateCommand(true)
+        val ok = dispatch("play", { it.play() }, { DLNACast.play() })
+        if (!ok) clearPlayStateCommand()
+        return ok
+    }
 
-    override suspend fun pause(): Boolean = dispatch("pause", { it.pause() }, { DLNACast.pause() })
+    override suspend fun pause(): Boolean {
+        notePlayStateCommand(false)
+        val ok = dispatch("pause", { it.pause() }, { DLNACast.pause() })
+        if (!ok) clearPlayStateCommand()
+        return ok
+    }
 
     suspend fun stop(): Boolean = dispatch("stop", { it.stop() }, { DLNACast.stop() })
 
@@ -654,6 +722,7 @@ class DlnaCastManager @Inject constructor(
         requestedVolume.value = null
         volumeTouchedByUser = false
         progressHoldUntilMs = 0L
+        clearPlayStateCommand()
         transport = null
         engine = CastEngine.LIBRARY
         currentDevice = null
@@ -682,6 +751,8 @@ class DlnaCastManager @Inject constructor(
         // 只记状态「变化」：1Hz 轮询如果每次都写一行，诊断文件会被刷爆
         var lastState: String? = null
         var lastPositionAvailable: Boolean? = null
+        // 渲染器自发 PAUSED 的去抖计时：一帧缓冲抖动不能翻 UI，见 CastPlayStatePolicy
+        var pausedSinceMs = 0L
         while (true) {
             // 「连续 3 次没回包」只证明手机侧最近收不到响应，不等于设备离线：
             // 息屏/Doze 短暂限制后台网络、刚从维护窗口醒来都会造成连续空窗
@@ -693,11 +764,9 @@ class DlnaCastManager @Inject constructor(
                 CastNetworkLog.log(
                     "cast-loss-confirm down=$stillDown ${net.keepAliveSnapshot()}"
                 )
-                if (stillDown) {
-                    markConnectionLost("投屏设备已断开")
-                    return
-                }
-                // 设备还在：清零重新进入正常轮询，不打断用户正在听的投屏。
+                if (stillDown && markConnectionLost("投屏设备已断开")) return
+                // 设备还在、或本次判定被换曲窗口抑制：清零重新进入正常轮询，
+                // 不打断用户正在听的投屏。
                 consecutiveFailures = 0
                 lastSuccessMs = System.currentTimeMillis()
             }
@@ -709,7 +778,9 @@ class DlnaCastManager @Inject constructor(
                 // 宽限期且不在换曲窗口内，才开始累计失败并留下取证日志。
                 val quietMs = System.currentTimeMillis() - lastSuccessMs
                 if (quietMs >= POLL_LOSS_GRACE_MS &&
-                    System.currentTimeMillis() - lastCastStartMs > 12_000L
+                    !CastLossPolicy.isWithinSwitchGrace(
+                        lastCastStartMs, System.currentTimeMillis()
+                    )
                 ) {
                     consecutiveFailures++
                     // 带上保活锁真实状态：下一次再断，一眼就能分清是「锁丢了」
@@ -745,9 +816,26 @@ class DlnaCastManager @Inject constructor(
                     }
                     lastState = mapped
                 }
+                // 播放态要经过「命令宽限 + PAUSED 去抖」才落进 CastState：
+                // UI/取反基准/通知栏都读它，直接采信 1Hz 瞬时值会造成误暂停与抖动。
+                // STOPPED 优先于命令宽限、立即生效且不去抖，曲末推进靠「在播→不在播」
+                // 的跃迁；把它伪装成「在播」会让 playingSeen 提前置位而连跳队列。
+                val nowMs = System.currentTimeMillis()
+                val decision = CastPlayStatePolicy.resolve(
+                    rawPlaying = state.equals("PLAYING", ignoreCase = true),
+                    isPausedState = mapped == CastQueuePolicy.STATE_PAUSED,
+                    previousStable = _state.value.isPlaying,
+                    commandExpected = expectedPlaying,
+                    guardRemainingMs = playStateGuardUntilMs - nowMs,
+                    pausedSinceMs = pausedSinceMs,
+                    nowMs = nowMs,
+                    isStoppedState = mapped == CastQueuePolicy.STATE_STOPPED
+                )
+                pausedSinceMs = decision.pausedSinceMs
+                if (decision.clearCommand) clearPlayStateCommand()
                 _state.update {
                     it.copy(
-                        isPlaying = state.equals("PLAYING", ignoreCase = true),
+                        isPlaying = decision.isPlaying,
                         playbackState = mapped,
                         progressMs = position?.first ?: 0L,
                         durationMs = position?.second ?: 0L,
@@ -762,14 +850,29 @@ class DlnaCastManager @Inject constructor(
     /** 库通道的状态轮询（原实现，保持不变） */
     private suspend fun pollLibraryTransport() {
         var consecutiveFailures = 0
+        // 与自有通道共用同一套播放态稳定化判据，避免两条通道行为分叉
+        var pausedSinceMs = 0L
         while (currentCoroutineContext().isActive) {
             try {
                 val st = DLNACast.getPlaybackState()
                 val progress = DLNACast.getProgress()
                 consecutiveFailures = 0
+                val nowMs = System.currentTimeMillis()
+                val decision = CastPlayStatePolicy.resolve(
+                    rawPlaying = st == DLNACast.PlaybackState.PLAYING,
+                    isPausedState = DlnaTransport.stateName(st.name) == CastQueuePolicy.STATE_PAUSED,
+                    previousStable = _state.value.isPlaying,
+                    commandExpected = expectedPlaying,
+                    guardRemainingMs = playStateGuardUntilMs - nowMs,
+                    pausedSinceMs = pausedSinceMs,
+                    nowMs = nowMs,
+                    isStoppedState = DlnaTransport.stateName(st.name) == CastQueuePolicy.STATE_STOPPED
+                )
+                pausedSinceMs = decision.pausedSinceMs
+                if (decision.clearCommand) clearPlayStateCommand()
                 _state.update {
                     it.copy(
-                        isPlaying = st == DLNACast.PlaybackState.PLAYING,
+                        isPlaying = decision.isPlaying,
                         playbackState = st.name,
                         progressMs = progress?.first ?: 0L,
                         durationMs = progress?.second ?: 0L,
@@ -779,19 +882,20 @@ class DlnaCastManager @Inject constructor(
                         hasProgressInfo = progress != null
                     )
                 }
-                // 渲染器上报流错误：投屏已不可用，交由上层回退本地播放
-                if (st == DLNACast.PlaybackState.ERROR) {
+                // 渲染器上报流错误：投屏已不可用，交由上层回退本地播放。
+                // 换曲窗口内的 ERROR 只是旧曲过渡帧，markConnectionLost 会自行抑制。
+                if (st == DLNACast.PlaybackState.ERROR &&
                     markConnectionLost("投屏设备播放异常")
-                    return
-                }
+                ) return
             } catch (e: Exception) {
                 consecutiveFailures++
                 Log.w(TAG, "cast polling failed ($consecutiveFailures)", e)
                 // M3：连续多次取不到状态 → 设备大概率已离线（断网/关机/离开 Wi-Fi）。
                 // 单次失败可能是渲染器正忙，不足以判定失联。
                 if (consecutiveFailures >= CastQueuePolicy.MAX_CONSECUTIVE_POLL_FAILURES) {
-                    markConnectionLost("投屏设备已断开")
-                    return
+                    if (markConnectionLost("投屏设备已断开")) return
+                    // 换曲窗口内抑制：复位计数继续轮询，别每 1s 刷一条取证日志
+                    consecutiveFailures = 0
                 }
             }
             delay(1_000)
@@ -804,8 +908,22 @@ class DlnaCastManager @Inject constructor(
      * 置 [CastState.isConnectionLost] 是给上层的**唯一信号**：由它决定停投屏、
      * 切回本地播放并提示用户。此处不直接动本地播放器——投屏是附加能力，
      * 播放链路的归属权始终在 [com.puretone.player.playback.PlaybackManager] 手上。
+     *
+     * @return true=确实判定失联（调用方应结束轮询）；false=处于换曲窗口，本次判定被
+     *   抑制，调用方必须复位失败计数并继续轮询，不能就此退出循环。
      */
-    private fun markConnectionLost(reason: String) {
+    private fun markConnectionLost(reason: String): Boolean {
+        val nowMs = System.currentTimeMillis()
+        if (CastLossPolicy.isWithinSwitchGrace(lastCastStartMs, nowMs)) {
+            // SetAVTransportURI/Play 换 URI 窗口内，旧轮询读到 STOPPED / ERROR / 空回包
+            // 都只是过渡帧；此处若一帧把 isCasting 写成 false，遥控页整页跳回普通播放页，
+            // 随后 onCastSucceeded 又写回 true，就是真机看到的「切歌时断开又连上」。
+            CastNetworkLog.log(
+                "cast-loss-skipped reason=$reason sinceCast=${nowMs - lastCastStartMs}ms " +
+                    net.keepAliveSnapshot()
+            )
+            return false
+        }
         Log.w(TAG, "投屏连接失效：$reason")
         CastNetworkLog.log("cast-conn-lost reason=$reason")
         _state.update {
@@ -821,6 +939,7 @@ class DlnaCastManager @Inject constructor(
         stopPolling()
         httpServer.stop()
         net.endCastSession()
+        return true
     }
 
     private fun stopPolling() {

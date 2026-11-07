@@ -41,10 +41,13 @@ internal class PlaybackController(
 ) : SpeedControlPort {
     fun togglePlayPause() {
         crossfade.cancel()
-        // 投屏态：必须按**渲染器**的状态取反。本地 ExoPlayer 恒为暂停，
-        // 若按它判断，投屏中按暂停会走成「播放」，用户永远停不下来。
+        // 投屏态：必须按**已稳定的展示态**取反。本地 ExoPlayer 恒为暂停，不能用它；
+        // 也不能直读 1Hz 轮询的 castState.isPlaying——它比命令滞后 1~2 帧，且渲染器
+        // 偶发一帧 PAUSED_PLAYBACK 会让「点播放」被取反成 Pause（真机 18:24:25）。
+        // uiState.isPlaying 由命令即时写入、由 CastSessionController 镜像稳定后的轮询值，
+        // 与遥控页/迷你条/通知栏显示的是同一个值，取反基准才不会和 UI 打架。
         if (castState().isCasting) {
-            if (castState().isPlaying) pause() else play()
+            if (uiState.value.isPlaying) pause() else play()
             return
         }
         val p = playerProvider()
@@ -84,6 +87,12 @@ internal class PlaybackController(
         // 投屏态：暂停的是渲染器。本地本就是暂停的，这里不能再去 pause 本地
         // （否则 stopCast 后恢复本地播放时，位置/状态会被二次重置）。
         if (castState().isCasting) {
+            // 幂等：连点/误触时，1Hz 轮询还没把上一次 Pause 反映进状态，
+            // 重复下发不会让渲染器更「暂停」，只会把 user-pause 日志与状态抖动搅在一起。
+            if (!uiState.value.isPlaying) {
+                PlaybackEventLog.record("pause-skipped", "投屏态已暂停")
+                return
+            }
             scope.launch { dlnaCast.pause() }
             uiState.update { it.copy(isPlaying = false) }
             sink.saveSessionNow()

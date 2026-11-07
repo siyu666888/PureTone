@@ -314,12 +314,19 @@ class CastSessionControllerTest {
     @Test
     fun `门面状态与展示进度时长取自 uiState`() {
         val harness = Harness(CoroutineScope(UnconfinedTestDispatcher()))
-        harness.castPort.state.value = CastState(isCasting = true, castVolume = 42)
-        harness.uiState.value = PlaybackUiState(positionMs = 12_000L, durationMs = 200_000L)
+        // 1Hz 轮询值故意与统一展示态相反：门面必须跟 uiState，避免瞬时 PAUSED
+        // 让通知栏/锁屏的媒体按键判反方向（真机 18:24:25 的误暂停）。
+        harness.castPort.state.value = CastState(
+            isCasting = true, isPlaying = false, castVolume = 42
+        )
+        harness.uiState.value = PlaybackUiState(
+            isPlaying = true, positionMs = 12_000L, durationMs = 200_000L
+        )
 
         assertEquals(42, harness.subject.castState.castVolume)
         assertEquals(12_000L, harness.subject.displayPositionMs)
         assertEquals(200_000L, harness.subject.displayDurationMs)
+        assertTrue(harness.subject.displayIsPlaying)
         assertTrue(harness.subject.castVolumeFollowPhone)
     }
 

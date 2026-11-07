@@ -1,6 +1,5 @@
 package com.puretone.player.playback
 
-import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.puretone.player.data.settings.PureToneSettings
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,13 +53,26 @@ internal class PlaybackSettingsApplier(
         if (s.shuffle != uiState.value.shuffle) {
             uiState.update { it.copy(shuffle = s.shuffle) }
         }
-        playerProvider()?.let { p ->
-            p.repeatMode = when (repeat) {
-                RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                RepeatMode.ALL -> Player.REPEAT_MODE_ALL
-                RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-            }
-            p.shuffleModeEnabled = s.shuffle
-        }
+        playerProvider()?.let { applyOrderTo(it, s.playbackSpeed) }
+    }
+
+    /**
+     * 把播放顺序 / 随机 / 倍速同步到指定播放器。
+     *
+     * 与 [apply] 的区别：本方法**只有引擎侧三个赋值**，不触发睡眠定时、音效会话、
+     * ReplayGain 等任何副作用，因此可以安全地在每首交叉淡化收尾时调用。
+     *
+     * @param speed 倍速来源由调用方决定：设置流用 [PureToneSettings.playbackSpeed]，
+     *   换主重放用旧主的 `playbackParameters.speed`（引擎真值）。刻意不读
+     *   `uiState.speed`，避免与 [apply] 里 `controller.setSpeed` 的先后顺序耦合。
+     *
+     * 交叉淡化换主时必须对新主与旧主**双方**各调一次：只给新主设，下一次角色交换时
+     * 另一个实例仍是旧值，队列末尾 STATE_ENDED 会隔一首复现（2026-11-07 07:38 现场）。
+     */
+    fun applyOrderTo(target: ExoPlayer, speed: Float) {
+        val state = uiState.value
+        target.repeatMode = PlaybackOrderState.playerRepeatModeOf(state.repeatMode)
+        target.shuffleModeEnabled = state.shuffle
+        target.setPlaybackSpeed(PlaybackOrderState.normalizedSpeed(speed))
     }
 }

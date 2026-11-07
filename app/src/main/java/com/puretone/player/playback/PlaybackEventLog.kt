@@ -30,6 +30,18 @@ import java.util.Locale
  *   `player-error` = 当前曲目解不出来；
  *   其余（没有任何前置记录）= 音频焦点被夺 / 输出设备变化（系统侧行为）。
  * - `error-skip`：播放失败后自动跳过下一首（自愈路径已生效）。
+ * - `audio-focus-*`（2026-11-07 蓝牙后台取证）：`audio-focus-change` 记系统原始
+ *   focusChange 与 holding / resumeOnGain 的迁移前后值；`audio-focus-pause-skipped`
+ *   / `resume` / `duck` / `unduck` 记命令是否落地、主播放器音量、playWhenReady
+ *   与当时的输出设备类型（`route=`）；`audio-focus-request` / `audio-focus-abandon`
+ *   记焦点究竟有没有拿到或释放。「无声但进度还在走」时按时间顺序连读这几行，
+ *   再看有没有 `paused-with-queue` 即可定性。
+ * - `playback-ended` / `playback-ended-unexpected`（2026-11-07 循环模式停播取证）：
+ *   前者记播放器进入 STATE_ENDED 时的 `idx / count / repeat / shuffle / queue /
+ *   pwr / state / pos / dur`；后者表示「循环模式 + 队列非空 + playWhenReady 仍为 true
+ *   且不在淡化中」却结束——这时界面显示暂停但**不会**写 `paused-with-queue`，
+ *   是引擎播放顺序与 UI 镜像脱节的特征。看到它请核 `repeat=ALL` 而播放器实际
+ *   `REPEAT_MODE_OFF` 的换主路径，而不是去查焦点或蓝牙路由。
  *
  * ## 取舍
  *

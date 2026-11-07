@@ -28,6 +28,15 @@ internal interface CastCommandSink {
     val displayPositionMs: Long
     val displayDurationMs: Long
 
+    /**
+     * 投屏期对外展示的播放/暂停态。
+     *
+     * 必须取 uiState 那一份「命令即时写入 + 稳定化轮询镜像」的值，不能直读
+     * [CastState.isPlaying]：后者比命令滞后 1~2 帧，渲染器偶发一帧 PAUSED 还会让
+     * 通知栏/锁屏的媒体按键被 Media3 判成相反方向，用户点「播放」反而下发 Pause。
+     */
+    val displayIsPlaying: Boolean
+
     /** 投屏音量是否跟随手机音量键（设置项，实时读取） */
     val castVolumeFollowPhone: Boolean
 
@@ -65,7 +74,8 @@ internal interface CastCommandSink {
  *
  * ## 状态来源
  *
- * - 播放/暂停态：投屏期来自 [CastState]（由 `DlnaCastManager` 1Hz 轮询渲染器填充）；
+ * - 播放/暂停态：投屏期来自 [CastCommandSink.displayIsPlaying]（uiState 的命令期望态
+ *   叠加稳定化轮询镜像），与播放页 / 遥控页 / 迷你条同源；
  * - 进度 / 时长：投屏期来自 [CastCommandSink.displayPositionMs] 与
  *   [CastCommandSink.displayDurationMs]，即宿主已「镜像轮询 + 250ms 外推 + 本地时长兜底」
  *   的那一份，与播放页、投屏遥控页同源。直读 1Hz 的 [CastState.progressMs] 会让通知栏
@@ -158,11 +168,31 @@ internal class CastPlaybackPlayer(
 
     // ---------- 状态：投屏期取自渲染器 ----------
 
+    /**
+     * 投屏期「想播」恒为 true，**刻意不跟随渲染器瞬时 PAUSED**。
+     *
+     * Media3 1.6.0 的前台判据（反编译 `MediaNotificationManager.isAnySessionUserEngaged`
+     * 确认）：对每个 session 读 `MediaController.getPlayWhenReady()`，为 true 且
+     * `playbackState` 是 READY/BUFFERING 才判定「用户仍在用」→ `shouldRunInForeground()`
+     * 为 true → 维持 FGS 与媒体通知。投屏门面的 `playbackState` 本来就固定 READY，
+     * 所以 `playWhenReady` 就是唯一开关。
+     *
+     * 投屏是 push 模式：手机既是电视的 HTTP 音源，又是 1Hz 轮询遥控器，整个会话
+     * 必须一直保持 FGS 等级。若这里跟着 `displayIsPlaying` 翻成 false（渲染器一帧
+     * PAUSED_PLAYBACK、或用户短暂暂停），服务会被降级成普通后台进程，国产 ROM
+     * 随即冻结进程：电视拉不到流 → 缓冲耗尽 → PAUSED/STOPPED（用户看到的
+     * 「电视退出投屏」）；轮询协程整段停摆 → 曲末不推进、切歌不续投，直到用户
+     * 切回前台才补投下一首。2026-11-06 20:08 真机诊断中四个保活锁全为 true，
+     * 轮询仍静默 176747ms 且 failures=1，正是进程被冻结而非轮询持续失败。
+     *
+     * 播放/暂停的真实展示仍由 [isPlaying] 取 `displayIsPlaying`（已过命令宽限与
+     * PAUSED 去抖），两个方法语义不同，不会把「投屏中」误显示成「正在播放」。
+     */
     override fun getPlayWhenReady(): Boolean =
-        if (casting) sink.castState.isPlaying else super.getPlayWhenReady()
+        if (casting) true else super.getPlayWhenReady()
 
     override fun isPlaying(): Boolean =
-        if (casting) sink.castState.isPlaying else super.isPlaying()
+        if (casting) sink.displayIsPlaying else super.isPlaying()
 
     override fun getPlaybackState(): Int =
         if (casting) Player.STATE_READY else super.getPlaybackState()
@@ -179,6 +209,36 @@ internal class CastPlaybackPlayer(
         } else {
             super.getDuration()
         }
+
+    /**
+     * 锁屏 / 通知栏：补齐 `content*` 与 `buffered*` 四个 getter。
+     *
+     * 只 override `getCurrentPosition()` / `getDuration()` 是不够的：Media3 1.6.0 的
+     * `ForwardingPlayer` 把 `getContentPosition()` / `getContentDuration()` /
+     * `getContentBufferedPosition()` / `getBufferedPosition()` 逐个**直接转发给被包装的
+     * 本地 ExoPlayer**（`Player` 接口这几个方法没有 default 实现，不会被我们的
+     * `getCurrentPosition()` 间接覆盖）。而投屏期本地播放器是暂停的，于是：
+     * - `DefaultMediaNotificationProvider.getPlaybackStartTimeEpochMs()` 读
+     *   `getContentPosition()` → 通知 `setWhen` / Chronometer 起点用的是本地旧位置；
+     * - `PlayerWrapper.createPositionInfoForBundling()` 的 `contentPositionMs` 与
+     *   `createSessionPositionInfoForBundling()` 的 `contentDurationMs` 落到本地值；
+     * - `PlaybackStateCompat` 的 bufferedPosition 取本地缓冲位置。
+     *
+     * 结果就是「锁屏 / 通知栏媒体卡片的进度条与电视实际进度对不上」。本项目无广告、
+     * 无动态媒体项，`contentPosition == currentPosition`、`contentDuration == duration`
+     * 成立，直接委托给已取镜像值的两个 getter 即可；非投屏分支仍原样转发本地。
+     */
+    override fun getContentPosition(): Long =
+        if (casting) getCurrentPosition() else super.getContentPosition()
+
+    override fun getContentDuration(): Long =
+        if (casting) getDuration() else super.getContentDuration()
+
+    override fun getContentBufferedPosition(): Long =
+        if (casting) getCurrentPosition() else super.getContentBufferedPosition()
+
+    override fun getBufferedPosition(): Long =
+        if (casting) getCurrentPosition() else super.getBufferedPosition()
 
     // ---------- 设备音量：投屏期映射到渲染器 ----------
 

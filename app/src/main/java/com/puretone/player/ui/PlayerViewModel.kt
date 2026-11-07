@@ -121,6 +121,32 @@ class PlayerViewModel @Inject constructor(
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
+    /**
+     * 展示总时长：投屏期与 [positionMs] 同源的**唯一出口**。
+     *
+     * 旧实现在播放页 / 遥控页 / 迷你条各写一遍 `uiState.durationMs ?: entry.durationMs`，
+     * 又把它们拆进 `discreteState` 与 `positionMs` 两条独立 `stateIn`，切歌或重新订阅时
+     * 首帧时序不同就会出现「进度 0 / 时长 219557」这类错位。渲染器只回 RelTime 不回
+     * TrackDuration 是本机常态，`uiState.durationMs` 由编排层做「渲染器→本地→队列条目」
+     * 三级兜底；这里再兜一次队列条目，冷启动直接投屏时也能立刻有刻度。
+     */
+    val durationMs: StateFlow<Long> = playback.uiState
+        .map { state -> displayDurationMs(state) }
+        .distinctUntilChanged()
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            // stateIn 的初始值也必须走同一份三级兜底：冷启动直接投屏时
+            // uiState.durationMs 还是 0，若直接用它作首帧，迷你条/遥控页会短暂
+            // 显示「--:--」而播放页已有刻度——正是上面注释要消灭的口径分叉。
+            displayDurationMs(playback.uiState.value)
+        )
+
+    private fun displayDurationMs(state: PlaybackUiState): Long =
+        state.durationMs.takeIf { it > 0L }
+            ?: state.currentEntry?.durationMs?.takeIf { it > 0L }
+            ?: 0L
+
     /** 当前歌曲的解析后歌词（无歌词文件时为 null） */
     private val _lyrics = MutableStateFlow<ParsedLyrics?>(null)
     val lyrics: StateFlow<ParsedLyrics?> = _lyrics.asStateFlow()

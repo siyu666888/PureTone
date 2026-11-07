@@ -48,12 +48,24 @@ internal object CastProgressPolicy {
             ?: Long.MAX_VALUE
 
     /**
-     * 外推锚点是否仍可用。
+     * 外推锚点是否仍「新鲜」（尚未跨过一次 1Hz 轮询间隔）。
      *
-     * 锚点由 1Hz 轮询刷新。拖动乐观窗口内镜像被挂起，锚点会变旧；窗口结束后若继续
-     * 用「旧位置 + 累积墙钟」外推，进度条会瞬间跳到没播到的地方，再被下一帧拉回。
-     * 过旧就停写这一帧，等下一次轮询重设锚点。
+     * 编排层据此决定**是否需要前移锚点**：过旧时把墙钟增量折进锚点后继续外推，
+     * 而不是停写。拖动乐观窗口期间的停写由 `progressHoldUntilMs` 单独负责，
+     * 不再靠「锚点过旧就不外推」来防跳变。
      */
     fun isAnchorFresh(elapsedMs: Long, maxAgeMs: Long): Boolean =
         elapsedMs > 0L && elapsedMs <= maxAgeMs
+
+    /**
+     * 一次外推应展示的位置；返回 null 表示本帧不写（锚点未初始化 / 时钟回拨）。
+     *
+     * 轮询静默（息屏 / Doze / 渲染器短时不应答）时电视仍在播，若因锚点超过 1.5s
+     * 就冻结进度，手机会一直停在最后一次成功轮询的位置，与电视越差越大——真机
+     * 18:26:45 结束投屏时 `tv=112000` 却是已播约 155 秒的陈旧快照。这里允许
+     * 按墙钟继续线性外推，由 [projectionCapMs] 钳到总时长，下一次成功轮询再校正。
+     */
+    fun projectedPositionMs(anchorMs: Long, elapsedMs: Long, capMs: Long): Long? =
+        if (elapsedMs <= 0L) null
+        else (anchorMs + elapsedMs).coerceAtLeast(0L).coerceAtMost(capMs)
 }

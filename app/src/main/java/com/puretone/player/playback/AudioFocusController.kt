@@ -30,10 +30,19 @@ import android.util.Log
  *
  * 决策逻辑抽到 [FocusDecision]（纯函数）：焦点回调是最容易写歪的地方——把「瞬态丢失后
  * 该不该自动恢复」写错，就会出现「接完电话音乐不再响」或「打游戏时插广告音乐又自己起来」。
+ *
+ * ## 取证（2026-11-07 蓝牙后台「自动暂停」）
+ *
+ * 焦点回调现在把「原始 focusChange + 决策前后状态 + 下发的命令」写进
+ * [PlaybackEventLog]，格式由 [FocusDecision.describeChange] 生成；[request] / [abandon]
+ * 也各自留一行。**这一步只读不改**：状态迁移、命令下发、跳过条件全部保持原样，
+ * 用途仅是把 07:40 诊断里那三条只有结果的 `audio-focus-pause-skipped` 补全成因。
  */
 internal class AudioFocusController(
     context: Context,
-    private val onCommand: (Command) -> Unit
+    private val onCommand: (Command) -> Unit,
+    /** 注入点：默认落到播放事件日志；单测用替身收集，避免依赖 Android Log。 */
+    private val record: (String, String) -> Unit = { event, detail -> PlaybackEventLog.record(event, detail) }
 ) {
 
     /** 焦点变化翻译出的播放命令；宿主负责落到当前主播放器 */
@@ -60,8 +69,17 @@ internal class AudioFocusController(
     /** 是否因**瞬态**丢失而暂停（只有它才允许在拿到焦点时自动续播） */
     private var resumeOnGain: Boolean = false
 
-    private val listener = AudioManager.OnAudioFocusChangeListener { change ->
+    private val listener = AudioManager.OnAudioFocusChangeListener { onFocusChange(it) }
+
+    /**
+     * 焦点回调主体（包内可见，便于单测直接驱动，不依赖 ShadowAudioManager）。
+     *
+     * 记录必须在状态迁移**之前**完成：日志要能还原「从什么状态、因什么事件、
+     * 迁到什么状态」，只有迁移后的值就等于把现场擦掉了。
+     */
+    internal fun onFocusChange(change: Int) {
         val next = FocusDecision.onChange(change, holding, resumeOnGain)
+        record("audio-focus-change", FocusDecision.describeChange(change, holding, resumeOnGain, next))
         holding = next.holding
         resumeOnGain = next.resumeOnGain
         next.command?.let(onCommand)
@@ -96,6 +114,7 @@ internal class AudioFocusController(
             .onFailure { Log.w(TAG, "requestAudioFocus failed", it) }
             .getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
         holding = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        record("audio-focus-request", "result=${requestResultName(result)} holding=$holding resume=$resumeOnGain")
         return holding
     }
 
@@ -106,14 +125,28 @@ internal class AudioFocusController(
      * 「来电挂断后继续播」会失效。
      */
     fun abandon() {
-        if (!holding) return
+        if (!holding) {
+            // 07:40 诊断的关键疑点：焦点已丢时这里静默 return，而编排层又跳过了
+            // PAUSE，于是「应用以为还在播、系统认为它已让出焦点」不留任何痕迹。
+            record("audio-focus-abandon", "action=skipped holding=false resume=$resumeOnGain")
+            return
+        }
+        val wasResume = resumeOnGain
         holding = false
         resumeOnGain = false
         runCatching { audioManager?.abandonAudioFocusRequest(request) }
+        record("audio-focus-abandon", "action=released resume-was=$wasResume")
     }
 
     private companion object {
         const val TAG = "AudioFocusController"
+
+        fun requestResultName(result: Int): String = when (result) {
+            AudioManager.AUDIOFOCUS_REQUEST_GRANTED -> "GRANTED"
+            AudioManager.AUDIOFOCUS_REQUEST_FAILED -> "FAILED"
+            AudioManager.AUDIOFOCUS_REQUEST_DELAYED -> "DELAYED"
+            else -> "code=$result"
+        }
     }
 }
 
@@ -160,4 +193,18 @@ internal object FocusDecision {
 
         else -> Next(null, holding, resumeOnGain)
     }
+
+    /** 系统原始 focusChange → 可读名；未知值单独标出，避免把 -3 之类误读成正常事件。 */
+    fun nameOf(change: Int): String = when (change) {
+        AudioManager.AUDIOFOCUS_GAIN -> "GAIN"
+        AudioManager.AUDIOFOCUS_LOSS -> "LOSS"
+        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> "LOSS_TRANSIENT"
+        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> "LOSS_TRANSIENT_CAN_DUCK"
+        else -> "UNKNOWN"
+    }
+
+    /** 一条焦点事件的完整取证行：迁移前状态 → 事件 → 命令 → 迁移后状态。 */
+    fun describeChange(change: Int, holding: Boolean, resumeOnGain: Boolean, next: Next): String =
+        "type=${nameOf(change)}($change) cmd=${next.command?.name ?: "NONE"} " +
+            "holding=$holding->${next.holding} resume=$resumeOnGain->${next.resumeOnGain}"
 }

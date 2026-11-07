@@ -88,4 +88,44 @@ class FocusDecisionTest {
         assertTrue(next.holding)
         assertFalse(next.resumeOnGain)
     }
+
+    // ---------- 2026-11-07 蓝牙后台取证：日志可读性 ----------
+
+    @Test
+    fun `nameOf 把四类焦点变化翻成可读名，未知值单独标出`() {
+        assertEquals("GAIN", FocusDecision.nameOf(AudioManager.AUDIOFOCUS_GAIN))
+        assertEquals("LOSS", FocusDecision.nameOf(AudioManager.AUDIOFOCUS_LOSS))
+        assertEquals("LOSS_TRANSIENT", FocusDecision.nameOf(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT))
+        assertEquals(
+            "LOSS_TRANSIENT_CAN_DUCK",
+            FocusDecision.nameOf(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        )
+        assertEquals("UNKNOWN", FocusDecision.nameOf(12345))
+    }
+
+    @Test
+    fun `焦点取证行记录迁移前后状态与命令，而不只是结果`() {
+        val next = FocusDecision.onChange(AudioManager.AUDIOFOCUS_LOSS, holding = true, resumeOnGain = true)
+        val line = FocusDecision.describeChange(
+            AudioManager.AUDIOFOCUS_LOSS,
+            holding = true,
+            resumeOnGain = true,
+            next = next
+        )
+
+        assertTrue(line.contains("type=LOSS(-1)"))
+        assertTrue(line.contains("cmd=PAUSE"))
+        assertTrue("必须保留迁移前的 holding", line.contains("holding=true->false"))
+        assertTrue("必须保留迁移前的恢复意图", line.contains("resume=true->false"))
+    }
+
+    @Test
+    fun `未知变化不下命令时取证行写 NONE 且状态不变`() {
+        val next = FocusDecision.onChange(12345, holding = false, resumeOnGain = false)
+        val line = FocusDecision.describeChange(12345, holding = false, resumeOnGain = false, next = next)
+
+        assertTrue(line.contains("type=UNKNOWN(12345)"))
+        assertTrue(line.contains("cmd=NONE"))
+        assertTrue(line.contains("holding=false->false"))
+    }
 }

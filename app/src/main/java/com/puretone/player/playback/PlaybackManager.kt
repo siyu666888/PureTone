@@ -30,6 +30,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -230,6 +233,15 @@ class PlaybackManager @Inject constructor(
                 val outgoingGain = replayGainProcessor
                 player = sec
                 replayGainProcessor = replayGainProcessorB
+                // 播放顺序 / 随机 / 倍速必须随角色一起搬家：两个 ExoPlayer 各自持有自己的
+                // repeatMode，而设置流只在 bind 后发射一次、只作用于当时的主播放器。
+                // 换主不重放时两个实例会逐首交替 ALL / OFF，前 N 首都靠淡化主动推进被掩盖，
+                // 直到队列走到末尾、主恰好是 OFF 的那一次：hasNext=false → 不触发淡化 →
+                // Media3 不回绕直接 STATE_ENDED，UI 停成「暂停」且无 paused-with-queue。
+                // 双方都同步，避免下一次角色交换把旧值再换回来。
+                val carriedSpeed = out.playbackParameters.speed
+                settingsApplier.applyOrderTo(sec, carriedSpeed)
+                settingsApplier.applyOrderTo(out, carriedSpeed)
                 // 备援随之换成「原主播放器」，其 RG 处理器即原主处理器。
                 // 原实现漏了这一步：收尾后 secondaryPlayer 仍指向已升为主播放器的实例，
                 // 于是第二次淡化会拿主播放器当备援，把它的队列清成单曲——表现为
@@ -439,6 +451,20 @@ class PlaybackManager @Inject constructor(
 
     // 主/备播放器监听器已下沉到 PlaybackEventListener（P1-1 拆分第六刀）：
     // 事件解释、分类与完成去重都在那里，本类只通过 PlaybackEventSink 实现副作用。
+
+    /**
+     * 桌面小组件的播放态同步。
+     *
+     * 投屏期渲染器的播放/暂停由 [CastSessionController] 直接写 uiState，不经过本地
+     * ExoPlayer 的 onIsPlayingChanged，小组件按钮会停在投屏开始那一刻的状态——
+     * 用户看到的「其它卡片与播放页不一致」也包含它。这里按**展示态**统一推一次，
+     * 与本地事件路径的重复请求由 WidgetUpdater 内部 300ms 去抖合并。
+     */
+    private val widgetPlayStateSync = scope.launch {
+        _uiState.map { it.isPlaying }.distinctUntilChanged().collect {
+            widgetUpdater.requestUpdate()
+        }
+    }
 
     private val ticker = scope.launch {
         while (isActive) {

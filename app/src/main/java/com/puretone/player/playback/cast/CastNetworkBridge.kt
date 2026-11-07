@@ -174,10 +174,31 @@ internal class CastNetworkBridge(private val appContext: Context) {
         }
     }
 
-    /** 诊断用：保活锁与网络绑定的真实持有状态，落进轮询失败日志便于下一轮取证 */
+    /**
+     * 诊断用：保活锁、网络绑定与**系统省电策略**的真实状态，落进轮询失败日志便于下一轮取证。
+     *
+     * 2026-11-06 20:08 真机（小米 / Android 16）出现 `quiet=176747ms failures=1` 且
+     * wake/wifi/bound/session 四项全为 true：WakeLock 只保证 CPU 不睡，挡不住 Doze
+     * 应用待机与国产 ROM 的后台冻结。把电池优化白名单与 Doze 状态写进同一行，
+     * 下一份诊断就能直接区分「锁丢了」（生命周期 bug）与「锁在但系统仍掐网/冻结」
+     * （需要用户放行白名单），不用再靠猜。
+     */
     fun keepAliveSnapshot(): String =
         "wake=${sessionWakeLock?.isHeld == true} wifi=${sessionWifiLock?.isHeld == true} " +
-            "bound=$castNetHeld session=$sessionActive"
+            "bound=$castNetHeld session=$sessionActive " +
+            "battery=${batteryOptimizationLabel()} doze=${deviceIdleLabel()}"
+
+    /** 电池优化白名单：true=已忽略（放行）、false=受限制、null=读取失败 */
+    private fun batteryOptimizationLabel(): String = runCatching {
+        val pm = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        pm?.isIgnoringBatteryOptimizations(appContext.packageName)
+    }.getOrNull().let { if (it == true) "ignored" else if (it == false) "restricted" else "unknown" }
+
+    /** 设备是否处于低电耗（Doze）模式 */
+    private fun deviceIdleLabel(): String = runCatching {
+        val pm = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        pm?.isDeviceIdleMode
+    }.getOrNull().let { if (it == true) "on" else if (it == false) "off" else "unknown" }
 
     /** 还原投屏会话的进程网络（幂等：未持有时无操作，不会误撤别人的绑定） */
     private fun releaseCastNetwork() {

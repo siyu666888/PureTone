@@ -58,6 +58,7 @@ import com.puretone.player.R
 import com.puretone.player.playback.cast.CastState
 import com.puretone.player.ui.cast.CastDeviceLabel
 import com.puretone.player.ui.cast.CastDeviceSheet
+import com.puretone.player.ui.components.CastTrackInset
 import com.puretone.player.ui.components.CastTrackSlider
 import com.puretone.player.ui.components.ControlIcons
 import com.puretone.player.ui.components.DefaultCover
@@ -69,33 +70,45 @@ import kotlin.math.roundToInt
  * 投屏遥控器面板（手机端）。
  *
  * 用户把音视频投射到大屏后，播放页正文整体替换为该面板——手机只承担远程控制：
- * 状态胶囊、当前曲目、可拖进度条、上/下一首、播放/暂停、投射音量、断开连接。
+ * 状态胶囊、当前曲目、可拖进度条、上/下一首、播放/暂停、投射音量、结束投屏。
  *
  * 布局约定（v1.9.4 重设计）：
- * - **单一 24dp 栅格**：状态胶囊、封面、歌名、两条轨道、时间、区块标题、断开胶囊
- *   的左右边界全部落在同一条线上；音量行不再用喇叭图标把轨道起点推右。
+ * - **单一 24dp 栅格**：状态胶囊、封面、歌名、两条轨道、结束投屏按钮的左右边界
+ *   落在同一条线上；音量标题以图标呈现，轨道仍整宽，不因图标内缩。
+ *   **轨道标注例外**：进度左右时间、音量图标与百分比按 [CastTrackInset] 向内缩进，
+ *   落在 M3 Slider 轨道的可视端点上（2026-11-06 真机反馈「数值与进度条对齐」）。
  * - **对称**：封面 / 歌名 / 歌手居中作视觉焦点，其余控件全宽贴栅格。
  * - **弹性竖向节奏**：内容区 `weight(1f)` + 上下弹性留白把剩余高度均分，
- *   断开胶囊固定在底部安全区上方，消除「头重脚轻 + 下方 1/3 死白」。
- * - **竖向微调（v1.9.4 真机反馈）**：状态胶囊上移两行、其下整组内容上移一行、
- *   断开胶囊再上移一行。一行取 [LineStep]（与 24dp 栅格同宽）。做法是把整组内容
- *   绘制上移一行，胶囊再额外上移一行、断开胶囊同样上移一行——因此胶囊与封面之间
- *   的呼吸感同步增大一行，断开胶囊与内容组的间距保持原状，而页面底部留白仅由
- *   其 `padding(bottom)` 决定（位移用 `offset`、只改绘制、不改测量，不会挤压
- *   弹性留白或影响触区）。紧凑可滚动屏内容本就贴顶，负偏移会被滚动视口裁掉，
- *   故该模式整组与断开胶囊均不位移。
+ *   结束投屏按钮固定在底部安全区上方，消除「头重脚轻 + 下方 1/3 死白」。
+ * - **竖向微调（v1.9.4 真机反馈）**：2026-11-06 二次反馈把内容组整体**下移一行**
+ *   回到栅格原位（即撤掉内容组原有的 `offset(y = -LineStep)`），胶囊仍相对内容组
+ *   上移一行 [LineStep]，结束投屏按钮**绝对不动**（[EndCastLift] 保持不变）。
+ *   按钮之所以必须用真实 bottom padding 而不是 `offset`：后者会把绘制区连同点击区
+ *   一起挪进上半内容区，后绘制的按钮会截获「下一首 / 音量」的点击，被当成
+ *   「结束投屏」（19:56 真机 `cast-resume source=ui-disconnect`）。代价是按钮测量
+ *   高度增加 48dp、`weight(1f)` 的内容区相应少 48dp，且内容下移后与按钮间距收窄
+ *   一行——这是「不误触 + 按钮不动」优先于「多留弹性空白」的刻意取舍，小屏需以
+ *   真机效果为准。紧凑可滚动屏内容本就贴顶，故该模式胶囊、按钮均不位移。
  * - **统一「圆」语言**：胶囊 999dp、封面 20dp、轨道 5dp 全圆角、三键圆形容器、圆形手柄。
  *
  * 交互逻辑（与旧版一致，重设计只换皮）：
  * - 全部控制入口由外部回调注入，投屏态下这些调用已由
  *   [com.puretone.player.ui.PlayerViewModel] 路由到 DLNA 渲染器；
- * - 播放/暂停图标以渲染器态 [CastState.isPlaying] 为准（本地恒暂停）；
+ * - 播放/暂停图标与取反基准读同一份 uiState 展示态（本地恒暂停），不再直读 1Hz
+ *   的渲染器瞬时值，避免状态抖动把「点播放」翻译成 Pause；
  * - 进度/音量各维护一份本地态，经 `LaunchedEffect` 与 [CastState] 双向同步，
  *   拖动期间以本地为准、结束后才下发，避免与 1Hz 轮询打架。
  */
 private val GridPadding = 24.dp
-/** 竖向微调的「一行」：与左右栅格同宽，胶囊两行、其下内容一行 */
+/** 竖向微调的「一行」：与左右栅格同宽；现在只用于胶囊的相对位移与按钮上移量 */
 private val LineStep = 24.dp
+/**
+ * 「结束投屏」按钮相对底部安全区的上移两行。内容组 2026-11-06 二次反馈已回正，
+ * 按钮本身**不动**（用户明确要求「除结束投屏外整体下移一行」），故这里保持原值。
+ * 以真实 bottom padding 实现，不用 Modifier.offset——后者会让按钮绘制区与点击区
+ * 一起侵入上半内容区，覆盖音量/传输控件造成误触。
+ */
+private val EndCastLift = LineStep * 2f
 private val CoverCorner = 20.dp
 private val CoverMaxSize = 200.dp
 private val DisconnectHeight = 48.dp
@@ -107,6 +120,8 @@ private val LostOrange = Color(0xFFE8912A)
 @Composable
 fun CastRemoteControlPanel(
     castState: CastState,
+    /** 与播放页/迷你条/通知栏同源的播放态（命令即时写入 + 稳定化轮询镜像） */
+    isPlaying: Boolean,
     /** 与播放页/迷你条同源的展示进度（已镜像电视轮询并做 250ms 外推） */
     positionMs: Long,
     /** 展示时长：渲染器不报 TrackDuration 时由本地已知时长兜底 */
@@ -129,7 +144,10 @@ fun CastRemoteControlPanel(
     // （Seek 是异步的，头几帧回读仍是旧位置，会把刚拖到的位置拉回去）。
     // 同理 castState.durationMs 在这台真机上恒为 0（只回 RelTime、不回 TrackDuration），
     // 拿它当总时长会让进度条整个禁用、时间恒显「--:--」。
-    val hasProgress = castState.hasProgressInfo && durationMs > 0
+    // 「有无刻度」也只看这份已兜底的 durationMs：castState.hasProgressInfo 在轮询静默
+    // 或换曲窗口会变 false，拿它禁用进度条会让遥控页显示「进度未知」，而迷你条、
+    // 播放页、通知栏仍拿着同一份 uiState 正常走——三处进度就是这么对不上的。
+    val hasProgress = durationMs > 0L
     val controlsEnabled = castState.isCasting && !castState.isConnectionLost
 
     // 本地态与展示进度双向同步，拖动期间以本地为准避免抖动
@@ -163,10 +181,9 @@ fun CastRemoteControlPanel(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .then(
-                        if (compact) Modifier.verticalScroll(scrollState)
-                        else Modifier.offset(y = -LineStep)
-                    )
+                    // 内容组回正到栅格原位（较上一版整体下移一行）。非紧凑屏不再挂
+                    // offset：紧凑屏要保留 verticalScroll，两种模式依旧互斥。
+                    .then(if (compact) Modifier.verticalScroll(scrollState) else Modifier)
                     .padding(horizontal = GridPadding, vertical = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp)
@@ -176,7 +193,7 @@ fun CastRemoteControlPanel(
                     shortName = shortName,
                     castState = castState,
                     onClick = { showDeviceSheet = true },
-                    // 整组已上移一行，胶囊再上一行 = 合计两行
+                    // 胶囊相对内容组再上一行；内容组回正后它只比其余内容高一行
                     modifier = if (compact) Modifier else Modifier.offset(y = -LineStep)
                 )
 
@@ -199,7 +216,7 @@ fun CastRemoteControlPanel(
 
                 CastTransportRow(
                     enabled = controlsEnabled,
-                    isPlaying = castState.isPlaying,
+                    isPlaying = isPlaying,
                     onPrev = onPrev,
                     onTogglePlay = onTogglePlay,
                     onNext = onNext
@@ -225,12 +242,17 @@ fun CastRemoteControlPanel(
                 if (!compact) Spacer(Modifier.weight(1f))
             }
 
+            // 上移必须用「真实布局间距」而不是 Modifier.offset：offset 只改绘制位置、
+            // 布局占位仍留在底部，后绘制的按钮会盖住上半 Column 末尾的音量/传输控件，
+            // 点「下一首」时可能被按钮截获成「结束投屏」（2026-11-06 19:56 真机诊断：
+            // 切歌后 25s 出现 cast-resume source=ui-disconnect，而链路全程无失联日志）。
+            // 用 padding 把按钮连同点击区一起上移，与上半 Column 不重叠，视觉位移不变。
+            // 2026-11-06 二次反馈只下移内容组，这里的 EndCastLift 保持原值、按钮绝对不动。
             CastDisconnectButton(
                 onDisconnect = onDisconnect,
                 modifier = Modifier
-                    .then(if (compact) Modifier else Modifier.offset(y = -LineStep))
                     .padding(horizontal = GridPadding)
-                    .padding(bottom = 16.dp)
+                    .padding(bottom = 16.dp + if (compact) 0.dp else EndCastLift)
             )
         }
     }
@@ -416,7 +438,10 @@ private fun CastNowPlaying(coverUri: Uri?, title: String, artist: String) {
     }
 }
 
-/** 进度：统一轨道 + 左右时间；无进度信息时禁用并显示「--:--／进度未知」。 */
+/**
+ * 进度：统一轨道 + 左右时间；无进度信息时禁用并显示「--:--／进度未知」。
+ * 时间行按 [CastTrackInset] 内缩到轨道可视端点，避免文字贴栅格、轨道却内收。
+ */
 @Composable
 private fun CastProgressSection(
     enabled: Boolean,
@@ -445,7 +470,9 @@ private fun CastProgressSection(
             modifier = Modifier.fillMaxWidth()
         )
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = CastTrackInset),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
@@ -542,7 +569,11 @@ private fun CastRoundButton(
     }
 }
 
-/** 投射音量：区块标题行（左「投射」/ 右 `16%`）+ 整宽统一轨道，无喇叭图标占位。 */
+/**
+ * 投射音量：标题行（左音量图标 / 右 `16%`）+ 整宽统一轨道；图标仅作标识，不占轨道起点。
+ * 标题行与进度时间行共用 [CastTrackInset] 内缩、共用 `labelMedium` 字号，两处标注
+ * 与轨道端点的对齐关系完全一致（2026-11-06 真机反馈「音量数值与进度数字同大小」）。
+ */
 @Composable
 private fun CastVolumeSection(
     enabled: Boolean,
@@ -552,18 +583,27 @@ private fun CastVolumeSection(
     onVolume: (Float) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
+    // 标题改为图标后，文案保留给图标与滑块做无障碍播报
     val label = stringResource(R.string.pt_player_051)
     val pctText = stringResource(R.string.pt_player_035, volumePct)
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = CastTrackInset),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(label, style = MaterialTheme.typography.labelLarge, color = scheme.onSurfaceVariant)
+            Icon(
+                imageVector = ControlIcons.Volume,
+                contentDescription = label,
+                tint = scheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
             Text(
                 pctText,
-                style = MaterialTheme.typography.labelLarge,
+                // 与 CastProgressSection 的时间数字同字号，避免两条轨道标注一大一小
+                style = MaterialTheme.typography.labelMedium,
                 color = scheme.onSurfaceVariant,
                 textAlign = TextAlign.End
             )
@@ -586,7 +626,7 @@ private fun CastVolumeSection(
     }
 }
 
-/** 断开连接：贴底的浅描边胶囊，非 error 红、非实心，避免刺眼与误触。 */
+/** 结束投屏：贴底的浅描边胶囊，非 error 红、非实心，避免刺眼与误触。 */
 @Composable
 private fun CastDisconnectButton(onDisconnect: () -> Unit, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme

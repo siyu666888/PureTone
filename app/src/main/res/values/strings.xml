@@ -280,7 +280,7 @@
     <string name="pt_player_033" formatted="false">重新搜索</string>
     <!-- 投屏设备发现需要权限（Android 13+ 为「附近设备」，低版本为「位置」）： -->
     <string name="pt_player_034" formatted="false">投屏需「附近设备」/「位置」权限以发现局域网设备。请在系统设置中授予后点「重新搜索」。</string>
-    <!-- 投屏：投射音量右对齐百分比（%1$d 为 0~100，「投射」由区块标题承担） -->
+    <!-- 投屏：投射音量右对齐百分比（%1$d 为 0~100，区块以音量图标标识） -->
     <string name="pt_player_035" formatted="true">%1$d%%</string>
     <!-- 投屏：该渲染器未暴露 RenderingControl 服务，DLNA 无法调它的音量（如部分多屏互动接收端） -->
     <string name="pt_player_036" formatted="false">该设备不支持音量调节，请用电视遥控器</string>
@@ -298,8 +298,8 @@
     <string name="pt_player_044" formatted="false">连接中…</string>
     <!-- 投屏遥控器：连接状态-设备失联（断网回退） -->
     <string name="pt_player_045" formatted="false">设备失联</string>
-    <!-- 投屏遥控器：贴底断开按钮 -->
-    <string name="pt_player_046" formatted="false">断开连接</string>
+    <!-- 投屏遥控器：贴底「结束投屏」按钮 -->
+    <string name="pt_player_046" formatted="false">结束投屏</string>
     <!-- 投屏遥控器：渲染器未上报进度 -->
     <string name="pt_player_047" formatted="false">进度未知</string>
     <!-- 投屏遥控器：设备详情二级页标题 -->
@@ -308,8 +308,8 @@
     <string name="pt_player_049" formatted="false">IP 地址</string>
     <!-- 投屏遥控器：设备详情-设备名称行 -->
     <string name="pt_player_050" formatted="false">设备名称</string>
-    <!-- 投屏遥控器：投射音量区块标题 -->
-    <string name="pt_player_051" formatted="false">投射</string>
+    <!-- 投屏遥控器：投射音量无障碍标签（区块标题以音量图标呈现，文案用于播报） -->
+    <string name="pt_player_051" formatted="false">投射音量</string>
     <!-- 投屏遥控器：设备详情-未记录到 IP -->
     <string name="pt_player_052" formatted="false">未记录</string>
     <!-- 投屏遥控器：进度滑块无障碍播报（%1$s 当前时间 / %2$s 总时长） -->
@@ -680,6 +680,34 @@
     <string name="pt_diag_024" formatted="true">---- 投屏网络诊断 (%1$s) ----</string>
     <!-- 投屏网络诊断为空时的占位 -->
     <string name="pt_diag_025" formatted="false">(无投屏网络诊断记录；请先打开投屏设备选择界面再导出本报告)</string>
+    <!-- 后台投屏自检段落：判断进程是否被系统省电策略冻结 -->
+    <string name="pt_diag_026" formatted="false">---- 后台投屏自检 ----</string>
+    <!-- %1$s 为 是 / 否 / 未知 -->
+    <string name="pt_diag_027" formatted="true">忽略电池优化(白名单): %1$s</string>
+    <!-- %1$s 为 是 / 否 / 未知 -->
+    <string name="pt_diag_028" formatted="true">设备处于低电耗模式(Doze): %1$s</string>
+    <!-- 后台冻结的判读说明与处理建议 -->
+    <string name="pt_diag_029" formatted="false">说明: 投屏时手机既是电视的 HTTP 音源又是轮询遥控器，进程被系统冻结会导致电视缓冲耗尽后暂停或退出投屏，且曲末不会自动续投。WakeLock 只保证 CPU 不睡，挡不住 Doze / 国产 ROM 的后台冻结；若出现后台中断，请在系统设置中将本应用设为「无限制 / 忽略电池优化」，并允许自启动与后台运行。</string>
+
+    <!-- ===== 2026-11-07 蓝牙后台「自动暂停」取证：本地播放音频自检 ===== -->
+    <!-- 本地播放音频自检段落标题 -->
+    <string name="pt_diag_030" formatted="false">---- 本地播放音频自检 ----</string>
+    <!-- %1$s 为当前输出设备类型列表（只记类型，不含设备名/地址） -->
+    <string name="pt_diag_031" formatted="true">当前输出设备: %1$s</string>
+    <!-- %1$s 为 是 / 否 / 未知 -->
+    <string name="pt_diag_032" formatted="true">存在蓝牙输出(A2DP/SCO/BLE): %1$s</string>
+    <!-- %1$s 为 媒体音量/最大值 或 未知 -->
+    <string name="pt_diag_033" formatted="true">媒体音量: %1$s</string>
+    <!-- %1$s 为 NORMAL / IN_COMMUNICATION 等系统音频模式 -->
+    <string name="pt_diag_034" formatted="true">系统音频模式: %1$s</string>
+    <!-- %1$s 为 是 / 否 / 未知 -->
+    <string name="pt_diag_035" formatted="true">系统判定正在播放音乐: %1$s</string>
+    <!-- %1$s 为最近一条 audio-focus-* 播放事件原文，无记录时取 pt_diag_037 -->
+    <string name="pt_diag_036" formatted="true">最近焦点事件: %1$s</string>
+    <!-- 播放事件里没有任何焦点事件时的占位 -->
+    <string name="pt_diag_037" formatted="false">(无焦点事件记录)</string>
+    <!-- 本地播放音频自检的判读说明 -->
+    <string name="pt_diag_038" formatted="false">说明: 本段是导出报告时刻的快照，故障当时的路由请看播放事件记录里 audio-focus-* 行的 route= 字段。本地播放按既定策略不因焦点丢失而暂停：type=LOSS(-1) / LOSS_TRANSIENT(-2) 后出现 cmd=PAUSE 且 reason=local-keep-playing，表示系统夺焦点而应用继续播；vol=0.25 表示正处于 duck 压低音量，需有 UNDUCK 或 GAIN 才恢复；holding=true-&gt;false 之后若一直没有 audio-focus-request 重新申请，焦点就不会回手，系统侧可能掐断蓝牙输出。若蓝牙断开时出现 paused-with-queue 且其前没有 user-pause / sleep-timer，则多为 Media3 的 becoming-noisy 直接置 playWhenReady=false。设备项只记类型，不含蓝牙名称或地址。</string>
     <!-- 智能歌单 功能入口图标描述 -->
     <string name="pt_smart_playlist_000" formatted="false">智能歌单</string>
     <!-- 智能歌单分区标题右侧标签：表示由系统自动聚合生成 -->

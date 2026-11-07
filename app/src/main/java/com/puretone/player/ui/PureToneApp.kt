@@ -111,6 +111,8 @@ fun PureToneApp(initialRoute: String? = null) {
                         if (hasCurrentSong) {
                             MiniPlayer(
                                 stateFlow = playerVm.state,
+                                positionFlow = playerVm.positionMs,
+                                durationFlow = playerVm.durationMs,
                                 // P3-27：launchSingleTop，避免连点/多入口重复压入多个播放页实例
                                 onOpen = { nav.navigate(Routes.PLAYER) { launchSingleTop = true } },
                                 onToggle = playerVm::togglePlay,

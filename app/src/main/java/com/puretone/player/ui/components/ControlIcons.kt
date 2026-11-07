@@ -65,6 +65,28 @@ object ControlIcons {
         }
     }
 
+    /**
+     * 音量：喇叭轮廓 + 两道右凸声波弧。
+     *
+     * 沿用细线家族的 28×28 画布 / 1.8 线宽 / 圆头圆角；声波用 7 点折线近似半圆
+     * （`arcTo` 的取弧方向在半圆场景不够直观，折线可精确控制凸向，见文件头说明）。
+     */
+    val Volume: ImageVector by lazy {
+        line("pt_volume", STROKE_LINE) {
+            // 喇叭：左侧窄矩形接右侧展开的梯形，闭合描边
+            moveTo(4f, 11.5f); lineTo(8f, 11.5f); lineTo(13.5f, 7f)
+            lineTo(13.5f, 21f); lineTo(8f, 16.5f); lineTo(4f, 16.5f); close()
+            // 内弧：半径 3.2 的右凸半圆
+            moveTo(16.5f, 10.8f); lineTo(18.1f, 11.23f); lineTo(19.27f, 12.4f)
+            lineTo(19.7f, 14f); lineTo(19.27f, 15.6f); lineTo(18.1f, 16.77f)
+            lineTo(16.5f, 17.2f)
+            // 外弧：半径 5.8 的右凸半圆
+            moveTo(16.5f, 8.2f); lineTo(19.4f, 8.98f); lineTo(21.52f, 11.1f)
+            lineTo(22.3f, 14f); lineTo(21.52f, 16.9f); lineTo(19.4f, 19.02f)
+            lineTo(16.5f, 19.8f)
+        }
+    }
+
     /** 播放队列：三条横线 + 右侧两个圆点 */
     val Queue: ImageVector by lazy {
         ImageVector.Builder("pt_queue", 28.dp, 28.dp, 28f, 28f).apply {

@@ -57,12 +57,12 @@ internal class CastSessionController(
         const val TAG = "CastSessionController"
 
         /**
-         * 外推锚点的最长可用时长（毫秒）。
+         * 外推锚点的「新鲜」阈值（毫秒），超过它就把墙钟增量折进锚点继续外推。
          *
-         * 锚点由 1Hz 轮询刷新，正常间隔约 1000ms。拖动进度的乐观窗口里镜像被挂起，
-         * 锚点会变旧；窗口结束后若继续用「旧锚点 + 累积墙钟」外推，会瞬间把进度条
-         * 推到一个根本没播到的位置，再被下一帧轮询拉回——用户看到的就是「跳一下」。
-         * 锚点过旧宁可停一帧不写，等下一次轮询重设。
+         * 锚点由 1Hz 轮询刷新，正常间隔约 1000ms。轮询静默（息屏 / Doze / 渲染器
+         * 不应答）时锚点会变旧，但电视仍在播：此时**不能停写**，否则手机进度冻结、
+         * 与电视越差越大。前移锚点可避免每帧重复累加同一次 elapsed，同时保持连续。
+         * 停写窗口（暂停 / 拖动）结束时的重锚由 [startProgressProjection] 单独负责。
          */
         const val PROJECTION_ANCHOR_MAX_AGE_MS = 1_500L
     }
@@ -134,22 +134,56 @@ internal class CastSessionController(
 
     /**
      * 进度外推：电视进度由 1Hz 轮询得到，手机若只在轮询瞬间刷新会落后电视最多 1s。
-     * 在轮询之间按「锚点 + 流逝墙钟」线性推进 positionMs，使手机进度条实时跟随电视，
-     * 消除用户感知的 1~2s 偏差。暂停 / 拖动窗口（mirror=false）时跳过，避免越界或拉回。
+     * 在轮询之间按「锚点 + 流逝墙钟」线性推进 positionMs，使手机进度条实时跟随电视。
+     *
+     * 只保留「停写窗口」这一个停写条件（暂停 / 非投屏 / 拖动乐观窗口）。旧实现还要
+     * 求 `hasProgressInfo` 且锚点不超过 1.5s，于是息屏 / Doze / 渲染器短时不应答时
+     * （`own-poll-null quiet=126s`）轮询不发新帧、锚点迅速过期，手机进度就**冻结**在
+     * 最后一次成功值，电视却继续播；结束投屏时 `tv=112000` 与已播约 155s 的差距正是
+     * 这么来的。现在静默期按墙钟继续外推并钳到总时长，下一次成功轮询的镜像会把位置
+     * 校正回电视真实值。
+     *
+     * 但「停写」必须配「恢复时重锚」：锚点墙钟在停写期间并未停止，若恢复后仍用
+     * 「旧锚点 + 累积墙钟」外推，暂停 10 秒就会把进度条一次推到曲末。旧实现靠
+     * `isAnchorFresh(1500ms)` 停写天然规避了这一点，移除该保护时必须显式补回来。
      */
     private fun startProgressProjection() {
         progressTickerJob = scope.launch {
+            // 任何停写窗口（暂停 / 非投屏 / 拖动乐观窗口）结束后都要重新锚定，
+            // 不能只记「拖动窗口」：锚点墙钟在暂停期间同样在走。
+            // 初值 true 还覆盖 bind() 后的首帧：此时 anchorWallMs 刚被置 0，若
+            // hasProgressInfo=false 没有轮询帧来重锚，elapsed 会是一个巨大值，
+            // 第一帧就把进度条外推到总时长。
+            var projectionPaused = true
             while (true) {
                 delay(250)
                 val st = dlnaCast.state.value
-                if (!st.isCasting || !st.isPlaying) continue
-                val mirror = st.hasProgressInfo &&
-                    System.currentTimeMillis() >= dlnaCast.progressHoldUntilMs
-                if (!mirror) continue
-                val elapsed = System.currentTimeMillis() - anchorWallMs.get()
-                if (!CastProgressPolicy.isAnchorFresh(elapsed, PROJECTION_ANCHOR_MAX_AGE_MS)) continue
+                if (!st.isCasting || !st.isPlaying) {
+                    projectionPaused = true
+                    continue
+                }
+                val nowMs = System.currentTimeMillis()
+                if (nowMs < dlnaCast.progressHoldUntilMs) {
+                    projectionPaused = true
+                    continue
+                }
+                if (projectionPaused) {
+                    // 以当前显示位置重新锚定：旧锚点 + 累积墙钟会把整段停写时长一起
+                    // 外推，进度条瞬间跳到没播到的地方（甚至钳到曲末），再被下一帧拉回。
+                    anchorMs.set(uiState.value.positionMs)
+                    anchorWallMs.set(nowMs)
+                    projectionPaused = false
+                }
                 val cap = CastProgressPolicy.projectionCapMs(st.durationMs, uiState.value.durationMs)
-                val projected = (anchorMs.get() + elapsed).coerceAtMost(cap)
+                val elapsed = nowMs - anchorWallMs.get()
+                val projected = CastProgressPolicy.projectedPositionMs(
+                    anchorMs.get(), elapsed, cap
+                ) ?: continue
+                // 锚点过旧时把墙钟增量折进锚点，下一帧从新锚点继续，进度保持连续。
+                if (!CastProgressPolicy.isAnchorFresh(elapsed, PROJECTION_ANCHOR_MAX_AGE_MS)) {
+                    anchorMs.set(projected)
+                    anchorWallMs.set(nowMs)
+                }
                 uiState.update { it.copy(positionMs = projected) }
             }
         }
@@ -323,6 +357,10 @@ internal class CastSessionController(
                 entryDurationMs = ui.currentEntry?.durationMs
             )
         }
+
+    /** 对外播放态统一取 uiState：命令即时写入 + 稳定化轮询镜像，通知栏不再单读 1Hz 值 */
+    override val displayIsPlaying: Boolean
+        get() = uiState.value.isPlaying
 
     override val castVolumeFollowPhone: Boolean
         get() = followPhoneVolume()

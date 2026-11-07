@@ -791,6 +791,10 @@ private fun DrawScope.drawReplay(tint: Color, strokeW: Float) {
 @Composable
 fun MiniPlayer(
     stateFlow: StateFlow<PlaybackUiState>,
+    /** 与播放页/遥控页/通知栏同源的展示进度，投屏期为电视镜像 + 250ms 外推 */
+    positionFlow: StateFlow<Long>,
+    /** 展示总时长的唯一出口，避免迷你条自己写一份 `uiState.durationMs ?: entry.durationMs` */
+    durationFlow: StateFlow<Long>,
     onOpen: () -> Unit,
     onToggle: () -> Unit,
     onPrev: () -> Unit,
@@ -803,6 +807,8 @@ fun MiniPlayer(
     liveCoverUri: android.net.Uri? = null
 ) {
     val state by stateFlow.collectAsStateWithLifecycle()
+    val position by positionFlow.collectAsStateWithLifecycle()
+    val duration by durationFlow.collectAsStateWithLifecycle()
     val entry = state.currentEntry ?: return
     val title = liveTitle ?: entry.title
     val artist = liveArtist ?: entry.artist
@@ -811,10 +817,9 @@ fun MiniPlayer(
     // 长按切换「剩余时长」展示
     var showRemaining by remember { mutableStateOf(false) }
 
-    val duration = if (state.durationMs > 0) state.durationMs else entry.durationMs
-    val remaining = (duration - state.positionMs).coerceAtLeast(0L)
+    val remaining = (duration - position).coerceAtLeast(0L)
     val progress = if (duration > 0) {
-        (state.positionMs.toFloat() / duration).coerceIn(0f, 1f)
+        (position.toFloat() / duration).coerceIn(0f, 1f)
     } else 0f
 
     Surface(

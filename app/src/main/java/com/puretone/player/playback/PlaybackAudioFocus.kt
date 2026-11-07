@@ -17,6 +17,13 @@ import androidx.media3.exoplayer.ExoPlayer
  * 1. 只动主播放器：淡化窗口内的音量归 [CrossfadeCoordinator] 的渐变独占；
  * 2. 交叉淡化进行中不 duck/unduck（否则会把淡化曲线打断成「音量跳一下」）；
  * 3. 只有在主播放器确实停了才放弃焦点——淡化收尾暂停的是已降级的旧主。
+ *
+ * ## 取证（2026-11-07 蓝牙后台「自动暂停」）
+ *
+ * 四个命令分支都写一行播放事件：命令、实际落地动作（含被跳过的原因）、主播放器
+ * 状态快照与 [AudioRouteSnapshot] 的音频路由快照。日志只观察不干预——PAUSE 仍是
+ * 跳过，RESUME / DUCK / UNDUCK 的跳过条件、音量赋值与 `play()` 调用全部保持原样。
+ * 有了 `route=` 才能把「蓝牙 A2DP 断连」与「单纯的系统夺焦点」区分开。
  */
 internal class PlaybackAudioFocus(
     context: Context,
@@ -26,6 +33,7 @@ internal class PlaybackAudioFocus(
     private val isCasting: () -> Boolean
 ) : AudioFocusPort, CastSessionFocusPort {
 
+    private val appContext = context.applicationContext
     private val controller = AudioFocusController(context, ::handle)
 
     /** 已获得焦点则直接返回 true；未获得会立刻发一条暂停命令 */
@@ -56,7 +64,10 @@ internal class PlaybackAudioFocus(
 
     private fun handle(command: AudioFocusController.Command) {
         // 投屏态：手机侧焦点事件一律忽略，投屏播放不受手机上其他软件干扰（问题2 修复）。
-        if (isCasting()) return
+        if (isCasting()) {
+            PlaybackEventLog.record("audio-focus-ignored", "reason=casting cmd=${command.name}")
+            return
+        }
         when (command) {
             // 本地播放：被其他软件抢占/丢失焦点时**不再暂停**——用户要求本地播放不被打断。
             // （导航播报等瞬态仍走 DUCK 压低音量，属于「非暂停」的软降级；若希望连音量
@@ -64,27 +75,64 @@ internal class PlaybackAudioFocus(
             AudioFocusController.Command.PAUSE -> {
                 PlaybackEventLog.record(
                     "audio-focus-pause-skipped",
-                    "reason=local-keep-playing idx=${playerProvider()?.currentMediaItemIndex ?: -1}"
+                    "reason=local-keep-playing ${snapshot()}"
                 )
             }
 
             AudioFocusController.Command.RESUME -> {
-                val p = playerProvider() ?: return
-                if (isCrossfading() || p.mediaItemCount == 0) return
-                p.volume = 1f
-                p.play()
+                val p = playerProvider()
+                val action = when {
+                    p == null -> "no-player"
+                    isCrossfading() -> "skipped-crossfading"
+                    p.mediaItemCount == 0 -> "skipped-empty-queue"
+                    else -> {
+                        p.volume = 1f
+                        p.play()
+                        "play"
+                    }
+                }
+                PlaybackEventLog.record("audio-focus-resume", "action=$action ${snapshot()}")
             }
 
             AudioFocusController.Command.DUCK -> {
-                val p = playerProvider() ?: return
-                if (!isCrossfading()) p.volume = DUCK_VOLUME
+                val p = playerProvider()
+                val action = when {
+                    p == null -> "no-player"
+                    isCrossfading() -> "skipped-crossfading"
+                    else -> {
+                        p.volume = DUCK_VOLUME
+                        "duck"
+                    }
+                }
+                PlaybackEventLog.record("audio-focus-duck", "action=$action target=$DUCK_VOLUME ${snapshot()}")
             }
 
             AudioFocusController.Command.UNDUCK -> {
-                val p = playerProvider() ?: return
-                if (!isCrossfading()) p.volume = 1f
+                val p = playerProvider()
+                val action = when {
+                    p == null -> "no-player"
+                    isCrossfading() -> "skipped-crossfading"
+                    else -> {
+                        p.volume = 1f
+                        "unduck"
+                    }
+                }
+                PlaybackEventLog.record("audio-focus-unduck", "action=$action target=1.0 ${snapshot()}")
             }
         }
+    }
+
+    /** 只读快照：取设备信息失败也要照常落一行，日志永远不能影响播放。 */
+    private fun snapshot(): String = buildString {
+        val p = playerProvider()
+        append("idx=${p?.currentMediaItemIndex ?: -1}")
+        append(" vol=${p?.volume ?: -1f}")
+        append(" pwr=${p?.playWhenReady}")
+        append(" playing=${p?.isPlaying}")
+        append(" state=${p?.playbackState ?: -1}")
+        append(" cf=${isCrossfading()}")
+        append(' ')
+        append(AudioRouteSnapshot.compact(AudioRouteSnapshot.read(appContext)))
     }
 
     private companion object {
