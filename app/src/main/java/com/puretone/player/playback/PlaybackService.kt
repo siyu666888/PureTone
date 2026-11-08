@@ -131,12 +131,17 @@ class PlaybackService : MediaSessionService() {
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                     .setUsage(C.USAGE_MEDIA)
                     .build(),
-                // 焦点**必须**由应用层统一持有（见 AudioFocusController 类注释）：
-                // 双实例各自处理焦点时，备援在交叉淡化起点申请 GAIN，系统会把 LOSS
-                // 派给仍在播放的主播放器 —— 淡出方当场被掐断，并连锁触发空闲停服。
-                /* handleAudioFocus = */ false
-            )
-            .setHandleAudioBecomingNoisy(true)
+            // 焦点**必须**由应用层统一持有（见 AudioFocusController 类注释）：
+            // 双实例各自处理焦点时，备援在交叉淡化起点申请 GAIN，系统会把 LOSS
+            // 派给仍在播放的主播放器 —— 淡出方当场被掐断，并连锁触发空闲停服。
+            /* handleAudioFocus = */ false
+        )
+        // B2：关闭 becoming-noisy 旁路。ExoPlayer 自带的「拔掉耳机/断开蓝牙自动暂停」
+        // 会**绕过编排层**直接 setPlayWhenReady(false)——这是历史上唯一一条不经
+        // PlaybackManager 就把播放掐掉的通道，且不会留下任何 paused-with-queue 证据，
+        // 与「自动停止」难以区分。关掉后，设备切换不再自动暂停；如需该行为，应走编排层
+        // 显式处理（受焦点/曲终逻辑统一管辖），而不是留给播放器偷偷做。
+        .setHandleAudioBecomingNoisy(false)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
     }

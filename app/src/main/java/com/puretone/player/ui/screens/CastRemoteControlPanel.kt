@@ -137,7 +137,9 @@ fun CastRemoteControlPanel(
     onNext: () -> Unit,
     onDisconnect: () -> Unit,
     onPickDevice: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** 编排层提示（如「投屏中断，已自动重连」）：复用下方已有的错误展示位，不新增控件 */
+    notice: String? = null
 ) {
     // 进度来源必须是全 App 那一份 uiState，不能直接用 castState.progressMs：
     // 后者是 1Hz 原始轮询值，既没有两次轮询之间的外推，也不受拖动后的乐观窗口保护
@@ -230,7 +232,7 @@ fun CastRemoteControlPanel(
                     onVolume = { onVolume((it * 100).roundToInt()) }
                 )
 
-                castState.error?.let { msg ->
+                (notice ?: castState.error)?.let { msg ->
                     Text(
                         msg,
                         style = MaterialTheme.typography.bodySmall,

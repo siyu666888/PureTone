@@ -59,6 +59,25 @@ internal class CastHttpServer {
     /** 每次投送最多落盘几条取流日志：足够证明「电视来过」，又不至于刷爆诊断 */
     private var loggedRequests = 0
 
+    /**
+     * 当前这一轮投送的 URL token。换曲后旧 URL 仍在 [entries] 里（电视可能还在拉旧流），
+     * 只有命中当前 token 的请求才算「新曲被取流」，否则会把旧曲的重连误当成新曲已建立。
+     */
+    @Volatile
+    private var activeToken: String? = null
+
+    /**
+     * 当前 token 最近一次成功取流的墙钟。
+     *
+     * 与 [loggedRequests] 不同，它**不受日志条数上限影响**：诊断文件里看不到
+     * `http-fetch` 时，可能只是前 8 条已记满，不能据此断言电视没来取流。
+     * [DlnaCastManager] 用它判定「投屏是否真建立」，见 [CastState.isEstablished]。
+     */
+    private val lastFetchMs = java.util.concurrent.atomic.AtomicLong(0L)
+
+    /** 当前 token 最近一次成功取流的墙钟（0=本轮从未取流） */
+    fun lastSuccessfulFetchMs(): Long = lastFetchMs.get()
+
     private val workers = Executors.newFixedThreadPool(WORKER_COUNT) { runnable ->
         Thread(runnable, "PureTone-CastHttp").apply { isDaemon = true }
     }
@@ -100,6 +119,9 @@ internal class CastHttpServer {
         if (!running && !start()) return null
         val token = UUID.randomUUID().toString().replace("-", "")
         entries[token] = Entry(file, mimeType)
+        // 新一轮投送：旧 token 的取流不再算数，避免把「上一首的重连」当成本曲已建立
+        activeToken = token
+        lastFetchMs.set(0L)
         val url = "http://$host:$port/file/$token"
         CastNetworkLog.log("http-url host=$host port=$port mime=$mimeType")
         return url
@@ -112,6 +134,8 @@ internal class CastHttpServer {
         acceptor = null
         entries.clear()
         loggedRequests = 0
+        activeToken = null
+        lastFetchMs.set(0L)
     }
 
     private fun acceptLoop(socket: ServerSocket) {
@@ -176,9 +200,20 @@ internal class CastHttpServer {
                 logRequest(socket, path, rangeHeader, 416)
                 respondText(socket, 416, "Range Not Satisfiable")
             }
-            is RangeSpec.Partial -> sendFile(socket, method, entry, spec.start, spec.end, rangeHeader)
-            RangeSpec.Full -> sendFile(socket, method, entry, 0L, (size - 1).coerceAtLeast(0L), rangeHeader)
+            is RangeSpec.Partial -> {
+                markFetchIfActive(token)
+                sendFile(socket, method, entry, spec.start, spec.end, rangeHeader)
+            }
+            RangeSpec.Full -> {
+                markFetchIfActive(token)
+                sendFile(socket, method, entry, 0L, (size - 1).coerceAtLeast(0L), rangeHeader)
+            }
         }
+    }
+
+    /** 只记「当前这一首」的成功取流时刻，供投屏建立确认读取 */
+    private fun markFetchIfActive(token: String) {
+        if (token == activeToken) lastFetchMs.set(System.currentTimeMillis())
     }
 
     private fun sendFile(

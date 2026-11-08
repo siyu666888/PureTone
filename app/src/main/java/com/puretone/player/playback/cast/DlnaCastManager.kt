@@ -138,6 +138,44 @@ class DlnaCastManager @Inject constructor(
     @Volatile
     private var lastCastStartMs = 0L
 
+    /**
+     * 本轮投送**实际完成**时刻（`onCastSucceeded`），写进 [CastState.castStartMs]。
+     *
+     * 与 [lastCastStartMs]（转码之前就记）分开：曲中/曲末判据要的是「电视从这一刻
+     * 开始播」，APE 转码几十秒不能算进已播时长，否则曲中停止会被误判成曲末。
+     */
+    @Volatile
+    private var lastCastSentMs = 0L
+
+    /** 自有通道本轮投送参数：「电视始终没来取流」时据此重发一次，不重走转码 */
+    private var lastOwnCast: OwnCastParams? = null
+
+    /** 本轮建立确认已重发次数 / 是否已提示过，避免无限重试与 repeated 弹提示 */
+    private var establishRetries = 0
+    private var establishWarned = false
+
+    /** 最近一次建立重发的墙钟：重发后同样要留一个宽限，不能下一秒就判「未响应」 */
+    private var establishRetryAtMs = 0L
+
+    /**
+     * 「下一次投送是曲末自动推进」的待生效标志。
+     *
+     * [CastSessionController.onCastTrackEnded] 在确认推进、调 [next] 之前调
+     * [markAutoAdvanceNext] 置位；[castSong] 开头读取后立即清除并写入
+     * [CastState.autoAdvance]。用普通布尔即可——投送在单协程里串行发起，且清除动作
+     * 与读取同处 [castSong] 开头，即使残留也只会让下一次投送多走一次宽限判断，
+     * 是「宁可多等也不打断」的安全降级。
+     */
+    @Volatile
+    private var autoAdvancePending = false
+
+    private data class OwnCastParams(
+        val url: String,
+        val title: String,
+        val mimeType: String,
+        val upnpClass: String
+    )
+
     /** 拖动投屏进度后的乐观窗口：期间不拿渲染器回读的旧值覆盖手机进度条 */
     @Volatile
     override var progressHoldUntilMs = 0L
@@ -145,6 +183,10 @@ class DlnaCastManager @Inject constructor(
 
     override fun noteSeekOptimistic() {
         progressHoldUntilMs = System.currentTimeMillis() + 2_500L
+    }
+
+    override fun markAutoAdvanceNext() {
+        autoAdvancePending = true
     }
 
     /**
@@ -162,8 +204,16 @@ class DlnaCastManager @Inject constructor(
     private var playStateGuardUntilMs = 0L
 
     private fun notePlayStateCommand(expected: Boolean) {
+        val nowMs = System.currentTimeMillis()
+        // 同一期望态连点不续期：否则通知栏连点 Pause 会把宽限无限后推，
+        // CastState.isPlaying 被永久钉在期望态，UI 取反基准锁死（184914 现象③）。
+        playStateGuardUntilMs = CastPlayStatePolicy.guardUntilMs(
+            previousExpected = expectedPlaying,
+            expected = expected,
+            previousGuardUntilMs = playStateGuardUntilMs,
+            nowMs = nowMs
+        )
         expectedPlaying = expected
-        playStateGuardUntilMs = System.currentTimeMillis() + CastPlayStatePolicy.COMMAND_GUARD_MS
     }
 
     private fun clearPlayStateCommand() {
@@ -264,6 +314,9 @@ class DlnaCastManager @Inject constructor(
         }
         val epoch = castEpoch.incrementAndGet()
         lastCastStartMs = System.currentTimeMillis()
+        // 曲末自动推进标志：读取即清除，写入本轮 [CastState.autoAdvance]。
+        // 必须在 [lastCastStartMs] 之后、状态更新之前取走，保证标志只作用于这一轮投送。
+        val autoAdvance = autoAdvancePending.also { autoAdvancePending = false }
         // 这里**不能**登记「期望在播」：此刻新曲还没投出去，旧轮询读到的仍是上一首的
         // STOPPED / PAUSED。命令宽限会把这些旧曲帧伪装成「新曲正在播」，令
         // CastQueueCoordinator.playingSeen 提前置位；宽限一过又读到 STOPPED，就会被
@@ -289,7 +342,8 @@ class DlnaCastManager @Inject constructor(
                     // 手机进度条与歌词会短暂挂在新曲名下显示旧曲的时间。
                     progressMs = 0L,
                     durationMs = 0L,
-                    hasProgressInfo = false
+                    hasProgressInfo = false,
+                    autoAdvance = autoAdvance
                 )
             }
         } else {
@@ -299,7 +353,8 @@ class DlnaCastManager @Inject constructor(
                     pushGeneration = epoch,
                     progressMs = 0L,
                     durationMs = 0L,
-                    hasProgressInfo = false
+                    hasProgressInfo = false,
+                    autoAdvance = autoAdvance
                 )
             }
         }
@@ -477,6 +532,14 @@ class DlnaCastManager @Inject constructor(
             )
             return
         }
+        val nowMs = System.currentTimeMillis()
+        lastCastSentMs = nowMs
+        establishRetries = 0
+        establishWarned = false
+        establishRetryAtMs = 0L
+        // 自有通道的取流经过本应用 HTTP 服务，必须等电视真来取流才算「已建立」；
+        // 库通道用它自己的 NanoHTTPD，我们看不到取流，直通为 true（默认语义）。
+        val established = engine != CastEngine.OWN
         _state.update {
             it.copy(
                 isCasting = true,
@@ -487,11 +550,16 @@ class DlnaCastManager @Inject constructor(
                 isConnectionLost = false,
                 progressMs = 0L,
                 durationMs = 0L,
-                hasProgressInfo = false
+                hasProgressInfo = false,
+                castStartMs = nowMs,
+                lastFetchMs = 0L,
+                isEstablished = established
             )
         }
         startPolling()
-        CastNetworkLog.log("cast-ok device=${device.name} mime=$mimeType engine=$engineName")
+        CastNetworkLog.log(
+            "cast-ok device=${device.name} mime=$mimeType engine=$engineName established=$established"
+        )
         val castDevice = CastDevice(device.id, device.name, device.address, device.isTV)
         discovery.remember(castDevice)
         // 投**成功**才写历史：失败也记的话，历史里会堆满「点了必然失败」的幽灵设备。
@@ -540,7 +608,12 @@ class DlnaCastManager @Inject constructor(
         }
         val played = client.play()
         CastNetworkLog.log("own-cast play=$played")
-        if (!played) transport = null
+        if (played) {
+            // 记下本轮参数：轮询确认「电视一直没来取流」时，用同一 URL 重发一次
+            lastOwnCast = OwnCastParams(mediaUrl, title, mimeType, upnpClass)
+        } else {
+            transport = null
+        }
         played
     }
 
@@ -662,22 +735,37 @@ class DlnaCastManager @Inject constructor(
         // Wi-Fi 绑定已由投屏会话持有（见 [CastNetworkBridge.holdCastNetwork]），这里不再自行 bind/restore：
         // 每次调用都还原一次会把并发协程的绑定互相撤掉。
         if (engine == CastEngine.OWN && client != null) own(client) else library()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: Exception) {
+        // 命令异常过去只进 logcat，诊断报告里完全看不到「点播放到底发没发出去」。
+        // 补这一行是 20261107_165555 那类「卡片无法控制」问题的取证前提。
         Log.w(TAG, "$action failed", e)
+        CastNetworkLog.log("cast-cmd-failed action=$action ex=${e.javaClass.simpleName}")
         false
     }
 
-    override suspend fun play(): Boolean {
+    override suspend fun play(source: String): Boolean {
         notePlayStateCommand(true)
+        // source 区分 App 内播放页与通知栏/锁屏卡片：184914 里两者行为不同，
+        // 日志不带来源时无法判断「点播放到底走的是哪条路径」。
+        CastNetworkLog.log("cast-cmd play expected=true source=$source")
         val ok = dispatch("play", { it.play() }, { DLNACast.play() })
-        if (!ok) clearPlayStateCommand()
+        if (!ok) {
+            clearPlayStateCommand()
+            CastNetworkLog.log("cast-cmd play result=failed source=$source")
+        }
         return ok
     }
 
-    override suspend fun pause(): Boolean {
+    override suspend fun pause(source: String): Boolean {
         notePlayStateCommand(false)
+        CastNetworkLog.log("cast-cmd pause expected=false source=$source")
         val ok = dispatch("pause", { it.pause() }, { DLNACast.pause() })
-        if (!ok) clearPlayStateCommand()
+        if (!ok) {
+            clearPlayStateCommand()
+            CastNetworkLog.log("cast-cmd pause result=failed source=$source")
+        }
         return ok
     }
 
@@ -725,6 +813,11 @@ class DlnaCastManager @Inject constructor(
         clearPlayStateCommand()
         transport = null
         engine = CastEngine.LIBRARY
+        lastCastSentMs = 0L
+        lastOwnCast = null
+        establishRetries = 0
+        establishWarned = false
+        establishRetryAtMs = 0L
         currentDevice = null
         discovery.reset()
         _state.value = CastState()
@@ -735,6 +828,82 @@ class DlnaCastManager @Inject constructor(
         stopPolling()
         pollJob = scope.launch {
             if (engine == CastEngine.OWN) pollOwnTransport() else pollLibraryTransport()
+        }
+    }
+
+    /**
+     * 投屏「真建立」确认（B3）：SOAP 200 只说明渲染器收下了 URI，**不代表电视会来取流**。
+     *
+     * 真机 20261107_165555 里 `cast-ok` + `own-state PLAYING` 之后，新曲一条 `http-fetch`
+     * 都没有，手机卡片却靠 uiState 外推显示 00:24——电视画面其实早已退出。
+     * 自有通道的取流必经本应用 [CastHttpServer]，故以「本轮投送后当前 token 被取流」
+     * 为建立信号；超时未取流就用同一 URL 重发一次 SetAVTransportURI + Play，
+     * 再不行才提示用户，绝不把「收下 URI」当成「正在播放」。
+     *
+     * 库通道取流走它自己的 NanoHTTPD，看不到取流，[CastState.isEstablished] 在
+     * [onCastSucceeded] 直通为 true，本方法直接返回。
+     */
+    private suspend fun refreshEstablishment(nowMs: Long, fetchMs: Long, client: DlnaTransport) {
+        val st = _state.value
+        val elapsedMs = nowMs - st.castStartMs
+        when (
+            CastEstablishPolicy.resolve(
+                isCasting = st.isCasting,
+                isEstablished = st.isEstablished,
+                castStartMs = st.castStartMs,
+                lastFetchMs = fetchMs,
+                nowMs = nowMs,
+                retries = establishRetries,
+                warned = establishWarned,
+                retrySinceMs = establishRetryAtMs,
+                autoAdvance = st.autoAdvance,
+                rendererPlaying = st.isPlaying
+            )
+        ) {
+            CastEstablishPolicy.Action.NONE -> Unit
+
+            CastEstablishPolicy.Action.MARK_ESTABLISHED -> {
+                _state.update { it.copy(isEstablished = true) }
+                CastNetworkLog.log("cast-established by=fetch elapsed=${fetchMs - st.castStartMs}ms")
+            }
+
+            CastEstablishPolicy.Action.RETRY -> {
+                establishRetries++
+                establishRetryAtMs = nowMs
+                CastNetworkLog.log("cast-reestablish attempt=$establishRetries elapsed=${elapsedMs}ms")
+                val params = lastOwnCast ?: return
+                try {
+                    client.setAvTransportUri(params.url, params.title, params.mimeType, params.upnpClass)
+                    client.play()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    CastNetworkLog.log("cast-reestablish failed ${e.javaClass.simpleName}")
+                }
+            }
+
+            CastEstablishPolicy.Action.KICK -> {
+                establishRetries++
+                establishRetryAtMs = nowMs
+                CastNetworkLog.log("cast-establish-kick attempt=$establishRetries elapsed=${elapsedMs}ms")
+                // 曲末推进超时：发 Seek 踢一脚触发电视取流。真机 20261108_064254 实测
+                // 这台电视报告 PLAYING 却不主动 fetch，收到一个 Seek 就立即取流。
+                // seek 到当前进度（新曲通常为 0）；重发 seturi+play 反而打断慢取流。
+                val target = st.progressMs.coerceAtLeast(0L)
+                try {
+                    client.seek(target)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    CastNetworkLog.log("cast-establish-kick failed ${e.javaClass.simpleName}")
+                }
+            }
+
+            CastEstablishPolicy.Action.WARN -> {
+                establishWarned = true
+                CastNetworkLog.log("cast-establish-failed elapsed=${elapsedMs}ms retries=$establishRetries")
+                _state.update { it.copy(error = "电视未响应投屏，请检查设备后重试") }
+            }
         }
     }
 
@@ -754,6 +923,10 @@ class DlnaCastManager @Inject constructor(
         // 渲染器自发 PAUSED 的去抖计时：一帧缓冲抖动不能翻 UI，见 CastPlayStatePolicy
         var pausedSinceMs = 0L
         while (true) {
+            // 本轮取流时刻不受「每条投送最多 8 条 http-fetch 日志」的上限影响：
+            // 供建立确认与曲中 STOPPED 的窗口顺延使用（见 CastStopPolicy）。
+            val fetchMs = httpServer.lastSuccessfulFetchMs()
+            refreshEstablishment(System.currentTimeMillis(), fetchMs, client)
             // 「连续 3 次没回包」只证明手机侧最近收不到响应，不等于设备离线：
             // 息屏/Doze 短暂限制后台网络、刚从维护窗口醒来都会造成连续空窗
             // （真机上三次失败间隔 55s/35s，不是 1s，正是协程被冻结的痕迹）。
@@ -839,7 +1012,8 @@ class DlnaCastManager @Inject constructor(
                         playbackState = mapped,
                         progressMs = position?.first ?: 0L,
                         durationMs = position?.second ?: 0L,
-                        hasProgressInfo = position != null
+                        hasProgressInfo = position != null,
+                        lastFetchMs = fetchMs
                     )
                 }
             }
@@ -979,5 +1153,6 @@ class DlnaCastManager @Inject constructor(
          * 真正离线时只多等 2 秒，代价可忽略。
          */
         private const val LOSS_CONFIRM_DELAY_MS = 2_000L
+        // 建立确认的宽限与重试上限收在 CastEstablishPolicy，便于纯 JVM 单测注入边界
     }
 }

@@ -1,5 +1,6 @@
 package com.puretone.player.playback.cast
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -213,5 +214,39 @@ class CastPlayStatePolicyTest {
 
         assertTrue(d.isPlaying)
         assertFalse(d.clearCommand)
+    }
+
+    // ---------- 命令宽限不续期（C3，真机 20261107_184914 连点锁死） ----------
+
+    @Test
+    fun `同一期望态连点不延长命令宽限`() {
+        val first = CastPlayStatePolicy.guardUntilMs(
+            previousExpected = null,
+            expected = false,
+            previousGuardUntilMs = 0L,
+            nowMs = 10_000L
+        )
+        assertEquals(10_000L + CastPlayStatePolicy.COMMAND_GUARD_MS, first)
+
+        val again = CastPlayStatePolicy.guardUntilMs(
+            previousExpected = false,
+            expected = false,
+            previousGuardUntilMs = first,
+            nowMs = 11_000L
+        )
+        assertEquals("连点 Pause 只应重试，不能把窗口推到 11s+2500ms", first, again)
+    }
+
+    @Test
+    fun `期望态翻转时重新起一个完整宽限`() {
+        val first = CastPlayStatePolicy.guardUntilMs(null, false, 0L, 10_000L)
+        val flipped = CastPlayStatePolicy.guardUntilMs(false, true, first, 11_000L)
+        assertEquals(11_000L + CastPlayStatePolicy.COMMAND_GUARD_MS, flipped)
+    }
+
+    @Test
+    fun `原宽限已过期时重新计时`() {
+        val again = CastPlayStatePolicy.guardUntilMs(false, false, 10_000L, 12_000L)
+        assertEquals(12_000L + CastPlayStatePolicy.COMMAND_GUARD_MS, again)
     }
 }

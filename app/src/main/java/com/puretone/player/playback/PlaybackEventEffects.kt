@@ -38,7 +38,9 @@ internal class PlaybackEventEffects(
     private val gaplessEnabledProvider: () -> Boolean,
     private val warmUpFollowingApe: () -> Unit,
     private val applyReplayGainForCurrent: () -> Unit,
-    private val stopServiceIfIdle: () -> Unit
+    private val stopServiceIfIdle: () -> Unit,
+    /** C2b：循环模式意外停播时的回绕续播兜底；返回 true 表示已续播（将跳过停服）。默认空实现。 */
+    private val rewindToStart: () -> Boolean = { false }
 ) : PlaybackEventSink {
 
     private companion object {
@@ -118,12 +120,21 @@ internal class PlaybackEventEffects(
         scope.launch { musicRepository.recordCompletion(songId) }
     }
 
+    override fun onCrossfadeFinalized() {
+        // 交叉淡入边界的「播完本曲停止」语义闭合（见 PlaybackEventSink.onCrossfadeFinalized）。
+        // 非淡化路径由 onTrackSideEffects(AUTO)/onPlaybackEnded 触发 finishEndOfTrack；淡化路径下
+        // 那两个回调被事件层「按实例丢弃残留回调」过滤掉，不会到达，故必须在此显式补触发，
+        // 否则 END_OF_TRACK 在交叉淡入的非末位曲目上永不停止。finishEndOfTrack 幂等，安全。
+        sleepTimer.finishEndOfTrack()
+    }
+
     override fun onPlaybackEnded() {
         // 末首自然播完（无 AUTO/REPEAT 过渡）的收尾。完成去重已由事件层在触发处负责，
         // 此处只做：睡眠定时归零 + 立即存档 + 空闲停服。
         val snapshot = endedSnapshot()
         PlaybackEventLog.record("playback-ended", snapshot)
         val state = uiState.value
+        var rewound = false
         if (PlaybackEndDiagnostics.isUnexpected(
                 repeatMode = state.repeatMode,
                 queueSize = state.queue.size,
@@ -132,12 +143,17 @@ internal class PlaybackEventEffects(
             )
         ) {
             // 循环模式 + 队列非空 + 用户没暂停，却进了 STATE_ENDED：引擎状态与 UI 镜像脱节。
-            // 只留证据，不在这里抢播放控制权（修复在换主重放，自动回绕兜底另议）。
+            // C2b 兜底（安全网，真正的修复在换主重放 C1）：立刻把当前曲回绕到起点续播，
+            // 避免「界面显示暂停、实际无声」。续播成功后**跳过下面的停服**——此刻同步查询
+            // isPlaying 仍可能为 false，若照常停服会把刚续上的播放掐掉。
             PlaybackEventLog.record("playback-ended-unexpected", snapshot)
+            rewound = rewindToStart()
+            PlaybackEventLog.record("playback-ended-rewind", "applied=$rewound $snapshot")
         }
         sleepTimer.finishEndOfTrack()
         saveSessionNow()
-        stopServiceIfIdle()
+        // C2b：已通过回绕重新续播则跳过停服，否则按原逻辑判断空闲。
+        if (!rewound) stopServiceIfIdle()
     }
 
     override fun finalizeCrossfadeIfOutgoing(player: ExoPlayer): Boolean {

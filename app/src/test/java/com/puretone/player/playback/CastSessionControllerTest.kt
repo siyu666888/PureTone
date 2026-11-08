@@ -85,7 +85,8 @@ class CastSessionControllerTest {
             previous = { timeline += "previous" },
             playAtIndex = { timeline += "index:$it" },
             seekTo = { timeline += "seek-local:$it" },
-            followPhoneVolume = { true }
+            followPhoneVolume = { true },
+            recastCurrent = { timeline += "recast-current" }
         )
     }
 
@@ -127,6 +128,10 @@ class CastSessionControllerTest {
             timeline += "optimistic"
         }
 
+        override fun markAutoAdvanceNext() {
+            timeline += "mark-auto-advance"
+        }
+
         override suspend fun stopCast() {
             timeline += "stop"
             if (stopCastThrows) throw RuntimeException("模拟停止投屏异常")
@@ -142,13 +147,18 @@ class CastSessionControllerTest {
             return true
         }
 
-        override suspend fun play(): Boolean {
+        /** 记录命令来源：验证通知栏与 App 内路径在诊断里可区分（C3） */
+        val commandSources = mutableListOf<String>()
+
+        override suspend fun play(source: String): Boolean {
             timeline += "renderer-play"
+            commandSources += source
             return true
         }
 
-        override suspend fun pause(): Boolean {
+        override suspend fun pause(source: String): Boolean {
             timeline += "renderer-pause"
+            commandSources += source
             return true
         }
     }
@@ -158,7 +168,8 @@ class CastSessionControllerTest {
         // delay(600) 需要显式推进虚拟时间才会恢复，光 advanceUntilIdle 不够。
         val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
         harness.block()
-        advanceTimeBy(1_000L)
+        // 曲末换曲握手是 1800ms，跑满 2s 才能让「推进队列」这类断言稳定。
+        advanceTimeBy(2_000L)
         runCurrent()
         advanceUntilIdle()
         harness.subject.unbind()
@@ -303,10 +314,86 @@ class CastSessionControllerTest {
     }
 
     @Test
-    fun `渲染器播完推进队列`() = runHarness {
-        subject.onCastTrackEnded()
+    fun `曲末播完经终止态握手后才推进队列`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(
+            isCasting = true, isPlaying = false, playbackState = "STOPPED", pushGeneration = 3L
+        )
 
-        assertEquals(listOf("next"), timeline)
+        harness.subject.onCastTrackEnded()
+        // 关键：STOPPED 那一秒绝不能立刻 SetAVTransportURI 换 URI（184914 18:45:37）
+        assertFalse(harness.timeline.contains("next"))
+        advanceTimeBy(1_000L)
+        runCurrent()
+        assertFalse(harness.timeline.contains("next"))
+
+        advanceTimeBy(1_000L)
+        runCurrent()
+        advanceUntilIdle()
+        // F1：推进前必须先标记「曲末自动推进」，让建立确认放宽且不重发（224000）
+        assertEquals(listOf("mark-auto-advance", "next"), harness.timeline)
+        harness.subject.unbind()
+    }
+
+    // ---------- C1：曲末换曲握手的取消条件 ----------
+
+    @Test
+    fun `握手期间用户停止投屏则放弃推进`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(isCasting = true, pushGeneration = 3L)
+        harness.subject.onCastTrackEnded()
+        harness.castPort.state.value = CastState(isCasting = false, pushGeneration = 3L)
+        advanceTimeBy(2_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertFalse(harness.timeline.contains("next"))
+        harness.subject.unbind()
+    }
+
+    @Test
+    fun `握手期间手动切歌换代次则放弃推进`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(isCasting = true, pushGeneration = 3L)
+        harness.subject.onCastTrackEnded()
+        harness.castPort.state.value = CastState(isCasting = true, pushGeneration = 4L)
+        advanceTimeBy(2_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertFalse(harness.timeline.contains("next"))
+        harness.subject.unbind()
+    }
+
+    @Test
+    fun `握手期间电视自己恢复播放则不换URI`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(isCasting = true, pushGeneration = 3L)
+        harness.subject.onCastTrackEnded()
+        harness.castPort.state.value = CastState(
+            isCasting = true, isPlaying = true, pushGeneration = 3L
+        )
+        advanceTimeBy(2_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertFalse(harness.timeline.contains("next"))
+        harness.subject.unbind()
+    }
+
+    // ---------- C2：末首播完收尾 ----------
+
+    @Test
+    fun `末首播完结束投屏并写停止态_不自动续播`() = runHarness {
+        castPort.state.value = CastState(isCasting = true, isPlaying = false)
+        uiState.value = PlaybackUiState(isPlaying = true)
+
+        subject.onCastQueueFinished()
+
+        assertTrue(timeline.contains("stop"))
+        assertFalse("产品语义：结束投屏并回本地，不自动续播", timeline.contains("play-local"))
+        assertFalse(uiState.value.isPlaying)
+        assertEquals("投屏已播完最后一首，已结束投屏", uiState.value.error)
     }
 
     // ---------- 门面回调与状态透传 ----------
@@ -367,5 +454,127 @@ class CastSessionControllerTest {
         assertTrue(timeline.contains("index:3"))
         assertTrue(timeline.contains("next"))
         assertTrue(timeline.contains("previous"))
+    }
+
+    @Test
+    fun `通知栏seek即时写进度并延长乐观窗口_203641回归`() = runHarness {
+        subject.seekOnRenderer(30_000L)
+
+        // 与 App 内 PlaybackController.seekTo 对齐：立即写 uiState + 乐观窗口，
+        // 否则 1Hz 镜像把「seek 前的旧值」拉回，进度条和电视对不上。
+        assertEquals(30_000L, uiState.value.positionMs)
+        assertTrue(timeline.contains("optimistic"))
+        assertTrue(timeline.contains("seek-renderer:30000"))
+    }
+
+    @Test
+    fun `曲中停止重投当前曲并续播到中断位置_绝不推进队列`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(isCasting = true, isEstablished = true)
+
+        harness.subject.onCastInterrupted(28_000L)
+        advanceTimeBy(1_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertTrue(harness.timeline.contains("recast-current"))
+        assertTrue(harness.timeline.contains("seek-renderer:28000"))
+        assertTrue(harness.timeline.contains("optimistic"))
+        assertFalse(harness.timeline.contains("next"))
+        assertEquals("投屏中断，已自动重连当前曲目", harness.uiState.value.error)
+        harness.subject.unbind()
+    }
+
+    // ---------- C3：通知栏 / 锁屏播放态闭环与命令回读确认 ----------
+
+    @Test
+    fun `通知栏Play即时写展示态_回读仍未播则重发再重投`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(
+            isCasting = true, isPlaying = false, isEstablished = true
+        )
+        harness.uiState.value = PlaybackUiState(isPlaying = false)
+
+        harness.subject.playOnRenderer()
+
+        // 旧实现完全不写 uiState，门面 isPlaying() 永远读不到命令结果，
+        // 用户点「播放」被取反成 Pause —— 真机 184914 现象③。
+        assertTrue(harness.uiState.value.isPlaying)
+        assertEquals(listOf("notification"), harness.castPort.commandSources)
+
+        advanceTimeBy(3_000L)
+        runCurrent()
+        assertEquals(
+            listOf("notification", "notification-retry"),
+            harness.castPort.commandSources
+        )
+
+        advanceTimeBy(3_000L)
+        runCurrent()
+        advanceUntilIdle()
+        assertTrue(harness.timeline.contains("recast-current"))
+        assertEquals("电视未响应播放，已重新投送当前曲目", harness.uiState.value.error)
+        harness.subject.unbind()
+    }
+
+    @Test
+    fun `通知栏Play回读已在播则不重发也不重投`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(
+            isCasting = true, isPlaying = false, isEstablished = true
+        )
+        harness.subject.playOnRenderer()
+        // 渲染器回读已确认 PLAYING
+        harness.castPort.state.value = CastState(
+            isCasting = true, isPlaying = true, isEstablished = true
+        )
+        advanceTimeBy(4_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertEquals(listOf("notification"), harness.castPort.commandSources)
+        assertFalse(harness.timeline.contains("recast-current"))
+        harness.subject.unbind()
+    }
+
+    @Test
+    fun `Play回读期间App内暂停则放弃补救_不把渲染器又拉起来`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(
+            isCasting = true, isPlaying = false, isEstablished = true
+        )
+        harness.uiState.value = PlaybackUiState(isPlaying = false)
+
+        harness.subject.playOnRenderer()
+        // App 内 PlaybackController.pause() 只写 uiState，不经过 pauseOnRenderer，
+        // 因此不会 cancel 在途的回读确认 job —— 这里必须靠展示态校验挡住。
+        harness.uiState.value = PlaybackUiState(isPlaying = false)
+        advanceTimeBy(7_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertEquals(listOf("notification"), harness.castPort.commandSources)
+        assertFalse(harness.timeline.contains("recast-current"))
+        harness.subject.unbind()
+    }
+
+    @Test
+    fun `通知栏Pause即时写暂停态并取消在途回读确认`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(
+            isCasting = true, isPlaying = false, isEstablished = true
+        )
+        harness.uiState.value = PlaybackUiState(isPlaying = true)
+
+        harness.subject.playOnRenderer()
+        harness.subject.pauseOnRenderer()
+        advanceTimeBy(7_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertFalse(harness.uiState.value.isPlaying)
+        assertEquals(listOf("notification", "notification"), harness.castPort.commandSources)
+        assertFalse("暂停必须取消在途的 Play 回读确认", harness.timeline.contains("recast-current"))
+        harness.subject.unbind()
     }
 }

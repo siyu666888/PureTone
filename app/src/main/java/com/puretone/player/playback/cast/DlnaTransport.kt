@@ -104,10 +104,18 @@ internal class DlnaTransport(private val locationUrl: String, private val device
         action("Seek", "<Unit>REL_TIME</Unit><Target>${formatTime(positionMs)}</Target>")
 
     private suspend fun action(name: String, extra: String = ""): Boolean = withContext(Dispatchers.IO) {
-        val url = endpoints()?.avTransport ?: return@withContext false
+        val url = endpoints()?.avTransport ?: run {
+            // 端点没了还谈什么「命令下发成功」：这一行让诊断能区分「没发」与「发了没生效」
+            CastNetworkLog.log("own-$name skipped=no-endpoint")
+            return@withContext false
+        }
         val body = "<u:$name xmlns:u=\"$AVT_NS\"><InstanceID>0</InstanceID>$extra</u:$name>"
         val result = SoapClient.post(url, "$AVT_NS#$name", body)
-        if (!result.ok) {
+        // 成功也落盘：过去只有失败才写日志，诊断报告里看不到手动 Play/Pause 是否下发，
+        // 只能靠 own-state 反推（20261107_165555 的盲区）。命令不频繁，不会刷爆日志。
+        if (result.ok) {
+            CastNetworkLog.log("own-$name http=${result.status} ok=true")
+        } else {
             CastNetworkLog.log("own-$name http=${result.status} fault=${SoapClient.snippet(result.body)}")
         }
         result.ok

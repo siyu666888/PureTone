@@ -26,7 +26,7 @@ class AudioFocusControllerLoggingTest {
         commands: MutableList<Command>
     ): AudioFocusController = AudioFocusController(
         ApplicationProvider.getApplicationContext<Context>(),
-        { command -> commands += command }
+        { command, _ -> commands += command }
     ) { event, detail -> lines += "$event | $detail" }
 
     @Test

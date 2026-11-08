@@ -63,7 +63,7 @@ internal class PlaybackController(
         crossfade.cancel()
         // 投屏态：命令属于渲染器。本地若也起播，手机与电视会同时出声。
         if (castState().isCasting) {
-            scope.launch { dlnaCast.play() }
+            scope.launch { dlnaCast.play("ui") }
             uiState.update { it.copy(isPlaying = true) }
             return
         }
@@ -93,7 +93,7 @@ internal class PlaybackController(
                 PlaybackEventLog.record("pause-skipped", "投屏态已暂停")
                 return
             }
-            scope.launch { dlnaCast.pause() }
+            scope.launch { dlnaCast.pause("ui") }
             uiState.update { it.copy(isPlaying = false) }
             sink.saveSessionNow()
             PlaybackEventLog.record("user-pause", "投屏态")

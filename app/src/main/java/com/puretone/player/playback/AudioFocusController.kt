@@ -40,7 +40,7 @@ import android.util.Log
  */
 internal class AudioFocusController(
     context: Context,
-    private val onCommand: (Command) -> Unit,
+    private val onCommand: (Command, Int) -> Unit,
     /** 注入点：默认落到播放事件日志；单测用替身收集，避免依赖 Android Log。 */
     private val record: (String, String) -> Unit = { event, detail -> PlaybackEventLog.record(event, detail) }
 ) {
@@ -82,7 +82,7 @@ internal class AudioFocusController(
         record("audio-focus-change", FocusDecision.describeChange(change, holding, resumeOnGain, next))
         holding = next.holding
         resumeOnGain = next.resumeOnGain
-        next.command?.let(onCommand)
+        next.command?.let { onCommand(it, change) }
     }
 
     /** AudioFocusRequest 构建较重且可复用；minSdk 26，无需兼容旧 API */

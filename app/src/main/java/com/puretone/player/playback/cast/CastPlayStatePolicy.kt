@@ -97,4 +97,27 @@ internal object CastPlayStatePolicy {
             clearCommand = hadCommand
         )
     }
+
+    /**
+     * 计算命令宽限的截止时刻：**同一期望态连点不续期**。
+     *
+     * 真机 20261107_184914 的「卡片可暂停、不可播放」有一条放大器：通知栏连点 Pause
+     * 每次都把宽限重置到 `now + [COMMAND_GUARD_MS]`，于是 [CastState.isPlaying] 被
+     * 永久钉在命令期望态，1Hz 轮询的真实状态一直进不来；UI 取反基准随之锁死，
+     * 用户点「播放」被取反成 Pause。命令宽限应当只覆盖「这一条命令发出后的一次收敛」，
+     * 重复同一期望态只是重试，不该把窗口无限往后推。
+     *
+     * 期望态翻转（Play ↔ Pause）或原宽限已过期时，才重新起一个完整宽限。
+     */
+    fun guardUntilMs(
+        previousExpected: Boolean?,
+        expected: Boolean,
+        previousGuardUntilMs: Long,
+        nowMs: Long,
+        guardMs: Long = COMMAND_GUARD_MS
+    ): Long = if (previousExpected == expected && previousGuardUntilMs > nowMs) {
+        previousGuardUntilMs
+    } else {
+        nowMs + guardMs
+    }
 }

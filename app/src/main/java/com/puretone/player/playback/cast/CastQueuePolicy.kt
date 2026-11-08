@@ -132,4 +132,32 @@ internal object CastQueuePolicy {
         // 不上报位置」，拿它跳歌会在用户按暂停后凭空切到下一首。
         return progressMs <= 0L && rendererDurationMs > 0L
     }
+
+    /**
+     * 队列最后一首播完（循环关闭、[hasNext] 为 false）时，是否应结束投屏会话。
+     *
+     * 真机 20261107_184914：18:48:40 `own-state STOPPED` 之后电视已经退出投屏画面，
+     * 但 App 侧 `isCasting` 仍为 true——因为 [shouldAutoAdvance] 在 `!hasNext` 时直接
+     * 返回 false，协调器把这次终止态当成「不用做任何事」丢掉了。DLNA push 模式下
+     * 电视播完就自己结束传输，手机若不给会话一个收尾语义，就会长期停在「已连接」
+     * 却没有声音、也没有画面的幽灵状态（用户只能手动点断开）。
+     *
+     * 判据刻意比 [shouldAutoAdvance] 更窄：
+     * - 必须经历过「在播 → 不在播」跃迁，避免刚投出去还没起播就结束会话；
+     * - 只认 [STATE_STOPPED]，用户中途暂停（[STATE_PAUSED]）绝不关投屏；
+     * - 有下一首时返回 false，收尾只属于队列末尾。
+     *
+     * 收尾动作（停渲染器、复位 [CastState]、写停止态）由宿主
+     * [com.puretone.player.playback.CastSessionController] 落地，本函数只判定。
+     */
+    fun shouldFinishQueue(
+        wasPlaying: Boolean,
+        isPlaying: Boolean,
+        playbackState: String,
+        hasNext: Boolean
+    ): Boolean {
+        if (hasNext) return false
+        if (!wasPlaying || isPlaying) return false
+        return playbackState == STATE_STOPPED
+    }
 }

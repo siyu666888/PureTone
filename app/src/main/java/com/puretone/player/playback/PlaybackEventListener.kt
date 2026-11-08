@@ -229,6 +229,18 @@ internal interface PlaybackEventSink {
     /** 末首自然播完的收尾：睡眠定时归零 + 立即存档 + 空闲停服（不含完成去重） */
     fun onPlaybackEnded()
 
+    /**
+     * 交叉淡化收尾（曲末自然交接完成）：补触发「播完本曲停止」的到点逻辑。
+     *
+     * 交叉淡入路径下，曲末交接由 [CrossfadeCoordinator] 在淡化 ramp 结束 / 淡出方 STATE_ENDED 兜底时
+     * 完成，主播放器不会发出 AUTO 过渡、淡出方的 STATE_ENDED 又被「按实例丢弃残留回调」过滤
+     * （见本类主监听器），于是 [onTrackSideEffects] 与 [onPlaybackEnded] 都不会到达——若不在此补触发，
+     * 开启交叉淡入后「播完本曲停止」在非末位曲目上永不停止。此处即该语义的闭合点：淡化收尾 =
+     * 当前曲音频已播完、已平滑交接到下一首。挂接在 [finalizeCrossfadeIfOutgoing] 之后由宿主在换主后调用。
+     * [com.puretone.player.playback.SleepTimerController.finishEndOfTrack] 幂等，仅 END_OF_TRACK 模式生效。
+     */
+    fun onCrossfadeFinalized()
+
     /** 主播放器自然播到结尾的淡化兜底收尾；返回 true 表示本次确实执行了淡化收尾（本实例正是当前淡出方） */
     fun finalizeCrossfadeIfOutgoing(player: ExoPlayer): Boolean
 

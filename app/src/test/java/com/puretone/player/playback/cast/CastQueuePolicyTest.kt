@@ -277,4 +277,45 @@ class CastQueuePolicyTest {
             )
         )
     }
+
+    // ---------- 末首播完的收尾判据（C2，真机 20261107_184914） ----------
+
+    private fun shouldFinish(
+        wasPlaying: Boolean = true,
+        isPlaying: Boolean = false,
+        playbackState: String = CastQueuePolicy.STATE_STOPPED,
+        hasNext: Boolean = false
+    ) = CastQueuePolicy.shouldFinishQueue(
+        wasPlaying = wasPlaying,
+        isPlaying = isPlaying,
+        playbackState = playbackState,
+        hasNext = hasNext
+    )
+
+    @Test
+    fun `末首STOPPED 且经历过在播跃迁时收尾`() {
+        assertTrue(shouldFinish())
+    }
+
+    @Test
+    fun `还有下一首时不收尾_交给自动推进`() {
+        assertFalse(shouldFinish(hasNext = true))
+    }
+
+    @Test
+    fun `用户中途暂停不收尾投屏`() {
+        assertFalse(shouldFinish(playbackState = CastQueuePolicy.STATE_PAUSED))
+    }
+
+    @Test
+    fun `仍在播放或从没播起过都不收尾`() {
+        assertFalse(shouldFinish(isPlaying = true))
+        assertFalse(shouldFinish(wasPlaying = false))
+    }
+
+    @Test
+    fun `缓冲与错误态不收尾_交给失联回退处理`() {
+        assertFalse(shouldFinish(playbackState = CastQueuePolicy.STATE_BUFFERING))
+        assertFalse(shouldFinish(playbackState = CastQueuePolicy.STATE_ERROR))
+    }
 }

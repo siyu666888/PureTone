@@ -51,6 +51,8 @@ internal class CastSessionController(
     private val playAtIndex: (Int) -> Unit,
     private val seekTo: (Long) -> Unit,
     private val followPhoneVolume: () -> Boolean,
+    /** 曲中停止后重投**当前曲**（宿主侧的 recastCurrentIfCasting，含失败回退本地） */
+    private val recastCurrent: () -> Unit,
 ) : CastCommandSink, CastQueueSink {
 
     private companion object {
@@ -65,6 +67,25 @@ internal class CastSessionController(
          * 停写窗口（暂停 / 拖动）结束时的重锚由 [startProgressProjection] 单独负责。
          */
         const val PROJECTION_ANCHOR_MAX_AGE_MS = 1_500L
+
+        /** 曲中停止重投后，等渲染器进入 PLAYING 再补 seek（与 startCast 的续播同款时序） */
+        const val RECAST_SEEK_DELAY_MS = 800L
+
+        /**
+         * 曲末 STOPPED → 换下一首 URI 之间的「终止态握手」。
+         *
+         * 真机 20261107_184914：18:45:37 `own-state STOPPED` 与 `cast-attempt` 同秒，
+         * 电视还在为旧 URI 做收尾（关连接 / 重启控制服务），App 立刻 `SetAVTransportURI`
+         * 把新曲顶上去，DLNA 播放器直接退出画面；新曲此后 9 秒都没来取流，只能靠
+         * B3 的 8 秒宽限事后重发救回。这里先让终止态稳定下来再换 URI。
+         */
+        const val TRACK_END_HANDSHAKE_MS = 1_800L
+
+        /**
+         * 通知栏 Play 的回读确认延迟：必须大于命令宽限（2500ms），
+         * 否则读到的仍是命令期望态而不是渲染器真实状态。
+         */
+        const val PLAY_CONFIRM_DELAY_MS = 3_000L
     }
 
     /** 投屏态的 MediaSession 门面。在 bind 时按当前 player 重建（player 换了就要换包装） */
@@ -74,6 +95,10 @@ internal class CastSessionController(
     private var castRoutingJob: Job? = null
     /** 进度外推 ticker：在 1Hz 轮询之间用墙钟流逝推进手机进度，消除与电视的 1~2s 偏差 */
     private var progressTickerJob: Job? = null
+    /** 曲末换曲握手 job：同一时刻只保留一个，避免两次 STOPPED 观测连跳队列 */
+    private var trackEndHandshakeJob: Job? = null
+    /** 通知栏 Play 的回读确认 job：暂停 / 末首收尾 / 解绑时取消 */
+    private var playConfirmJob: Job? = null
     /** 进度外推锚点（轮询到的电视位置 + 当时墙钟），由两个协程共享读写 */
     private val anchorMs = AtomicLong(0L)
     private val anchorWallMs = AtomicLong(0L)
@@ -105,7 +130,12 @@ internal class CastSessionController(
                     // 无需各自分支就一起跟随。非投屏期绝不镜像，避免状态清零冲掉本地位置。
                     // 拖动进度后留一段乐观窗口：渲染器执行 Seek 是异步的，头几次回读
                     // 仍是旧值，直接镜像会把进度条拉回去。
-                    val mirror = st.hasProgressInfo &&
+                    // 未确认建立（自有通道还没观测到电视真来取流）时不镜像播放态/进度：
+                    // 真机 20261107_165555 里 cast-ok + PLAYING 却一条 http-fetch 都没有，
+                    // 手机卡片靠外推显示 00:24，而电视画面早已退出。默认 true 的库通道
+                    // 与所有历史状态不受影响。
+                    val established = st.isEstablished
+                    val mirror = established && st.hasProgressInfo &&
                         System.currentTimeMillis() >= dlnaCast.progressHoldUntilMs
                     if (mirror) {
                         anchorMs.set(st.progressMs.coerceAtLeast(0L))
@@ -116,7 +146,7 @@ internal class CastSessionController(
                         // 总时长退到本地已知值；本地播放器若从未起播过（冷启动直接投屏），
                         // 再退到队列条目里 Room 记录的时长，否则进度条会整个没有刻度。
                         current.copy(
-                            isPlaying = st.isPlaying,
+                            isPlaying = st.isPlaying && established,
                             positionMs = if (mirror) anchorMs.get() else current.positionMs,
                             durationMs = CastProgressPolicy.displayDurationMs(
                                 rendererDurationMs = st.durationMs,
@@ -158,7 +188,7 @@ internal class CastSessionController(
             while (true) {
                 delay(250)
                 val st = dlnaCast.state.value
-                if (!st.isCasting || !st.isPlaying) {
+                if (!st.isCasting || !st.isPlaying || !st.isEstablished) {
                     projectionPaused = true
                     continue
                 }
@@ -195,6 +225,10 @@ internal class CastSessionController(
         castRoutingJob = null
         progressTickerJob?.cancel()
         progressTickerJob = null
+        trackEndHandshakeJob?.cancel()
+        trackEndHandshakeJob = null
+        playConfirmJob?.cancel()
+        playConfirmJob = null
         castPlayer = null
         routedToCast = false
     }
@@ -319,12 +353,87 @@ internal class CastSessionController(
      * 投屏按另一套」的分叉。
      *
      * [next] 内部已带重投（本地推进后调 recastCurrentIfCasting），故这里不再单独投送。
+     *
+     * **但推进前要先做一次终止态握手**（C1，真机 20261107_184914）：协调器判定
+     * 「播完」的那一帧与渲染器置 STOPPED 是同一秒，此时电视还在为旧 URI 收尾，
+     * 立刻 `SetAVTransportURI` 会把它的重连/控制服务重启顶掉，画面直接退出。
+     * 延迟 [TRACK_END_HANDSHAKE_MS] 再推进；期间用户切歌 / 停止投屏 / 电视自己
+     * 恢复播放都要取消这次推进（代次 + 投屏态 + 播放态三重校验）。
+     *
+     * 握手刻意放在**宿主动作层**而非协调器判据层：协调器是被动等 1Hz 状态帧的
+     * 状态机，轮询静默时窗口永远不会到期，会重新引入「曲末卡死」；这里由协程
+     * delay 驱动，一定收敛，「STOPPED 一律推进」判据与全部历史时序测试零改动。
      */
     override fun onCastTrackEnded() {
-        // 曲末决策的落地证据：看到这一行说明策略判定为「播完」并已推进队列；
+        val generation = dlnaCast.state.value.pushGeneration
+        // 曲末决策的落地证据：看到这一行说明策略判定为「播完」；
         // 只有 own-state STOPPED 却没有它，说明又卡在判据上（见 CastQueuePolicy）。
-        CastNetworkLog.log("cast-track-ended advance=1")
-        next()
+        CastNetworkLog.log(
+            "cast-track-ended advance=1 handshake=${TRACK_END_HANDSHAKE_MS}ms gen=$generation"
+        )
+        trackEndHandshakeJob?.cancel()
+        trackEndHandshakeJob = scope.launch {
+            delay(TRACK_END_HANDSHAKE_MS)
+            val st = dlnaCast.state.value
+            if (!st.isCasting || st.pushGeneration != generation) {
+                CastNetworkLog.log(
+                    "cast-track-ended canceled casting=${st.isCasting} gen=${st.pushGeneration}"
+                )
+                return@launch
+            }
+            if (st.isPlaying) {
+                CastNetworkLog.log("cast-track-ended canceled reason=renderer-resumed")
+                return@launch
+            }
+            CastNetworkLog.log("cast-track-ended advance-committed gen=$generation")
+            // 标记「下一首是曲末自动推进」：电视刚自然播完上一首、正在复位，
+            // 取流延迟波动大（224000 实测 7~8s），建立确认要放宽且不重发，避免
+            // 6s 一到就重发 SetAVTransportURI+Play 把电视的取流打断（开头重复/静默）。
+            dlnaCast.markAutoAdvanceNext()
+            next()
+        }
+    }
+
+    /**
+     * 队列最后一首播完（循环关闭）→ 结束投屏会话并回到本地（C2）。
+     *
+     * 产品语义（用户确认）：电视已经自行结束传输、退出投屏画面，手机不能再显示
+     * 「已连接」这种幽灵状态；主动结束投屏、把展示态写回停止、给出提示，
+     * **不自动续播**本地播放。stopCast 会把 [CastState] 整包清零，MediaSession
+     * 随之切回本地播放器，但本地播放器仍是暂停的——这正是「回本地但不续播」。
+     */
+    override fun onCastQueueFinished() {
+        CastNetworkLog.log("cast-queue-finished reason=last-track")
+        trackEndHandshakeJob?.cancel()
+        playConfirmJob?.cancel()
+        scope.launch {
+            dlnaCast.stopCast()
+            uiState.update {
+                it.copy(isPlaying = false, error = "投屏已播完最后一首，已结束投屏")
+            }
+        }
+    }
+
+    /**
+     * 曲中停止（渲染器重连 / 缓冲耗尽后把 URI 置 STOPPED）→ 重投**当前曲**并续播。
+     *
+     * 关键是不能走 [next]：真机 20261107_165555 里电视正在重新拉全量流，App 同秒
+     * `SetAVTransportURI` 换成下一首，把电视的重连顶掉，DLNA 播放器直接退出画面。
+     * 这里只把同一首重新投出去，等它进入 PLAYING 再 seek 回中断位置，队列完全不动。
+     */
+    override fun onCastInterrupted(progressMs: Long) {
+        CastNetworkLog.log("cast-interrupted recast progress=${progressMs}ms")
+        // 提示落在统一错误通道（PlayerScreen 把它传给遥控页 notice 位，复用已有展示处）；
+        // 诊断日志同时留一份可追溯证据，避免提示被 dismiss 后无从查证。
+        uiState.update { it.copy(error = "投屏中断，已自动重连当前曲目") }
+        recastCurrent()
+        scope.launch {
+            delay(RECAST_SEEK_DELAY_MS)
+            if (!dlnaCast.state.value.isCasting) return@launch
+            dlnaCast.seek(progressMs)
+            dlnaCast.noteSeekOptimistic()
+            CastNetworkLog.log("cast-interrupted-seek progress=${progressMs}ms")
+        }
     }
 
     /**
@@ -378,16 +487,61 @@ internal class CastSessionController(
         dlnaCast.adjustVolume(delta)
     }
 
+    /**
+     * 通知栏 / 锁屏的 Play：必须**即时写 uiState.isPlaying**（C3）。
+     *
+     * 门面 [CastPlaybackPlayer.isPlaying] 读的正是 uiState，而旧实现只把命令发给
+     * 渲染器、不写展示态；1Hz 镜像又受命令宽限保护，展示态长期锁在「播放中」，
+     * 于是取反基准仍是「正在播放」，用户点播放反而下发 Pause —— 真机
+     * 20261107_184914 的「卡片可暂停、不可播放」。App 内路径
+     * `PlaybackController.play()` 一直有这行 uiState 写入，这里把通知栏补齐。
+     *
+     * 另加回读确认：宽限到期后渲染器仍未 PLAYING 就自动重发一次 Play，仍失败则
+     * 重投当前曲（与 B3「重新 SetAVTransportURI 才是有效动作」同一手法）。
+     */
     override fun playOnRenderer() {
-        scope.launch { dlnaCast.play() }
+        uiState.update { it.copy(isPlaying = true) }
+        playConfirmJob?.cancel()
+        playConfirmJob = scope.launch {
+            dlnaCast.play("notification")
+            confirmPlayOnRenderer(retriesLeft = 1)
+        }
+    }
+
+    /** Play 回读未达目标态时的补救：重发一次 → 仍失败则重投当前曲 */
+    private suspend fun confirmPlayOnRenderer(retriesLeft: Int) {
+        delay(PLAY_CONFIRM_DELAY_MS)
+        val st = dlnaCast.state.value
+        // 展示态已被别处改回暂停（例如用户在 App 内播放页点了暂停，那条路径不经过
+        // pauseOnRenderer、不会 cancel 本 job）时绝不能补救播放，否则会把刚暂停的
+        // 渲染器又拉起来。投屏结束 / 渲染器已在播同理都是「无需补救」。
+        if (!st.isCasting || st.isPlaying || !uiState.value.isPlaying) return
+        if (retriesLeft > 0) {
+            CastNetworkLog.log("cast-cmd play retry reason=not-playing-after-guard source=notification")
+            dlnaCast.play("notification-retry")
+            confirmPlayOnRenderer(retriesLeft - 1)
+            return
+        }
+        CastNetworkLog.log("cast-cmd play retry-exhausted action=recast-current")
+        uiState.update { it.copy(error = "电视未响应播放，已重新投送当前曲目") }
+        recastCurrent()
     }
 
     override fun pauseOnRenderer() {
-        scope.launch { dlnaCast.pause() }
+        playConfirmJob?.cancel()
+        uiState.update { it.copy(isPlaying = false) }
+        scope.launch { dlnaCast.pause("notification") }
     }
 
     override fun seekOnRenderer(positionMs: Long) {
-        scope.launch { dlnaCast.seek(positionMs) }
+        // 与 App 内 PlaybackController.seekTo 的投屏分支对齐：先记乐观窗口挡住 1Hz
+        // 轮询把「seek 前的旧值」镜像回来，再立即写 uiState 让通知栏/锁屏进度条
+        // 跟着拖动走。旧实现只发 seek、两样都不做，拖完进度条立刻被拉回旧位置，
+        // 与电视对不上（真机 20261107_203641 里连续拖两次正是这个表现）。
+        val ms = positionMs.coerceAtLeast(0L)
+        dlnaCast.noteSeekOptimistic()
+        uiState.update { it.copy(positionMs = ms) }
+        scope.launch { dlnaCast.seek(ms) }
     }
 
     /** 门面收到的是「切到第 N 首」：走常规点播路径，末尾会自动重投 */

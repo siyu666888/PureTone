@@ -103,6 +103,7 @@ class PlaybackEventListenerTest {
         override fun onPlaybackEnded() {
             onPlaybackEndedCalled = true
         }
+        override fun onCrossfadeFinalized() = Unit
         override fun finalizeCrossfadeIfOutgoing(player: ExoPlayer): Boolean = finalizeReturns
         override fun onIdleCleared() = Unit
         override fun onError(error: PlaybackException) = Unit

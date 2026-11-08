@@ -15,6 +15,7 @@ import com.puretone.player.data.settings.SleepTimerMode
 import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.effect.AudioEffectController
 import com.puretone.player.playback.cast.CastDevice
+import com.puretone.player.playback.cast.CastNetworkLog
 import com.puretone.player.playback.cast.CastQueueCoordinator
 import com.puretone.player.playback.cast.CastQueueInfo
 import com.puretone.player.playback.cast.CastResult
@@ -173,7 +174,8 @@ class PlaybackManager @Inject constructor(
         context = appContext,
         playerProvider = { player },
         isCrossfading = { crossfade.isCrossfading },
-        isCasting = { dlnaCast.state.value.isCasting }
+        isCasting = { dlnaCast.state.value.isCasting },
+        scope = scope
     )
 
     /**
@@ -259,6 +261,12 @@ class PlaybackManager @Inject constructor(
                 }
                 widgetUpdater.requestUpdate()
                 applyReplayGainForCurrent()
+                // 「播完本曲停止」在交叉淡入边界的语义闭合：交叉淡入收尾 = 当前曲音频已播完、已平滑交接到下一首。
+                // 淡化路径下 onTrackSideEffects(AUTO) 与 onPlaybackEnded 均被事件层的「按实例丢弃残留回调」
+                // 过滤掉，不会到达，故必须在此显式补触发，否则 END_OF_TRACK 在非末位曲目上永不停止。
+                // finishEndOfTrack 幂等（仅 END_OF_TRACK 模式生效），非该模式为 no-op；ticker 只在播放态推进
+                // 交叉淡入（见 ticker），此处暂停后不会被立即再起淡化冲掉。
+                eventEffects.onCrossfadeFinalized()
             }
         }
     )
@@ -393,14 +401,16 @@ class PlaybackManager @Inject constructor(
         previous = { this@PlaybackManager.previous() },
         playAtIndex = { i -> this@PlaybackManager.playAtIndex(i) },
         seekTo = { ms -> this@PlaybackManager.seekTo(ms) },
-        followPhoneVolume = { lastSettings.castVolumeFollowPhone }
+        followPhoneVolume = { lastSettings.castVolumeFollowPhone },
+        recastCurrent = { this@PlaybackManager.recastCurrentIfCasting() }
     )
 
     private val castQueueCoordinator = CastQueueCoordinator(
         scope = scope,
         castState = dlnaCast.state,
         queueInfo = { buildCastQueueInfo() },
-        sink = cast
+        sink = cast,
+        log = { CastNetworkLog.log(it) }
     )
 
     /**
@@ -431,7 +441,15 @@ class PlaybackManager @Inject constructor(
         gaplessEnabledProvider = { gaplessEnabled },
         warmUpFollowingApe = this::warmUpFollowingApe,
         applyReplayGainForCurrent = this::applyReplayGainForCurrent,
-        stopServiceIfIdle = this::stopServiceIfIdle
+        stopServiceIfIdle = this::stopServiceIfIdle,
+        rewindToStart = {
+            // C2b 兜底：循环模式意外停播时回绕续播。回到当前曲起点并续播——
+            // 在 ALL/ONE 循环下让声音不中断；真正的「换主重放」修复（C1）负责正确进下一首。
+            val p = player ?: return@PlaybackEventEffects false
+            p.seekToDefaultPosition()
+            p.play()
+            true
+        }
     )
 
     private val eventListener = PlaybackEventListener(

@@ -81,7 +81,40 @@ data class CastState(
      * （部分「多屏互动」类中间层）**根本无法**用 `SetVolume` 调音量。此时 UI 必须
      * 禁用滑块并提示用遥控器——给一个拖了没反应的滑块，比不给更糟。
      */
-    val volumeSupported: Boolean? = null
+    val volumeSupported: Boolean? = null,
+    /**
+     * 本轮投送**实际完成**时刻（`onCastSucceeded`，非转码开始时刻）。
+     *
+     * 用于「曲中停止」的墙钟判据（见 [CastStopPolicy]）与取流建立确认：
+     * 换 URI 后电视必须在这之后重新发起取流，才算真的接上了新曲。
+     */
+    val castStartMs: Long = 0L,
+    /**
+     * 本轮投送后，电视最近一次真正取流的时刻（0=本轮从未取流）。
+     *
+     * 真机 20261107_165555：16:55:25 `cast-ok` 之后到导出报告一条新曲 `http-fetch`
+     * 都没有，App 却报 PLAYING、手机卡片显示 00:24——那是 uiState 外推的假进度。
+     * 投屏「已建立」必须以此为准，不能只看 SOAP 200。
+     */
+    val lastFetchMs: Long = 0L,
+    /**
+     * 本轮投屏是否已确认建立：自有通道须观测到电视真来取流（见 [CastEstablishPolicy]），
+     * 库通道取流不经过本应用 HTTP 服务，直通为 true。
+     *
+     * 默认 true 表示「未启用取流确认的历史状态 / 库通道」；自有通道每次投送成功时由
+     * [DlnaCastManager] 显式置 false，等确认后再翻回 true。未建立时 UI 不镜像播放态
+     * 与进度，避免「电视已退出画面、手机还在显示播放中」。
+     */
+    val isEstablished: Boolean = true,
+    /**
+     * 本轮投送是否「曲末自动推进」（渲染器自然播完上一首 → 自动投下一首）。
+     *
+     * 与用户主动切歌 / 首次投屏区分：曲末推进时电视刚 STOPPED 复位，重新取下一首流
+     * 的延迟波动大（真机 20261107_224000 实测 7~8s，远超手动切歌的 <1s），这是电视
+     * 固有行为而非「卡死」。据此 [CastEstablishPolicy] 用更宽的建立宽限且不重发，
+     * 避免 6s 一到就 `SetAVTransportURI+Play` 重发把电视的取流打断（开头重复/静默）。
+     */
+    val autoAdvance: Boolean = false
 )
 
 /**

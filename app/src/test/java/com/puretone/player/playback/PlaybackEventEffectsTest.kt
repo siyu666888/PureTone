@@ -179,6 +179,49 @@ class PlaybackEventEffectsTest {
     }
 
     @Test
+    fun `onPlaybackEnded 循环模式异常结束时回绕续播并跳过停服`() {
+        var rewindCalled = false
+        // isUnexpected 要求 playWhenReady=true：这里让 playerProvider 返回一个「播放意图为 true」的播放器。
+        exoPlayer.play()
+        val e = buildEffects(gaplessEnabled = true, rewindToStart = { rewindCalled = true; true }) { exoPlayer }
+        uiState.value = uiState.value.copy(
+            repeatMode = RepeatMode.ALL,
+            queue = listOf(QueueEntry(1L, "t", "a", null, 1000L, false, "p")),
+            queueIndex = 0
+        )
+        e.onPlaybackEnded()
+        // 命中 isUnexpected → 触发回绕，且因为已续播而跳过空闲停服
+        assertTrue(rewindCalled)
+        assertEquals(0, stopIdleCount)
+        assertEquals(1, sessionStore.saveNowCount)
+    }
+
+    @Test
+    fun `onPlaybackEnded 回绕失败仍按原逻辑停服`() {
+        var rewindCalled = false
+        exoPlayer.play()
+        val e = buildEffects(gaplessEnabled = true, rewindToStart = { rewindCalled = true; false }) { exoPlayer }
+        uiState.value = uiState.value.copy(
+            repeatMode = RepeatMode.ONE,
+            queue = listOf(QueueEntry(2L, "t", "a", null, 1000L, false, "p")),
+            queueIndex = 0
+        )
+        e.onPlaybackEnded()
+        assertTrue(rewindCalled)
+        // 回绕失败（返回 false）→ 不跳过停服
+        assertEquals(1, stopIdleCount)
+    }
+
+    @Test
+    fun `onCrossfadeFinalized 委托触发播完本曲停止`() {
+        // 交叉淡入收尾 = 当前曲音频已播完并平滑交接到下一首，此处必须补触发 END_OF_TRACK 的到点逻辑
+        // （非淡化路径由 onTrackSideEffects/onPlaybackEnded 触发，淡化路径被事件层按实例丢弃过滤，不会到达）。
+        val before = sleep.finishCount
+        effects.onCrossfadeFinalized()
+        assertEquals(before + 1, sleep.finishCount)
+    }
+
+    @Test
     fun `recordPlay 经 scope 落到仓库`() {
         effects.recordPlay(5L)
         assertEquals(listOf(5L), repo.plays)
@@ -216,8 +259,12 @@ class PlaybackEventEffectsTest {
         effects.onSecondaryError(PlaybackException("x", null, 0))
     }
 
-    private fun buildEffects(gaplessEnabled: Boolean): PlaybackEventEffects = PlaybackEventEffects(
-        playerProvider = { null },
+    private fun buildEffects(
+        gaplessEnabled: Boolean,
+        rewindToStart: () -> Boolean = { false },
+        playerProvider: () -> ExoPlayer? = { null }
+    ): PlaybackEventEffects = PlaybackEventEffects(
+        playerProvider = playerProvider,
         uiState = uiState,
         audioEffectController = audioEffect,
         lastSettingsProvider = { PureToneSettings() },
@@ -233,6 +280,7 @@ class PlaybackEventEffectsTest {
         gaplessEnabledProvider = { gaplessEnabled },
         warmUpFollowingApe = { warmUpCount++ },
         applyReplayGainForCurrent = { replayGainCount++ },
-        stopServiceIfIdle = { stopIdleCount++ }
+        stopServiceIfIdle = { stopIdleCount++ },
+        rewindToStart = rewindToStart
     )
 }

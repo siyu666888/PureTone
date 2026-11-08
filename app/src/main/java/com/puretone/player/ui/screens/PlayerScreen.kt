@@ -168,7 +168,8 @@ fun PlayerScreen(
                 onNext = vm::next,
                 onDisconnect = vm::stopCast,
                 onPickDevice = { showCastPicker = true },
-                modifier = Modifier.fillMaxSize().padding(padding)
+                modifier = Modifier.fillMaxSize().padding(padding),
+                notice = state.error
             )
         } else {
         Column(

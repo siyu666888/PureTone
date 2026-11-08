@@ -1,7 +1,13 @@
 package com.puretone.player.playback
 
 import android.content.Context
+import android.media.AudioManager
 import androidx.media3.exoplayer.ExoPlayer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * 音频焦点落到播放指令的编排层（交叉淡化双播放器专用）。
@@ -30,17 +36,25 @@ internal class PlaybackAudioFocus(
     private val playerProvider: () -> ExoPlayer?,
     private val isCrossfading: () -> Boolean,
     /** 投屏态：声音在电视上，手机侧不参与焦点（问题2 修复） */
-    private val isCasting: () -> Boolean
+    private val isCasting: () -> Boolean,
+    /** 协程作用域：驱动 DUCK 超时兜底（B3）的延时任务 */
+    private val scope: CoroutineScope
 ) : AudioFocusPort, CastSessionFocusPort {
 
     private val appContext = context.applicationContext
     private val controller = AudioFocusController(context, ::handle)
 
+    /** DUCK 软降级后的超时恢复任务；UNDUCK / GAIN / 放弃焦点时取消（B3） */
+    private var duckTimeoutJob: Job? = null
+
     /** 已获得焦点则直接返回 true；未获得会立刻发一条暂停命令 */
     fun request(): Boolean = controller.request()
 
     /** 放弃焦点（暂停 / 停止 / 服务解绑） */
-    override fun abandon() = controller.abandon()
+    override fun abandon() {
+        cancelDuckTimeout()
+        controller.abandon()
+    }
 
     /**
      * 播放态变化入口：跟着「真的在发声」申请/放弃焦点。
@@ -59,10 +73,13 @@ internal class PlaybackAudioFocus(
         }
         // 交叉淡化收尾会暂停旧主（此刻它已降级为备援，主播放器仍在播）：
         // 那种情形必须继续持有焦点，否则下一次来电就管不住正在播的这一路。
-        if (playerProvider()?.isPlaying != true) controller.abandon()
+        if (playerProvider()?.isPlaying != true) {
+            cancelDuckTimeout()
+            controller.abandon()
+        }
     }
 
-    private fun handle(command: AudioFocusController.Command) {
+    private fun handle(command: AudioFocusController.Command, change: Int) {
         // 投屏态：手机侧焦点事件一律忽略，投屏播放不受手机上其他软件干扰（问题2 修复）。
         if (isCasting()) {
             PlaybackEventLog.record("audio-focus-ignored", "reason=casting cmd=${command.name}")
@@ -77,9 +94,21 @@ internal class PlaybackAudioFocus(
                     "audio-focus-pause-skipped",
                     "reason=local-keep-playing ${snapshot()}"
                 )
+                // B1：跳过暂停意味着我们仍在发声。若是**瞬态**丢失（来电/语音助手），
+                // 应立刻重新申请焦点把 GAIN 夺回来——否则系统仍以为焦点在外放应用，
+                // 来电结束不会再把 GAIN 派给我们，下次又会被 LOSS 抢占一次。
+                // 只对瞬态这么做；永久 LOSS 是别的软件真的在播，不抢。
+                // 用 playWhenReady（而非 isPlaying）判定：我们刚决定不暂停，播放意图
+                // 必然为 true；headless 单测里 isPlaying 恒为 false，playWhenReady 才能驱动。
+                if (change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT &&
+                    playerProvider()?.playWhenReady == true
+                ) {
+                    controller.request()
+                }
             }
 
             AudioFocusController.Command.RESUME -> {
+                cancelDuckTimeout()
                 val p = playerProvider()
                 val action = when {
                     p == null -> "no-player"
@@ -105,9 +134,14 @@ internal class PlaybackAudioFocus(
                     }
                 }
                 PlaybackEventLog.record("audio-focus-duck", "action=$action target=$DUCK_VOLUME ${snapshot()}")
+                // B3：DUCK 是「软降级」——压低音量继续播。但若对端一直压着不放
+                // （导航 App 异常、系统没再发 GAIN/UNDUCK），音量会永久卡在 0.25。
+                // 兜底：真正落地了 duck 才启动 30s 超时，到点自动恢复 1.0。
+                if (action == "duck") startDuckTimeout()
             }
 
             AudioFocusController.Command.UNDUCK -> {
+                cancelDuckTimeout()
                 val p = playerProvider()
                 val action = when {
                     p == null -> "no-player"
@@ -122,6 +156,30 @@ internal class PlaybackAudioFocus(
         }
     }
 
+    /** B3：启动 DUCK 超时兜底；已在跑则重置计时（每次新的 DUCK 都从头算 30s）。 */
+    private fun startDuckTimeout() {
+        duckTimeoutJob?.cancel()
+        duckTimeoutJob = scope.launch {
+            delay(DUCK_FALLBACK_MS)
+            val p = playerProvider() ?: return@launch
+            // 超时到点：对端一直没有发 GAIN/UNDUCK，强制恢复满音量。
+            // 不判 isPlaying——DUCK 时本就在播，若已停播则 abandon() 会取消本任务，
+            // 残留下来的情形必然是「仍在被压着」，恢复音量是安全的。
+            p.volume = 1f
+            PlaybackEventLog.record("audio-focus-duck-timeout", "restored=1.0 ${snapshot()}")
+            duckTimeoutJob = null
+        }
+    }
+
+    /** B3：取消可能挂着的 DUCK 超时任务（UNDUCK / GAIN / 放弃焦点时）。 */
+    private fun cancelDuckTimeout() {
+        duckTimeoutJob?.cancel()
+        duckTimeoutJob = null
+    }
+
+    /** 包内可见：单测直接驱动焦点变化，不必经 ShadowAudioManager。 */
+    internal fun dispatchFocusChange(change: Int) = controller.onFocusChange(change)
+
     /** 只读快照：取设备信息失败也要照常落一行，日志永远不能影响播放。 */
     private fun snapshot(): String = buildString {
         val p = playerProvider()
@@ -135,8 +193,11 @@ internal class PlaybackAudioFocus(
         append(AudioRouteSnapshot.compact(AudioRouteSnapshot.read(appContext)))
     }
 
-    private companion object {
+    internal companion object {
         /** 被 duck 时保留的音量：导航播报期间压低继续播，而不是直接静音 */
         const val DUCK_VOLUME = 0.25f
+
+        /** B3：DUCK 超时兜底时长——对端异常不放手时，超过此值自动恢复满音量（毫秒） */
+        const val DUCK_FALLBACK_MS = 30_000L
     }
 }

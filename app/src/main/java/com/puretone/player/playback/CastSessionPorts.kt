@@ -32,6 +32,16 @@ interface CastSessionCastPort {
 
     suspend fun castSong(song: SongEntity): CastResult
 
+    /**
+     * 标记「下一次投送是曲末自动推进」（渲染器自然播完上一首 → 自动投下一首）。
+     *
+     * 在 [com.puretone.player.playback.CastSessionController.onCastTrackEnded] 确认推进、
+     * 调 [next] 之前调用；[castSong] 开头读取并清除，写入 [CastState.autoAdvance]。
+     * 据此投屏建立确认用更宽的宽限且不重发（见 [CastEstablishPolicy]），避免把电视
+     * 慢取流误判成卡死而重发打断（真机 20261107_224000 开头重复/静默）。
+     */
+    fun markAutoAdvanceNext()
+
     suspend fun seek(positionMs: Long): Boolean
 
     /** 记一次乐观 seek，延长不镜像窗口 */
@@ -43,9 +53,16 @@ interface CastSessionCastPort {
 
     fun adjustVolume(delta: Int): Boolean
 
-    suspend fun play(): Boolean
+    /**
+     * 下发 Play。 [source] 只用于诊断日志区分命令来源：
+     * `ui` = App 内播放页 / 迷你条，`notification` = 通知栏 / 锁屏媒体卡片，
+     * `notification-retry` = 回读未达播放态后的自动重发。
+     * 真机 20261107_184914 里两条路径的表现不同，必须先能区分才能定位。
+     */
+    suspend fun play(source: String = "ui"): Boolean
 
-    suspend fun pause(): Boolean
+    /** 下发 Pause，[source] 语义同 [play] */
+    suspend fun pause(source: String = "ui"): Boolean
 }
 
 /** 进入投屏时释放手机侧音频焦点所需的最小能力 */
