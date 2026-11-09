@@ -1,30 +1,16 @@
 package com.puretone.player.ui.screens
 
 import android.net.Uri
-import android.os.Build
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,34 +22,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.blur
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.puretone.player.R
+import com.puretone.player.playback.cast.CastEstablishUiPolicy
 import com.puretone.player.playback.cast.CastState
 import com.puretone.player.ui.cast.CastDeviceLabel
 import com.puretone.player.ui.cast.CastDeviceSheet
-import com.puretone.player.ui.components.CastTrackInset
-import com.puretone.player.ui.components.CastTrackSlider
-import com.puretone.player.ui.components.ControlIcons
-import com.puretone.player.ui.components.DefaultCover
-import com.puretone.player.ui.components.DefaultCoverGlyph
-import com.puretone.player.ui.components.formatTime
 import kotlin.math.roundToInt
 
 /**
@@ -75,7 +41,7 @@ import kotlin.math.roundToInt
  * 布局约定（v1.9.4 重设计）：
  * - **单一 24dp 栅格**：状态胶囊、封面、歌名、两条轨道、结束投屏按钮的左右边界
  *   落在同一条线上；音量标题以图标呈现，轨道仍整宽，不因图标内缩。
- *   **轨道标注例外**：进度左右时间、音量图标与百分比按 [CastTrackInset] 向内缩进，
+ *   **轨道标注例外**：进度左右时间、音量图标与百分比按 [com.puretone.player.ui.components.CastTrackInset] 向内缩进，
  *   落在 M3 Slider 轨道的可视端点上（2026-11-06 真机反馈「数值与进度条对齐」）。
  * - **对称**：封面 / 歌名 / 歌手居中作视觉焦点，其余控件全宽贴栅格。
  * - **弹性竖向节奏**：内容区 `weight(1f)` + 上下弹性留白把剩余高度均分，
@@ -109,13 +75,8 @@ private val LineStep = 24.dp
  * 一起侵入上半内容区，覆盖音量/传输控件造成误触。
  */
 private val EndCastLift = LineStep * 2f
-private val CoverCorner = 20.dp
-private val CoverMaxSize = 200.dp
-private val DisconnectHeight = 48.dp
 /** 面板可用高度低于此值时走「紧凑可滚动」，否则走「上下对称撑开」 */
 private val CompactThreshold = 660.dp
-private val ConnectedGreen = Color(0xFF2EAF6B)
-private val LostOrange = Color(0xFFE8912A)
 
 @Composable
 fun CastRemoteControlPanel(
@@ -149,8 +110,18 @@ fun CastRemoteControlPanel(
     // 「有无刻度」也只看这份已兜底的 durationMs：castState.hasProgressInfo 在轮询静默
     // 或换曲窗口会变 false，拿它禁用进度条会让遥控页显示「进度未知」，而迷你条、
     // 播放页、通知栏仍拿着同一份 uiState 正常走——三处进度就是这么对不上的。
-    val hasProgress = durationMs > 0L
     val controlsEnabled = castState.isCasting && !castState.isConnectionLost
+    // 170435：未确认建立且本轮确实零取流时，编排层停写镜像与外推，positionMs 仍
+    // 冻结在 0。此时不能拿它当「电视停在 00:00」，整条进度切成不确定态、胶囊显示
+    // 连接中；取流一经确认（含 Play 返回前早到的首次 GET）下一帧自动恢复。
+    // 传输键不跟着禁用——054751 真机靠用户手动点播放下发单独 Play 才在 1s 内救回。
+    val awaitingEstablishment = CastEstablishUiPolicy.awaitingEstablishment(
+        isCasting = castState.isCasting,
+        isConnectionLost = castState.isConnectionLost,
+        isEstablished = castState.isEstablished,
+        lastFetchMs = castState.lastFetchMs
+    )
+    val hasProgress = durationMs > 0L && !awaitingEstablishment
 
     // 本地态与展示进度双向同步，拖动期间以本地为准避免抖动
     var seeking by remember { mutableStateOf(false) }
@@ -195,6 +166,7 @@ fun CastRemoteControlPanel(
                     shortName = shortName,
                     castState = castState,
                     onClick = { showDeviceSheet = true },
+                    connecting = awaitingEstablishment,
                     // 胶囊相对内容组再上一行；内容组回正后它只比其余内容高一行
                     modifier = if (compact) Modifier else Modifier.offset(y = -LineStep)
                 )
@@ -267,385 +239,6 @@ fun CastRemoteControlPanel(
                 showDeviceSheet = false
                 onPickDevice()
             }
-        )
-    }
-}
-
-/**
- * 背景：封面放大高斯模糊铺底 + 顶部 surface 渐变 + 下半屏极淡主色渐变。
- *
- * `Modifier.blur` 仅在 API 31+ 生效，低版本若照样画会显示一张清晰的放大封面，
- * 因此低版本退化为径向柔光。AMOLED 纯黑主题关闭模糊层，避免脏灰底破坏省电效果。
- */
-@Composable
-private fun CastBackdrop(coverUri: Uri?) {
-    val scheme = MaterialTheme.colorScheme
-    val surface = scheme.surface
-    val isPureBlack = surface.red < 0.02f && surface.green < 0.02f && surface.blue < 0.02f
-    val isDark = (surface.red * 0.299f + surface.green * 0.587f + surface.blue * 0.114f) < 0.5f
-
-    Box(modifier = Modifier.fillMaxSize().background(surface)) {
-        if (!isPureBlack && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && coverUri != null) {
-            AsyncImage(
-                model = coverUri,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = 1.25f
-                        scaleY = 1.25f
-                    }
-                    .blur(48.dp)
-                    .alpha(if (isDark) 0.08f else 0.12f)
-            )
-        } else if (!isPureBlack) {
-            Box(
-                modifier = Modifier.fillMaxSize().background(
-                    Brush.radialGradient(listOf(scheme.primary.copy(alpha = 0.06f), Color.Transparent))
-                )
-            )
-        }
-
-        Box(
-            modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    0.0f to surface.copy(alpha = 0.72f),
-                    0.40f to Color.Transparent
-                )
-            )
-        )
-
-        Box(
-            modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    0.0f to Color.Transparent,
-                    0.50f to Color.Transparent,
-                    1.0f to scheme.primary.copy(
-                        alpha = if (isPureBlack) 0.03f else if (isDark) 0.07f else 0.05f
-                    )
-                )
-            )
-        )
-    }
-}
-
-/** 居中状态胶囊：绿点 + 「已投屏 · 623」，点击开设备详情；失联橙点、连接中 spinner。 */
-@Composable
-private fun CastStatusPill(
-    shortName: String,
-    castState: CastState,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val scheme = MaterialTheme.colorScheme
-    val (label, dotColor, spinner) = when {
-        castState.isConnectionLost -> Triple(stringResource(R.string.pt_player_045), LostOrange, false)
-        castState.isPreparing -> Triple(stringResource(R.string.pt_player_044), scheme.onSurfaceVariant, true)
-        else -> Triple(stringResource(R.string.pt_player_043, shortName), ConnectedGreen, false)
-    }
-    Row(
-        modifier = modifier
-            .clip(CircleShape)
-            .background(scheme.surfaceVariant.copy(alpha = 0.55f))
-            .border(1.dp, scheme.outlineVariant.copy(alpha = 0.5f), CircleShape)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        if (spinner) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(10.dp),
-                strokeWidth = 1.5.dp,
-                color = dotColor
-            )
-        } else {
-            Box(Modifier.size(8.dp).clip(CircleShape).background(dotColor))
-        }
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge,
-            color = scheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Icon(
-            Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-            contentDescription = stringResource(R.string.pt_player_054),
-            tint = scheme.onSurfaceVariant,
-            modifier = Modifier.size(16.dp)
-        )
-    }
-}
-
-/** 当前曲目：居中大封面（20dp 圆角 + 轻阴影）+ 歌名 22sp + 歌手 14sp。 */
-@Composable
-private fun CastNowPlaying(coverUri: Uri?, title: String, artist: String) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        BoxWithConstraints(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-            val coverSize = minOf(maxWidth, CoverMaxSize)
-            val shape = RoundedCornerShape(CoverCorner)
-            Box(
-                modifier = Modifier
-                    .size(coverSize)
-                    .shadow(10.dp, shape)
-                    .clip(shape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                if (coverUri != null) {
-                    AsyncImage(
-                        model = coverUri,
-                        contentDescription = stringResource(R.string.pt_player_014),
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    DefaultCover(
-                        modifier = Modifier.fillMaxSize(),
-                        shape = shape,
-                        glyph = DefaultCoverGlyph.MUSIC_NOTE
-                    )
-                }
-            }
-        }
-        Text(
-            title,
-            style = MaterialTheme.typography.titleLarge.copy(
-                fontSize = 22.sp,
-                fontWeight = FontWeight.SemiBold
-            ),
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Text(
-            artist,
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth()
-        )
-    }
-}
-
-/**
- * 进度：统一轨道 + 左右时间；无进度信息时禁用并显示「--:--／进度未知」。
- * 时间行按 [CastTrackInset] 内缩到轨道可视端点，避免文字贴栅格、轨道却内收。
- */
-@Composable
-private fun CastProgressSection(
-    enabled: Boolean,
-    hasProgress: Boolean,
-    progressFrac: Float,
-    currentMs: Long,
-    durationMs: Long,
-    onProgressChange: (Float) -> Unit,
-    onSeekStart: () -> Unit,
-    onSeekCommit: () -> Unit
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        CastTrackSlider(
-            value = progressFrac,
-            onValueChange = {
-                onProgressChange(it)
-                onSeekStart()
-            },
-            onValueChangeFinished = onSeekCommit,
-            enabled = enabled && hasProgress,
-            semanticLabel = stringResource(
-                R.string.pt_player_053,
-                formatTime(currentMs),
-                formatTime(durationMs)
-            ),
-            modifier = Modifier.fillMaxWidth()
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = CastTrackInset),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                if (hasProgress) formatTime(currentMs) else stringResource(R.string.pt_player_055),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                if (hasProgress) formatTime(durationMs) else stringResource(R.string.pt_player_047),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-/** 传输控制：两侧 56dp 浅底圆 + 中间 72dp 主色实心圆，间距统一。 */
-@Composable
-private fun CastTransportRow(
-    enabled: Boolean,
-    isPlaying: Boolean,
-    onPrev: () -> Unit,
-    onTogglePlay: () -> Unit,
-    onNext: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    val sideBackground = scheme.surfaceVariant.copy(alpha = 0.65f)
-    val sideTint = if (enabled) scheme.onSurface else scheme.onSurface.copy(alpha = 0.38f)
-    val mainBackground = if (enabled) scheme.primary else scheme.onSurface.copy(alpha = 0.20f)
-    val mainTint = if (enabled) scheme.onPrimary else scheme.onSurface.copy(alpha = 0.38f)
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally)
-    ) {
-        CastRoundButton(
-            icon = ControlIcons.SkipPrevious,
-            description = stringResource(R.string.pt_player_016),
-            size = 56.dp,
-            iconSize = 30.dp,
-            containerColor = sideBackground,
-            iconTint = sideTint,
-            enabled = enabled,
-            onClick = onPrev
-        )
-        CastRoundButton(
-            icon = if (isPlaying) ControlIcons.Pause else ControlIcons.Play,
-            description = stringResource(R.string.pt_player_022),
-            size = 72.dp,
-            iconSize = 36.dp,
-            containerColor = mainBackground,
-            iconTint = mainTint,
-            enabled = enabled,
-            onClick = onTogglePlay
-        )
-        CastRoundButton(
-            icon = ControlIcons.SkipNext,
-            description = stringResource(R.string.pt_player_017),
-            size = 56.dp,
-            iconSize = 30.dp,
-            containerColor = sideBackground,
-            iconTint = sideTint,
-            enabled = enabled,
-            onClick = onNext
-        )
-    }
-}
-
-@Composable
-private fun CastRoundButton(
-    icon: ImageVector,
-    description: String,
-    size: Dp,
-    iconSize: Dp,
-    containerColor: Color,
-    iconTint: Color,
-    enabled: Boolean,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(containerColor)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = description,
-            tint = iconTint,
-            modifier = Modifier.size(iconSize)
-        )
-    }
-}
-
-/**
- * 投射音量：标题行（左音量图标 / 右 `16%`）+ 整宽统一轨道；图标仅作标识，不占轨道起点。
- * 标题行与进度时间行共用 [CastTrackInset] 内缩、共用 `labelMedium` 字号，两处标注
- * 与轨道端点的对齐关系完全一致（2026-11-06 真机反馈「音量数值与进度数字同大小」）。
- */
-@Composable
-private fun CastVolumeSection(
-    enabled: Boolean,
-    volumeSupported: Boolean?,
-    castVol: Float,
-    volumePct: Int,
-    onVolume: (Float) -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    // 标题改为图标后，文案保留给图标与滑块做无障碍播报
-    val label = stringResource(R.string.pt_player_051)
-    val pctText = stringResource(R.string.pt_player_035, volumePct)
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = CastTrackInset),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = ControlIcons.Volume,
-                contentDescription = label,
-                tint = scheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
-            )
-            Text(
-                pctText,
-                // 与 CastProgressSection 的时间数字同字号，避免两条轨道标注一大一小
-                style = MaterialTheme.typography.labelMedium,
-                color = scheme.onSurfaceVariant,
-                textAlign = TextAlign.End
-            )
-        }
-        CastTrackSlider(
-            value = castVol,
-            onValueChange = onVolume,
-            enabled = enabled,
-            semanticLabel = "$label $pctText",
-            modifier = Modifier.fillMaxWidth()
-        )
-        if (volumeSupported == false) {
-            Text(
-                stringResource(R.string.pt_player_036),
-                style = MaterialTheme.typography.labelSmall,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
-            )
-        }
-    }
-}
-
-/** 结束投屏：贴底的浅描边胶囊，非 error 红、非实心，避免刺眼与误触。 */
-@Composable
-private fun CastDisconnectButton(onDisconnect: () -> Unit, modifier: Modifier = Modifier) {
-    val scheme = MaterialTheme.colorScheme
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(DisconnectHeight)
-            .clip(CircleShape)
-            .border(1.dp, scheme.outlineVariant, CircleShape)
-            .clickable(role = Role.Button, onClick = onDisconnect),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            stringResource(R.string.pt_player_046),
-            style = MaterialTheme.typography.labelLarge,
-            color = scheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
         )
     }
 }
