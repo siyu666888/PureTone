@@ -6,8 +6,11 @@ import org.junit.Test
 /**
  * 投屏「真建立」确认状态机（B3）的纯 JVM 锁死。
  *
- * 核心是「SOAP 200 ≠ 电视在播」：只有本轮投送之后当前 URL 被真正取流才算建立；
+ * 核心是「SOAP 200 ≠ 电视在播」：只有**当前 token** 的 URL 被真正取流才算建立；
  * 超时后先重发一次，仍无取流只提示一次，不无限骚扰渲染器。
+ *
+ * 「本轮」由 `CastHttpServer.urlFor()` 换 token + 清零保证，取流时间戳允许早于
+ * `castStartMs`（170435 的 Play 返回前早到 GET），策略层不再重复做时间门槛。
  */
 class CastEstablishPolicyTest {
 
@@ -56,10 +59,14 @@ class CastEstablishPolicyTest {
     }
 
     @Test
-    fun `上一首的取流不算本轮建立`() {
+    fun `上一首的重连不算本轮建立_由换token清零表达`() {
+        // CastHttpServer.urlFor() 每轮换 token 时把 lastFetchMs 清零，
+        // markFetchIfActive() 只认当前 activeToken；所以「上一首的重连」在策略层
+        // 表现为 lastFetchMs=0，而不是一个比 castStartMs 更早的时间戳。
+        // 反过来，比 castStartMs 更早的时间戳只要 > 0，就一定是本轮早到的首次取流。
         assertEquals(
             CastEstablishPolicy.Action.NONE,
-            resolve(castStartMs = 10_000L, lastFetchMs = 9_000L, nowMs = 11_000L)
+            resolve(castStartMs = 10_000L, lastFetchMs = 0L, nowMs = 11_000L)
         )
     }
 
@@ -247,11 +254,12 @@ class CastEstablishPolicyTest {
     }
 
     @Test
-    fun `曲末推进踢脚耗尽后电视已PLAYING不提示_064254回归`() {
-        // 064254 现场：踢脚后电视一直报告 PLAYING（在线且在响应，只是取流慢），
-        // 此时报「未响应」是误报，应继续等取流。
+    fun `曲末推进踢脚失效且电视仍PLAYING则补发单独Play_054751回归`() {
+        // 054751：15s Seek 踢脚返回 200 却 81s 没取流，G2 的「PLAYING 佐证」
+        // 原先是无上限永久静默。踢脚宽限到期后电视仍报 PLAYING，应补发一次
+        // 单独 Play（真机手动点播放后 1s 即 fetch），而不是继续沉默。
         assertEquals(
-            CastEstablishPolicy.Action.NONE,
+            CastEstablishPolicy.Action.NUDGE_PLAY,
             resolve(
                 castStartMs = 10_000L,
                 nowMs = 42_000L,
@@ -307,6 +315,171 @@ class CastEstablishPolicyTest {
                 lastFetchMs = 17_500L,
                 nowMs = 18_000L,
                 autoAdvance = true
+            )
+        )
+    }
+
+    // ---------- H1：踢脚失效兜底 + 给 PLAYING 佐证加上限（真机 20261109_054751） ----------
+
+    @Test
+    fun `补发Play后宽限内不急着提示`() {
+        assertEquals(1, CastEstablishPolicy.AUTO_ADVANCE_NUDGE_COUNT)
+        assertEquals(
+            CastEstablishPolicy.Action.NONE,
+            resolve(
+                castStartMs = 10_000L,
+                nowMs = 48_000L,
+                retries = 2,
+                retrySinceMs = 42_000L,
+                autoAdvance = true,
+                rendererPlaying = true
+            )
+        )
+    }
+
+    @Test
+    fun `补发Play动作耗尽且未超上限仍安静等_064254慢取流不误报`() {
+        // 动作 30s 发出、宽限到 45s；45~60s 之间仍属「在线只是慢」，不弹未响应。
+        assertEquals(
+            CastEstablishPolicy.Action.NONE,
+            resolve(
+                castStartMs = 10_000L,
+                nowMs = 58_000L,
+                retries = 2,
+                retrySinceMs = 42_000L,
+                autoAdvance = true,
+                rendererPlaying = true
+            )
+        )
+    }
+
+    @Test
+    fun `PLAYING佐证超过上限必须提示不再无限静默_054751回归`() {
+        assertEquals(60_000L, CastEstablishPolicy.AUTO_ADVANCE_MAX_SILENT_MS)
+        assertEquals(
+            CastEstablishPolicy.Action.WARN,
+            resolve(
+                castStartMs = 10_000L,
+                nowMs = 71_000L,
+                retries = 2,
+                retrySinceMs = 42_000L,
+                autoAdvance = true,
+                rendererPlaying = true
+            )
+        )
+    }
+
+    @Test
+    fun `超限后只提示一次且取流到达仍优先确认建立`() {
+        assertEquals(
+            CastEstablishPolicy.Action.NONE,
+            resolve(
+                castStartMs = 10_000L,
+                nowMs = 72_000L,
+                retries = 2,
+                retrySinceMs = 42_000L,
+                warned = true,
+                autoAdvance = true,
+                rendererPlaying = true
+            )
+        )
+        assertEquals(
+            CastEstablishPolicy.Action.MARK_ESTABLISHED,
+            resolve(
+                castStartMs = 10_000L,
+                lastFetchMs = 71_500L,
+                nowMs = 72_000L,
+                retries = 2,
+                warned = true,
+                autoAdvance = true,
+                rendererPlaying = true
+            )
+        )
+    }
+
+    @Test
+    fun `踢脚后电视不PLAYING时不补发Play直接提示_保持旧行为`() {
+        assertEquals(
+            CastEstablishPolicy.Action.WARN,
+            resolve(
+                castStartMs = 10_000L,
+                nowMs = 42_000L,
+                retries = 1,
+                retrySinceMs = 25_000L,
+                autoAdvance = true,
+                rendererPlaying = false
+            )
+        )
+    }
+
+    // ---------- 170435：Play 返回前「早到的首次取流」不得丢弃（Knock 冻结 15s） ----------
+
+    @Test
+    fun `Play返回前早到的本轮首次取流立即确认建立_170435回归`() {
+        // 电视在 SetAVTransportURI 与 Play 之间就发起 GET，而 castStartMs 写在
+        // client.play() 返回之后：fetchMs 会比 castStartMs 早几百毫秒。
+        // urlFor() 已换 token 并清零，这个时间戳必然属于本轮；旧判据把它当成
+        // 「上一首的重连」丢掉，白等 15s 才由 KICK 的 Seek 逼出第二次 GET。
+        assertEquals(
+            CastEstablishPolicy.Action.MARK_ESTABLISHED,
+            resolve(castStartMs = 10_000L, lastFetchMs = 9_650L, nowMs = 10_300L)
+        )
+    }
+
+    @Test
+    fun `曲末推进早到取流也立即建立_不再白踢一脚`() {
+        assertEquals(
+            CastEstablishPolicy.Action.MARK_ESTABLISHED,
+            resolve(
+                castStartMs = 10_000L,
+                lastFetchMs = 9_800L,
+                nowMs = 10_200L,
+                autoAdvance = true,
+                rendererPlaying = true
+            )
+        )
+    }
+
+    @Test
+    fun `早到取流优先于任何超时动作与已提示状态`() {
+        assertEquals(
+            CastEstablishPolicy.Action.MARK_ESTABLISHED,
+            resolve(
+                castStartMs = 10_000L,
+                lastFetchMs = 9_990L,
+                nowMs = 42_000L,
+                retries = 2,
+                retrySinceMs = 25_000L,
+                warned = true,
+                autoAdvance = true,
+                rendererPlaying = true
+            )
+        )
+    }
+
+    @Test
+    fun `确认零取流时曲末推进仍按原路径踢脚并提示`() {
+        // 放宽「本轮」判据不等于放弃未取流兜底：真的没有取流时，
+        // 15s KICK 与踢脚耗尽后的 WARN 必须照旧。
+        assertEquals(
+            CastEstablishPolicy.Action.KICK,
+            resolve(
+                castStartMs = 10_000L,
+                lastFetchMs = 0L,
+                nowMs = 25_000L,
+                autoAdvance = true
+            )
+        )
+        assertEquals(
+            CastEstablishPolicy.Action.WARN,
+            resolve(
+                castStartMs = 10_000L,
+                lastFetchMs = 0L,
+                nowMs = 42_000L,
+                retries = 1,
+                retrySinceMs = 25_000L,
+                autoAdvance = true,
+                rendererPlaying = false
             )
         )
     }

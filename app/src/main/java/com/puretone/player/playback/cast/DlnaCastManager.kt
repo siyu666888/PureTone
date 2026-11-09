@@ -10,7 +10,6 @@ import com.yinnho.upnpcast.DLNACast
 import com.yinnho.upnpcast.DLNACast.Device
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -20,8 +19,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -35,11 +32,12 @@ import javax.inject.Singleton
 /**
  * DLNA 投屏管理器（M1 直投 / M2 转码投送 / M3 队列续播与断网回退）。
  *
- * 本类只负责**投屏状态机**：投送编排、播放控制、音量、1Hz 轮询。三块自成一体的
+ * 本类只负责**投屏状态机**：投送编排、播放控制、音量、1Hz 轮询。四块自成一体的
  * 支撑逻辑已拆到同包的独立文件，避免本文件继续膨胀：
  * - [CastModels.kt] 里的 [CastDevice] / [CastState] / [CastResult]（对外数据契约）；
  * - [CastDeviceDiscovery]（SSDP 发现、已知设备缓存、底层 Device 反查）；
- * - [CastNetworkBridge]（组播锁、Wi-Fi 进程绑定、本机 IPv4）。
+ * - [CastNetworkBridge]（组播锁、Wi-Fi 进程绑定、本机 IPv4）；
+ * - [CastVolumeController]（音量合并下发、初值回读、能力探针与回读取证）。
  *
  * 封装 UPnPCast 单例门面 [DLNACast]：本地文件直投（库内置 HTTP 服务经 NanoHTTPD
  * 按绝对路径伺服）、播放控制与状态轮询。对外只暴露协程安全的 [CastDevice]/[CastState]，
@@ -75,6 +73,14 @@ class DlnaCastManager @Inject constructor(
 
     /** 网络底层（组播锁 / Wi-Fi 进程绑定 / IPv4），投屏会话全程共用一份状态 */
     private val net = CastNetworkBridge(appContext)
+
+    /** 音量控制协作者：合并下发、初值回读、能力探针与回读取证，见 [CastVolumeController] */
+    private val volumeController = CastVolumeController(
+        state = _state,
+        net = net,
+        scope = scope,
+        transportProvider = { transport },
+    )
 
     /** 设备发现与反查缓存（含历史预热），投屏会话全程共用一份缓存 */
     private val discovery = CastDeviceDiscovery(appContext, castHistory)
@@ -121,19 +127,6 @@ class DlnaCastManager @Inject constructor(
      */
     private val ownOnlyDevices: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    /**
-     * 用户最近一次请求的投射音量（0~100）。
-     *
-     * 滑块 `onValueChange` 每像素触发一次，一次拖动能连发十几条 `SetVolume`；
-     * 直接往下发既刷爆日志又会让电视来不及执行（回读必然读到旧值）。改为
-     * 「只保留最新值 + [drainVolumeRequests] 合并」，一次拖动只发一条。
-     */
-    private val requestedVolume = MutableStateFlow<Int?>(null)
-
-    /** 用户本会话是否已主动调过音量：为真时不再用设备回读值覆盖 UI 初始值 */
-    @Volatile
-    private var volumeTouchedByUser = false
-
     /** 最近一次投送开始时刻：换曲窗口内渲染器短暂不应答不应判失联 */
     @Volatile
     private var lastCastStartMs = 0L
@@ -156,6 +149,9 @@ class DlnaCastManager @Inject constructor(
 
     /** 最近一次建立重发的墙钟：重发后同样要留一个宽限，不能下一秒就判「未响应」 */
     private var establishRetryAtMs = 0L
+
+    /** 取流空窗诊断（R7 / 054751）：logger 注入，判据在纯 JVM 单测里锁死 */
+    private val fetchIdleLog = CastFetchIdleLog { CastNetworkLog.log(it) }
 
     /**
      * 「下一次投送是曲末自动推进」的待生效标志。
@@ -223,7 +219,7 @@ class DlnaCastManager @Inject constructor(
 
     init {
         // 音量下发通道常驻：合并连发的请求，并对最终值做一次回读校验
-        scope.launch { drainVolumeRequests() }
+        volumeController.start()
     }
 
     /**
@@ -453,7 +449,7 @@ class DlnaCastManager @Inject constructor(
         // 库只抛「Device rejected the cast request」、不带状态码与 cause，单看这句话
         // 无法区分「控制地址错 / SOAP 被拒 / 格式不支持」。失败后先异步补一次只读取证
         // （不阻塞），再换自有通道重试一次。
-        launchProbe(device)
+        volumeController.launchProbe(device)
         val ownFailure = castViaOwn(device, target, title, mimeType, upnpClass, epoch)
         if (ownFailure == null) {
             ownOnlyDevices.add(device.id)
@@ -483,9 +479,9 @@ class DlnaCastManager @Inject constructor(
         if (error == null) {
             engine = CastEngine.LIBRARY
             transport = null
-            syncInitialVolumeNow()
+            volumeController.syncInitialVolumeNow()
             onCastSucceeded(device, mimeType, "library", epoch)
-            if (probedDevices.add(device.id)) launchProbe(device)
+            if (probedDevices.add(device.id)) volumeController.launchProbe(device)
             return null
         }
         CastNetworkLog.log(
@@ -506,7 +502,7 @@ class DlnaCastManager @Inject constructor(
     ): String? {
         if (!tryOwnCast(device, target, title, mimeType, upnpClass)) return "自有通道投送失败"
         engine = CastEngine.OWN
-        syncInitialVolumeNow()
+        volumeController.syncInitialVolumeNow()
         onCastSucceeded(device, mimeType, "own", epoch)
         return null
     }
@@ -537,6 +533,7 @@ class DlnaCastManager @Inject constructor(
         establishRetries = 0
         establishWarned = false
         establishRetryAtMs = 0L
+        fetchIdleLog.reset()
         // 自有通道的取流经过本应用 HTTP 服务，必须等电视真来取流才算「已建立」；
         // 库通道用它自己的 NanoHTTPD，我们看不到取流，直通为 true（默认语义）。
         val established = engine != CastEngine.OWN
@@ -617,114 +614,6 @@ class DlnaCastManager @Inject constructor(
         played
     }
 
-    /**
-     * 投送链路内**同步**回读真实音量，必须在 `isCasting=true` 之前完成：否则 MediaSession
-     * 建 `VolumeProviderCompat` 时读到的仍是假 100，按一下音量键就把电视从 15 拉到 100。
-     * 库通道的 `DLNACast.getVolume()` 返回值量纲不明，不做同步校准，交给 [CastProbe] 折算。
-     */
-    private suspend fun syncInitialVolumeNow() {
-        val client = transport ?: return
-        val actual = try {
-            client.volume()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "initial volume read failed", e)
-            null
-        }
-        if (actual != null) {
-            // GetVolume 成功 = RenderingControl 确实可用，是能力事实而非探测冒充。
-            // 必须在路由切换前落定，否则 remoteVolume 会在 null/true 间翻转。
-            _state.update {
-                if (CastVolumePolicy.shouldSetSupport(it.volumeSupported)) {
-                    it.copy(volumeSupported = true)
-                } else {
-                    it
-                }
-            }
-            applyInitialVolume(actual)
-            CastNetworkLog.log("cast-vol init actual=$actual")
-        }
-    }
-
-    /** 同步设备真实音量；用户已调过或已校准过就不再覆盖（防止多个来源互相冲掉） */
-    private fun applyInitialVolume(volume: Int?) {
-        if (volume == null) return
-        if (!CastVolumePolicy.shouldApplyInitialVolume(volumeTouchedByUser, _state.value.castVolume)) return
-        _state.update { it.copy(castVolume = volume.coerceIn(0, 100)) }
-    }
-
-    /**
-     * 投送后异步取证：问电视「控制地址在哪、状态码是什么、支持哪些格式、能不能调音量」。
-     *
-     * 刻意放在协程里而不是在 [castSong] 里同步等：探针最多要跑三次 HTTP，
-     * 同步跑会把「回退到本地播放」推迟数秒——用户点投屏后最不能忍的就是这个。
-     * 探针期间自己绑 Wi-Fi 再还原，避免默认网络落到蜂窝时取证也失败。
-     *
-     * 副作用：把 [CastState.volumeSupported] 落到真实能力值（仅当描述取到才写，
-     * 取不到时保持 null=未知，不能用「探测失败」冒充「不支持」）。
-     */
-    private fun launchProbe(device: Device) {
-        scope.launch {
-            // 探针只是临时借用：投送已 beginCastSession 时复用现成绑定，归还不会释放；
-            // 万一投送失败会话已结束、探针才跑起来，则借完自己还，避免保活锁泄漏。
-            val owned = net.holdCastNetwork()
-            try {
-                val report = CastProbe.inspect(device.id, device.name)
-                if (report.descriptionOk) {
-                    // 能力判定只写一次：反复改写会让 remoteVolume 翻转、Media3 重建
-                    // VolumeProvider，音量键在远程/本地两套档位间来回跳。
-                    if (CastVolumePolicy.shouldSetSupport(_state.value.volumeSupported)) {
-                        _state.update { it.copy(volumeSupported = report.hasRenderingControl) }
-                    }
-                    // 库通道没有自己的 GetVolume 回读，用探针折算后的音量补校准初值
-                    applyInitialVolume(report.currentVolume)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "cast probe failed", e)
-            } finally {
-                net.releaseBorrowedNetwork(owned)
-            }
-        }
-    }
-
-    /** 音量下发通道（常驻）：合并连发请求，只对最终值发一次 SOAP。
-     *  [collectLatest] 刻意用于取消上一轮，避免滑块拖动时十几个中间值刷屏。 */
-    private suspend fun drainVolumeRequests() {
-        requestedVolume.filterNotNull().collectLatest { target ->
-            delay(VOLUME_COALESCE_MS)
-            // stopCast 已把 isCasting 置 false：不能让延迟中的请求在会话结束后还写状态
-            if (!_state.value.isCasting) return@collectLatest
-            val client = transport
-            val accepted = if (client != null) {
-                client.setVolume(target) == true
-            } else {
-                runCatching { DLNACast.setVolume(target) }.getOrDefault(false)
-            }
-            if (accepted) _state.update { it.copy(castVolume = target) }
-            if (client == null) return@collectLatest
-            delay(VOLUME_SETTLE_MS)
-            if (!_state.value.isCasting) return@collectLatest
-            verifyVolume(client, target, accepted)
-        }
-    }
-
-    /** 回读只做取证：`SetVolume` 返回 200 不代表电视真变了。
-     *  绝不把回读值写回 castVolume——量程折算的 ±2 误差会成为下次按键的基准，
-     *  连按几次就一路漂移；也不改 volumeSupported，避免 Media3 反复重建 VolumeProvider。 */
-    private suspend fun verifyVolume(client: DlnaTransport, requested: Int, accepted: Boolean) {
-        try {
-            val actual = client.volume()
-            CastNetworkLog.log("own-vol readback req=$requested actual=${actual ?: "none"} accepted=$accepted")
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "volume verify failed", e)
-        }
-    }
-
     /** 按当前通道分派控制动作：自有通道可用时优先，否则回落库 */
     private suspend fun dispatch(
         action: String,
@@ -774,20 +663,12 @@ class DlnaCastManager @Inject constructor(
     override suspend fun seek(positionMs: Long): Boolean =
         dispatch("seek", { it.seek(positionMs) }, { DLNACast.seek(positionMs) })
 
-    /** 受理一次音量请求：值交给 [drainVolumeRequests] 合并下发，不在这里同步发 SOAP。
+    /** 受理一次音量请求：值交给 [CastVolumeController] 合并下发，不在这里同步发 SOAP。
      *  [adjustVolume] 以「最近一次请求值」而非滞后的状态值为基准，连按音量键才不丢档。 */
-    override fun setVolume(volume: Int): Boolean {
-        val target = volume.coerceIn(0, 100)
-        CastNetworkLog.log("cast-vol req=$target")
-        volumeTouchedByUser = true
-        requestedVolume.value = target
-        return true
-    }
+    override fun setVolume(volume: Int): Boolean = volumeController.setVolume(volume)
 
     /** 相对调节（音量键 +/-）：以最后一次请求值为基准，避免连按时读到旧档位 */
-    override fun adjustVolume(delta: Int): Boolean = setVolume(
-        CastVolumePolicy.resolveRelative(requestedVolume.value, _state.value.castVolume, delta)
-    )
+    override fun adjustVolume(delta: Int): Boolean = volumeController.adjustVolume(delta)
 
     /**
      * 停止投屏：停止渲染器、清空状态（本地播放恢复由上层负责）。
@@ -807,8 +688,7 @@ class DlnaCastManager @Inject constructor(
         httpServer.stop()
         // 会话结束：撤掉进程级 Wi-Fi 绑定，避免 App 的其它联网长期被限制在局域网
         net.endCastSession()
-        requestedVolume.value = null
-        volumeTouchedByUser = false
+        volumeController.reset()
         progressHoldUntilMs = 0L
         clearPlayStateCommand()
         transport = null
@@ -818,6 +698,7 @@ class DlnaCastManager @Inject constructor(
         establishRetries = 0
         establishWarned = false
         establishRetryAtMs = 0L
+        fetchIdleLog.reset()
         currentDevice = null
         discovery.reset()
         _state.value = CastState()
@@ -839,6 +720,11 @@ class DlnaCastManager @Inject constructor(
      * 自有通道的取流必经本应用 [CastHttpServer]，故以「本轮投送后当前 token 被取流」
      * 为建立信号；超时未取流就用同一 URL 重发一次 SetAVTransportURI + Play，
      * 再不行才提示用户，绝不把「收下 URI」当成「正在播放」。
+     *
+     * 「本轮」由 [CastHttpServer] 换 token 时清零保证，故取流时间戳早于
+     * `castStartMs` 也算数：电视可能在 `Play` 返回前就来 GET（170435 的 Knock
+     * 因此被旧判据丢掉、白等 15s）。确认日志同时打 `elapsed` 与 `fetchOffset`，
+     * 后者为负即这次早到取流。
      *
      * 库通道取流走它自己的 NanoHTTPD，看不到取流，[CastState.isEstablished] 在
      * [onCastSucceeded] 直通为 true，本方法直接返回。
@@ -864,7 +750,13 @@ class DlnaCastManager @Inject constructor(
 
             CastEstablishPolicy.Action.MARK_ESTABLISHED -> {
                 _state.update { it.copy(isEstablished = true) }
-                CastNetworkLog.log("cast-established by=fetch elapsed=${fetchMs - st.castStartMs}ms")
+                // elapsed = 投送完成到确认建立的耗时；fetchOffset = 相对 castStartMs 的
+                // 取流偏移，负值即「电视在 Play 返回前就来 GET」的早到取流（170435）。
+                // 旧日志把 fetchOffset 误写成 elapsed，早到取流打出负数也看不出含义。
+                CastNetworkLog.log(
+                    "cast-established by=fetch elapsed=${elapsedMs}ms " +
+                        "fetchOffset=${fetchMs - st.castStartMs}ms"
+                )
             }
 
             CastEstablishPolicy.Action.RETRY -> {
@@ -899,6 +791,21 @@ class DlnaCastManager @Inject constructor(
                 }
             }
 
+            CastEstablishPolicy.Action.NUDGE_PLAY -> {
+                establishRetries++
+                establishRetryAtMs = nowMs
+                CastNetworkLog.log("cast-establish-nudge elapsed=${elapsedMs}ms")
+                // 054751：Seek 踢脚失效后电视报 PLAYING 却 81s 不取流，用户手动点
+                // 播放下发单独 Play 后 1s 即 fetch。只发 Play，绝不重发 seturi。
+                try {
+                    client.play()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    CastNetworkLog.log("cast-establish-nudge failed ${e.javaClass.simpleName}")
+                }
+            }
+
             CastEstablishPolicy.Action.WARN -> {
                 establishWarned = true
                 CastNetworkLog.log("cast-establish-failed elapsed=${elapsedMs}ms retries=$establishRetries")
@@ -923,10 +830,14 @@ class DlnaCastManager @Inject constructor(
         // 渲染器自发 PAUSED 的去抖计时：一帧缓冲抖动不能翻 UI，见 CastPlayStatePolicy
         var pausedSinceMs = 0L
         while (true) {
+            val pollNowMs = System.currentTimeMillis()
             // 本轮取流时刻不受「每条投送最多 8 条 http-fetch 日志」的上限影响：
             // 供建立确认与曲中 STOPPED 的窗口顺延使用（见 CastStopPolicy）。
             val fetchMs = httpServer.lastSuccessfulFetchMs()
-            refreshEstablishment(System.currentTimeMillis(), fetchMs, client)
+            refreshEstablishment(pollNowMs, fetchMs, client)
+            // 取流空窗诊断：未建立时按档位采样，PAUSED 跳变时再单独记一条。
+            val st = _state.value
+            val idleMs = fetchIdleLog.sample(pollNowMs, fetchMs, st.castStartMs, st.isEstablished)
             // 「连续 3 次没回包」只证明手机侧最近收不到响应，不等于设备离线：
             // 息屏/Doze 短暂限制后台网络、刚从维护窗口醒来都会造成连续空窗
             // （真机上三次失败间隔 55s/35s，不是 1s，正是协程被冻结的痕迹）。
@@ -969,6 +880,7 @@ class DlnaCastManager @Inject constructor(
                 val position = client.position()
                 val posAvailable = position != null
                 val mapped = DlnaTransport.stateName(state)
+                fetchIdleLog.onState(mapped == CastQueuePolicy.STATE_PAUSED, idleMs)
                 // 进度不可得正是「播完」判定的关键证据：仅在变化时落一行，避免 1Hz 刷屏
                 if (posAvailable != lastPositionAvailable) {
                     CastNetworkLog.log("own-pos available=$posAvailable state=$state")
@@ -1123,15 +1035,6 @@ class DlnaCastManager @Inject constructor(
 
     companion object {
         private const val TAG = "DlnaCastManager"
-
-        /**
-         * 音量合并窗口：滑块一次拖动会连发十几条 setVolume，等这么久让后续值
-         * 覆盖前面的，只对最终值发一次 SOAP。
-         */
-        private const val VOLUME_COALESCE_MS = 120L
-
-        /** 下发后到回读取证之间的等待：渲染器执行音量是异步的，立刻读只会读到旧值 */
-        private const val VOLUME_SETTLE_MS = 700L
 
         /**
          * 判定失联前的静默宽限期（毫秒）。

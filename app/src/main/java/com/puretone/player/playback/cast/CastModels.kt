@@ -85,8 +85,9 @@ data class CastState(
     /**
      * 本轮投送**实际完成**时刻（`onCastSucceeded`，非转码开始时刻）。
      *
-     * 用于「曲中停止」的墙钟判据（见 [CastStopPolicy]）与取流建立确认：
-     * 换 URI 后电视必须在这之后重新发起取流，才算真的接上了新曲。
+     * 用于「曲中停止」的墙钟判据（见 [CastStopPolicy]）、建立宽限窗口、取流空窗
+     * 兜底基准与诊断耗时。**不是**取流有效性的门槛：电视可能在 `Play` 返回前就
+     * 发起 GET，`lastFetchMs` 会略早于本值（170435）。
      */
     val castStartMs: Long = 0L,
     /**
@@ -95,6 +96,10 @@ data class CastState(
      * 真机 20261107_165555：16:55:25 `cast-ok` 之后到导出报告一条新曲 `http-fetch`
      * 都没有，App 却报 PLAYING、手机卡片显示 00:24——那是 uiState 外推的假进度。
      * 投屏「已建立」必须以此为准，不能只看 SOAP 200。
+     *
+     * 「本轮」由 [CastHttpServer.urlFor] 换 token 时清零 + `markFetchIfActive()`
+     * 只认当前 token 保证：> 0 即本轮取流，允许早于 [castStartMs]。
+     * 遥控页据此区分「连接中」与「假 00:00」，见 [CastEstablishUiPolicy]。
      */
     val lastFetchMs: Long = 0L,
     /**

@@ -10,12 +10,27 @@ package com.puretone.player.playback.cast
  * 新曲一条 `http-fetch` 都没有，手机卡片却靠 uiState 外推显示 00:24——电视画面
  * 早已退出。故以「本轮投送后当前 URL 真被取流」为建立信号，不再把 SOAP 200 当播放。
  *
+ * ## 取流时间戳的「本轮」语义（2026-11-09 真机 20261109_170435 修正）
+ *
+ * [CastHttpServer] 的 `urlFor()` 每轮投送都会换 token 并把 `lastFetchMs` 清零，
+ * `markFetchIfActive()` 又只认当前 `activeToken`，因此 `lastSuccessfulFetchMs()`
+ * 只要 > 0 **必然属于本轮**。旧判据再要求 `lastFetchMs >= castStartMs` 是多余且
+ * 有害的：电视常在 `SetAVTransportURI` 与 `Play` 之间就发起 GET，而 `castStartMs`
+ * 写在 `client.play()` 返回之后，首次取流会早到几百毫秒，被误判成「上一首的重连」
+ * 丢掉。170435 里 Knock 因此白等 15s，直到 KICK 的 Seek 逼出第二次 GET 才建立
+ * （电视一直在出声，手机进度条却冻结在 00:00）。同一报告另两首
+ * `cast-established elapsed=265ms / 5ms`，可见这竞态窗口只有几毫秒到几百毫秒。
+ *
+ * `castStartMs` 仍用于宽限窗口、[CastStopPolicy] 曲中停止墙钟、`CastFetchIdleLog`
+ * 的兜底基准与诊断耗时，但不再作为「这次取流算不算数」的硬门槛。
+ *
  * ## 状态机
  *
  * 未建立 → 观测到取流 = 建立；超过宽限仍无取流 = 用同一 URL 重发一次；重发后仍无
  * 取流 = 只提示一次用户，不反复打扰渲染器。曲末自动推进则用更宽宽限，超时后发 Seek
- * 踢脚（不重发 seturi），踢脚耗尽且电视未报告 PLAYING 才提示。库通道不经过本应用
- * HTTP 服务，[CastState.isEstablished] 直通 true，本判据返回 [Action.NONE]。
+ * 踢脚（不重发 seturi），踢脚失效且电视仍报 PLAYING 时补发一次单独 Play，动作耗尽
+ * 且总静默超上限才提示。库通道不经过本应用 HTTP 服务，[CastState.isEstablished]
+ * 直通 true，本判据返回 [Action.NONE]。
  *
  * 与 [CastStopPolicy] / [CastQueuePolicy] 一样收成纯函数，便于纯 JVM 逐条锁死。
  */
@@ -65,6 +80,24 @@ internal object CastEstablishPolicy {
      */
     const val AUTO_ADVANCE_KICK_COUNT = 1
 
+    /**
+     * 曲末推进时 Seek 踢脚失效后，补发「单独 Play」的次数。
+     *
+     * 真机 20261109_054751：踢脚前 6 次都在 1~2s 内救回，第 7 次 Seek 返回 200 却
+     * 整整 81 秒没取流；用户手动点播放下发单独 `Play` 后 1 秒即 `cast-established`。
+     * 故补发**单独 Play**（绝不重发 seturi+play，那会打断慢取流、造成开头重复）。
+     */
+    const val AUTO_ADVANCE_NUDGE_COUNT = 1
+
+    /**
+     * 曲末推进动作耗尽后，「电视仍报 PLAYING」这条佐证最多再等到投送后多久。
+     *
+     * 064254 的 18~39s 慢取流靠 G2 佐证避免误报，但原先实现成无上限永久静默：
+     * 054751 里电视卡了 97.4s，应用既不补动作也不提示，只能靠用户手动点播放。
+     * 上限之内继续安静等，超过则必须告知用户。
+     */
+    const val AUTO_ADVANCE_MAX_SILENT_MS = 60_000L
+
     enum class Action {
         /** 无需动作（已建立 / 未在投屏 / 还在宽限内 / 已提示过） */
         NONE,
@@ -78,6 +111,9 @@ internal object CastEstablishPolicy {
         /** 曲末推进超时：发 Seek 踢一脚触发电视取流（重发 seturi 会打断慢取流） */
         KICK,
 
+        /** 踢脚失效且电视仍 PLAYING：补发一次单独 Play（054751 实测 1s 内取流） */
+        NUDGE_PLAY,
+
         /** 重试耗尽：写一次提示，不再重复 */
         WARN
     }
@@ -85,7 +121,13 @@ internal object CastEstablishPolicy {
     fun resolve(
         isCasting: Boolean,
         isEstablished: Boolean,
+        /** 本轮投送完成时刻（`onCastSucceeded`）；只用于宽限 / 墙钟 / 诊断，不作取流门槛 */
         castStartMs: Long,
+        /**
+         * 当前 token 最近一次取流墙钟（`CastHttpServer.lastSuccessfulFetchMs()`）。
+         * 0 = 本轮从未取流；> 0 即本轮来过，**允许早于 `castStartMs`**。上一轮
+         * 的重连由 `urlFor()` 切 token 时清零，不会混进来。
+         */
         lastFetchMs: Long,
         nowMs: Long,
         retries: Int,
@@ -105,23 +147,35 @@ internal object CastEstablishPolicy {
         graceMs: Long = GRACE_MS,
         maxRetries: Int = MAX_RETRIES
     ): Action {
-        // 曲末推进：宽限 + 踢脚（不重发 seturi），两条都按场景切换，其余判据与主动投送一致
+        // 曲末推进：宽限 + Seek 踢脚 + 补发 Play（都不重发 seturi），按场景切换
         val effectiveGrace = if (autoAdvance) AUTO_ADVANCE_GRACE_MS else graceMs
-        val effectiveMaxRetries = if (autoAdvance) AUTO_ADVANCE_KICK_COUNT else maxRetries
+        val effectiveMaxRetries = if (autoAdvance) {
+            AUTO_ADVANCE_KICK_COUNT + AUTO_ADVANCE_NUDGE_COUNT
+        } else maxRetries
         if (!isCasting || isEstablished || castStartMs <= 0L) return Action.NONE
-        // 只认「本轮投送之后」的取流：上一首的重连不算数
-        if (lastFetchMs >= castStartMs) return Action.MARK_ESTABLISHED
+        // 只认「当前 token」的取流：urlFor() 换 token 时已把 lastFetchMs 清零，
+        // markFetchIfActive() 也只记 activeToken，所以 > 0 就必然属于本轮。
+        // 不再要求 fetchMs >= castStartMs——电视可能在 Play 返回前就来 GET，
+        // 那次早到的首次取流被丢掉会让手机白等 15s（170435）。
+        if (lastFetchMs > 0L) return Action.MARK_ESTABLISHED
         // 时钟回拨 / 刚投出去：还在宽限内，继续等
         if (nowMs - castStartMs < effectiveGrace) return Action.NONE
         // 动作之后同样留宽限：渲染器要重启控制服务再重新拉流，动作完下一秒就
         // 弹「电视未响应」是误报。retrySinceMs=0 表示尚未动作，保持旧行为。
         if (retries > 0 && retrySinceMs > 0L && nowMs - retrySinceMs < effectiveGrace) return Action.NONE
         if (retries < effectiveMaxRetries) {
-            return if (autoAdvance) Action.KICK else Action.RETRY
+            // 第一次动作：主动投屏重发 SetAVTransportURI+Play；曲末推进只发 Seek 踢脚。
+            if (retries == 0) return if (autoAdvance) Action.KICK else Action.RETRY
+            // 第二次动作只在「曲末推进 + 电视仍报 PLAYING」时补发一次单独 Play。
+            // 电视连 PLAYING 都不报视为真卡死，不补发，落到下面的提示判据。
+            if (autoAdvance && rendererPlaying) return Action.NUDGE_PLAY
         }
-        // 曲末推进踢脚耗尽后，若电视已 PLAYING（在线且在响应），报「未响应」是误报：
-        // 真机 20261108_064254 电视取流延迟 18~39s，期间一直 PLAYING，继续等取流即可。
-        if (autoAdvance && rendererPlaying) return Action.NONE
+        // 曲末推进动作耗尽：PLAYING 佐证不再是无限期。064254 的 18~39s 慢取流仍在
+        // 上限内安静等，但超过上限还没声音必须提示——054751 就是被「永久静默」
+        // 拖到 97s 才靠用户手动点播放救回。
+        if (autoAdvance && rendererPlaying && nowMs - castStartMs < AUTO_ADVANCE_MAX_SILENT_MS) {
+            return Action.NONE
+        }
         return if (warned) Action.NONE else Action.WARN
     }
 }
