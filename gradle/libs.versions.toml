@@ -28,7 +28,7 @@ benchmark = "1.3.4"
 uiautomator = "2.3.0"
 androidxTestRunner = "1.6.2"
 detekt = "1.23.8"
-benManesVersions = "0.66.0"
+benManesVersions = "0.67.0"
 
 [libraries]
 upnp-cast = { group = "com.github.yinnho", name = "UPnPCast", version.ref = "upnpCast" }
