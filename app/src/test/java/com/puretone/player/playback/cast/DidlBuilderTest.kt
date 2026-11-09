@@ -57,4 +57,50 @@ class DidlBuilderTest {
         val didl = DidlBuilder.build("", "http://h/f", "http-get:*:audio/mpeg:*", "object.item.audioItem.musicTrack")
         assertEquals(true, didl.contains("<dc:title>PureTone</dc:title>"))
     }
+
+    @Test
+    fun `P3-2 合法 MIME 原样保留且首尾空白被裁剪`() {
+        listOf("audio/flac", "audio/x-wav", "audio/mp4", "video/mp4", "application/ogg")
+            .forEach { assertEquals(it, DidlBuilder.safeMimeType(it)) }
+        assertEquals("audio/flac", DidlBuilder.safeMimeType("  audio/flac  "))
+        assertEquals("audio/flac", DidlBuilder.safeMimeType("audio/flac\n"))
+    }
+
+    @Test
+    fun `P3-2 含引号分号空格或注入字符的 MIME 回退到安全值`() {
+        listOf(
+            "audio/flac\" onload=\"x",
+            "audio/flac;DLNA.ORG_OP=01",
+            "audio /flac",
+            "audio/flac\r\nX-Injected: 1",
+            "",
+            "../etc/passwd",
+            "audio/flac:x",
+        ).forEach {
+            assertEquals("脏 MIME「$it」应回退", DidlBuilder.FALLBACK_MIME, DidlBuilder.safeMimeType(it))
+        }
+    }
+
+    @Test
+    fun `P3-2 脏 MIME 不会破坏 protocolInfo 属性结构`() {
+        val variants = DidlBuilder.protocolInfoVariants("audio/flac\" onload=\"x")
+        assertEquals(2, variants.size)
+        variants.forEach {
+            assertEquals(true, it.contains(DidlBuilder.FALLBACK_MIME))
+            assertEquals(false, it.contains("\""))
+            assertEquals(false, it.contains("onload"))
+        }
+    }
+
+    @Test
+    fun `P3-2 build 对直接传入的脏 protocolInfo 做属性转义`() {
+        val didl = DidlBuilder.build(
+            title = "T",
+            mediaUrl = "http://h/f",
+            protocolInfo = "http-get:*:audio/mpeg:*\" onload=\"x",
+            upnpClass = "object.item.audioItem.musicTrack"
+        )
+        assertEquals(true, didl.contains("&quot; onload=&quot;x"))
+        assertEquals(false, didl.contains("\" onload=\"x"))
+    }
 }

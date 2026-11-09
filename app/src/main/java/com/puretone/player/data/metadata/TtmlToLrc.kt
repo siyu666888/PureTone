@@ -105,15 +105,52 @@ object TtmlToLrc {
         return sb.toString().trim()
     }
 
+    /** 命名实体 + 数字字符引用（十进制 `&#39;`、十六进制 `&#x27;`） */
+    private val ENTITY = Regex("""&(?:amp|lt|gt|quot|apos|#[xX][0-9a-fA-F]+|#[0-9]+);""")
+
+    private val NAMED_ENTITIES = mapOf(
+        "amp" to "&",
+        "lt" to "<",
+        "gt" to ">",
+        "quot" to "\"",
+        "apos" to "'",
+    )
+
+    /**
+     * P3-5：一次性反转义 XML 实体，含数字字符引用。
+     *
+     * 用单个正则扫描、**只解一层**，避免链式 `replace` 造成的双重解码：
+     * `&amp;#39;` 应得到字面量 `&#39;`，而不是 `'`。
+     * 非法码点（越界 / UTF-16 代理区 / 整数溢出）保留原文，
+     * 不吞字符也不抛异常——歌词来自社区投稿，容错优先。
+     */
+    internal fun decodeEntities(text: String): String = ENTITY.replace(text) { match ->
+        val body = match.value.removePrefix("&").removeSuffix(";")
+        when {
+            body.startsWith("#x", ignoreCase = true) -> decodeCodePoint(body.substring(2), 16)
+            body.startsWith("#") -> decodeCodePoint(body.substring(1), 10)
+            else -> NAMED_ENTITIES[body]
+        } ?: match.value
+    }
+
+    /** 码点 → 字符串；非法码点返回 null 让调用方保留原实体 */
+    private fun decodeCodePoint(digits: String, radix: Int): String? {
+        val code = try {
+            digits.toLong(radix)
+        } catch (_: NumberFormatException) {
+            return null
+        }
+        if (code < 0 || code > Character.MAX_CODE_POINT.toLong()) return null
+        if (code in 0xD800L..0xDFFFL) return null
+        return try {
+            String(Character.toChars(code.toInt()))
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    }
+
     /** 剥除标签并反转义，取纯文本 */
-    private fun plainText(raw: String): String =
-        ANY_TAG.replace(raw, "")
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .replace("&#39;", "'")
+    private fun plainText(raw: String): String = decodeEntities(ANY_TAG.replace(raw, ""))
 
     /**
      * 解析 TTML 时间戳 → 毫秒。

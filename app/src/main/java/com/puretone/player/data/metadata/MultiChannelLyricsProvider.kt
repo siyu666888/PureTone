@@ -56,10 +56,14 @@ class MultiChannelLyricsProvider @Inject constructor(
      */
     override val sourceName: String = "本地 / AMLL / LRCLIB"
 
+    /**
+     * P3-3：命中渠道与尝试轨迹收敛到**一份原子快照**，
+     * 不再用两个独立的 `@Volatile var` 分两步写（并发取词会读到错配状态）。
+     */
+    private val attemptLog = LyricsAttemptLog()
+
     /** 各渠道命中情况，供 UI/诊断展示（key 见 [Channel]） */
-    @Volatile
-    var lastHitChannel: Channel? = null
-        private set
+    val lastHitChannel: Channel? get() = attemptLog.hit
 
     /**
      * 本次尝试过的渠道（按顺序），供失败提示展示。
@@ -68,9 +72,7 @@ class MultiChannelLyricsProvider @Inject constructor(
      * 只说「未找到歌词」会让用户以为是歌名打错，而实际可能是本地没文件、
      * 内嵌没有、词库确实没有。列出尝试轨迹能把排查方向直接指出来。
      */
-    @Volatile
-    var lastAttemptedChannels: List<Channel> = emptyList()
-        private set
+    val lastAttemptedChannels: List<Channel> get() = attemptLog.attempted
 
     /** 渠道的简短中文名（UI 展示用） */
     fun Channel.displayName(): String = when (this) {
@@ -127,11 +129,10 @@ class MultiChannelLyricsProvider @Inject constructor(
         durationMs: Long
     ): String? {
         if (title.isBlank()) {
-            lastHitChannel = null
-            lastAttemptedChannels = emptyList()
+            attemptLog.reset()
             return null
         }
-        lastHitChannel = null
+        attemptLog.reset()
         // 记录本次尝试过的渠道（顺序即优先级），失败时用于提示用户
         val attempted = mutableListOf<Channel>()
 
@@ -140,8 +141,7 @@ class MultiChannelLyricsProvider @Inject constructor(
             localProvider.fetch(audioPath, durationMs)?.let {
                 // 本地渠道内部有两条：先判断到底是 .lrc 还是内嵌，便于诊断
                 val hit = if (hasSidecarLrc(audioPath)) Channel.SIDECAR_LRC else Channel.EMBEDDED
-                lastHitChannel = hit
-                lastAttemptedChannels = attempted + hit
+                attemptLog.record(hit, attempted + hit)
                 return it
             }
             // 本地没命中：两条本地渠道都算试过了
@@ -152,24 +152,23 @@ class MultiChannelLyricsProvider @Inject constructor(
         // 2) AMLL 词库（华语/日语覆盖好）
         attempted.add(Channel.AMLL)
         amllProvider.fetch(artist, title, durationMs)?.let {
-            lastHitChannel = Channel.AMLL
-            lastAttemptedChannels = attempted
+            attemptLog.record(Channel.AMLL, attempted)
             return it
         }
 
         // 3) LRCLIB（精确 + 搜索兜底）
         attempted.add(Channel.LRCLIB_EXACT)
         lrcLibProvider.fetch(artist, title, durationMs)?.let {
-            lastHitChannel = when (lrcLibProvider.lastMatch) {
+            val hit = when (lrcLibProvider.lastMatch) {
                 LrcLibLyricsProvider.Match.EXACT -> Channel.LRCLIB_EXACT
                 else -> Channel.LRCLIB_SEARCH
             }
-            lastAttemptedChannels = attempted
+            attemptLog.record(hit, attempted)
             return it
         }
         attempted.add(Channel.LRCLIB_SEARCH)
 
-        lastAttemptedChannels = attempted
+        attemptLog.record(null, attempted)
         return null
     }
 

@@ -90,6 +90,41 @@ class TtmlToLrcTest {
     }
 
     @Test
+    fun `P3-5 十进制数字字符引用被反转义`() {
+        assertEquals("' & 中", TtmlToLrc.decodeEntities("&#39; &#38; &#20013;"))
+        val lrc = TtmlToLrc.convert(
+            """<tt><body><div><p begin="00:01.000"><span begin="00:01.000">it&#39;s &#38; me</span></p></div></body></tt>"""
+        )
+        assertEquals("[00:01.00]it's & me\n", lrc)
+    }
+
+    @Test
+    fun `P3-5 十六进制数字字符引用支持大小写 x`() {
+        assertEquals("'中", TtmlToLrc.decodeEntities("&#x27;&#X4E2D;"))
+        assertEquals("😀", TtmlToLrc.decodeEntities("&#x1F600;"))
+    }
+
+    @Test
+    fun `P3-5 非法码点保留原文不吞字符`() {
+        // 越界、UTF-16 代理区、整数溢出：都不应抛异常或替换成乱码
+        listOf("&#1114112;", "&#xD800;", "&#99999999999999999999;", "&#-1;", "&#;")
+            .forEach { assertEquals(it, TtmlToLrc.decodeEntities(it)) }
+    }
+
+    @Test
+    fun `P3-5 实体只解一层 不出现双重解码`() {
+        // &amp;#39; 的语义是字面量「&#39;」，不是单引号
+        assertEquals("&#39;", TtmlToLrc.decodeEntities("&amp;#39;"))
+        assertEquals("&", TtmlToLrc.decodeEntities("&amp;"))
+    }
+
+    @Test
+    fun `P3-5 命名实体与数字引用混合仍正确`() {
+        assertEquals("a & b <c> '", TtmlToLrc.decodeEntities("a &amp; b &lt;c&gt; &#39;"))
+        assertEquals("\"quoted\"", TtmlToLrc.decodeEntities("&quot;quoted&quot;"))
+    }
+
+    @Test
     fun `时间戳解析覆盖多种写法`() {
         assertEquals(0L, TtmlToLrc.parseTime("00:00.000"))
         assertEquals(29_231L, TtmlToLrc.parseTime("00:29.231"))
