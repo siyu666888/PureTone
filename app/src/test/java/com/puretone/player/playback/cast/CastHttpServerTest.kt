@@ -84,4 +84,25 @@ class CastHttpServerTest {
         assertEquals(200, CastHttpServer.responseStatus(parse(null, 100)))
         assertEquals(416, CastHttpServer.responseStatus(parse("bytes=100-", 100)))
     }
+
+    // R7：供流明细必须同时给出「实际写出 / 计划长度 / 起点 / 耗时 / 异常」，
+    // 否则「电视一次拉完大块后几十秒没请求」与「写出一半就断了」在诊断里长得一样。
+
+    @Test
+    fun `正常供流明细带写出字节与耗时`() {
+        assertEquals(
+            "sent=25123456/25123456 start=0 cost=842ms err=-",
+            CastHttpServer.formatFetchDetail(0L, 25_123_456L, 25_123_456L, 842L, null)
+        )
+    }
+
+    @Test
+    fun `部分写出与异常原因都可见`() {
+        assertEquals(
+            "sent=4096/25123456 start=102400 cost=31ms err=IOException:Connection reset",
+            CastHttpServer.formatFetchDetail(
+                102_400L, 25_123_456L, 4_096L, 31L, "IOException:Connection reset"
+            )
+        )
+    }
 }

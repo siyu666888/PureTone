@@ -880,7 +880,13 @@ class DlnaCastManager @Inject constructor(
                 val position = client.position()
                 val posAvailable = position != null
                 val mapped = DlnaTransport.stateName(state)
-                fetchIdleLog.onState(mapped == CastQueuePolicy.STATE_PAUSED, idleMs)
+                fetchIdleLog.onState(mapped == CastQueuePolicy.STATE_PAUSED, idleMs) {
+                    // R7 现场快照：只在刚进入 PAUSED 那一帧求值，1Hz 其余帧零开销。
+                    // keepAliveSnapshot 已含 wake/wifi/bound/session/battery/doze；
+                    // fetchTrace 给「最近几次请求何时到达 + 累计写出字节 + 写失败原因」。
+                    "progress=${position?.first ?: -1} duration=${position?.second ?: -1} " +
+                        "${net.keepAliveSnapshot()} ${httpServer.fetchTraceSnapshot(pollNowMs)}"
+                }
                 // 进度不可得正是「播完」判定的关键证据：仅在变化时落一行，避免 1Hz 刷屏
                 if (posAvailable != lastPositionAvailable) {
                     CastNetworkLog.log("own-pos available=$posAvailable state=$state")

@@ -51,9 +51,16 @@ internal class CastFetchIdleLog(
      * 每帧传入渲染器是否处于 PAUSED：只在「刚进入」这一帧记一条，避免刷屏。
      * 跳变检测放在本类，是为了不让 `DlnaCastManager.pollOwnTransport` 再多一个
      * 分支（detekt CognitiveComplexMethod 阈值 30）。
+     *
+     * @param snapshot R7 现场快照（progress/duration + keepalive/doze + 请求级 trace）。
+     *   刻意用 lambda 传：**只在新跳变那一帧求值**，1Hz 轮询的其余帧不读
+     *   PowerManager、不拼字符串；空快照时日志格式与旧版一字不差。
      */
-    fun onState(paused: Boolean, idleMs: Long) {
-        if (paused && !lastPaused) logger("cast-fetch-idle ms=$idleMs state=PAUSED")
+    fun onState(paused: Boolean, idleMs: Long, snapshot: () -> String = { "" }) {
+        if (paused && !lastPaused) {
+            val extra = snapshot().trim()
+            logger("cast-fetch-idle ms=$idleMs state=PAUSED" + if (extra.isEmpty()) "" else " $extra")
+        }
         lastPaused = paused
     }
 

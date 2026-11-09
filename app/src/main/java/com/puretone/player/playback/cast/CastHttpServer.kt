@@ -38,6 +38,9 @@ internal class CastHttpServer {
     /** 已登记的可投送文件 */
     private data class Entry(val file: File, val mimeType: String)
 
+    /** 一次 GET 的实际供流结果，只用于诊断，不参与响应构造 */
+    private data class CopyResult(val written: Long, val costMs: Long, val error: String?)
+
     /** Range 解析结果（纯函数产物，单测覆盖） */
     sealed interface RangeSpec {
         /** 无 Range 头，整文件下发 */
@@ -83,8 +86,17 @@ internal class CastHttpServer {
      */
     private val lastFetchMs = java.util.concurrent.atomic.AtomicLong(0L)
 
+    /**
+     * 请求级取流取证（R7）。与 [lastFetchMs] 各司其职：后者只服务「投屏是否建立」，
+     * 前者记录**所有**请求（含旧 token 重连）的到达时刻与写出量，不受 8 条日志上限影响。
+     */
+    private val fetchTrace = CastFetchTrace()
+
     /** 当前 token 最近一次成功取流的墙钟（0=本轮从未取流） */
     fun lastSuccessfulFetchMs(): Long = lastFetchMs.get()
+
+    /** PAUSED 跳变时取一份请求级快照，供 [CastFetchIdleLog] 落进同一行 */
+    fun fetchTraceSnapshot(nowMs: Long): String = fetchTrace.snapshot(nowMs)
 
     private val workers = Executors.newFixedThreadPool(WORKER_COUNT) { runnable ->
         Thread(runnable, "PureTone-CastHttp").apply { isDaemon = true }
@@ -132,6 +144,8 @@ internal class CastHttpServer {
         lastFetchMs.set(0L)
         // 取流日志按「轮」重置，否则连播几首后诊断里只剩头一两首的 http-fetch
         loggedRequests.set(0)
+        // 请求级取证同样按轮复位，避免上一首的请求串进新曲的 PAUSED 判读
+        fetchTrace.reset()
         val url = "http://$host:$port/file/$token"
         CastNetworkLog.log("http-url host=$host port=$port mime=$mimeType")
         return url
@@ -144,6 +158,7 @@ internal class CastHttpServer {
         acceptor = null
         entries.clear()
         loggedRequests.set(0)
+        fetchTrace.reset()
         activeToken = null
         lastFetchMs.set(0L)
     }
@@ -193,6 +208,9 @@ internal class CastHttpServer {
     }
 
     private fun serve(socket: Socket, method: String, path: String, rangeHeader: String?) {
+        // 记请求**到达**时刻，不是响应写完时刻：R7 判读「停顿那一帧电视有没有来拉流」
+        // 全靠这个。旧 token 的重连也算一次请求，但不会误写进 lastFetchMs。
+        fetchTrace.noteRequest(System.currentTimeMillis())
         if (method != "GET" && method != "HEAD") {
             respondText(socket, 405, "Method Not Allowed")
             return
@@ -260,13 +278,30 @@ internal class CastHttpServer {
         }
         val out = socket.getOutputStream()
         out.write(header.toByteArray(Charsets.ISO_8859_1))
-        if (method == "GET") copy(out, entry.file, start, length)
+        val result = if (method == "GET") {
+            copy(out, entry.file, start, length)
+        } else {
+            CopyResult(0L, 0L, null)
+        }
         out.flush()
-        logRequest(socket, entry.file.name, rangeHeader, status)
+        logRequest(
+            socket, entry.file.name, rangeHeader, status,
+            formatFetchDetail(start, length, result.written, result.costMs, result.error)
+        )
     }
 
-    private fun copy(out: OutputStream, file: File, start: Long, length: Long) {
-        if (length <= 0) return
+    /**
+     * 供流并返回「实际写出字节 / 耗时 / 异常原因」。
+     *
+     * 行为与改造前完全一致（异常仍被吞掉、只记日志，绝不抛给 [handle] 影响播放），
+     * 只是把原本只进 logcat 的 `copy failed` 同时写进诊断文件——R7 的三个取证缺口之一。
+     * `http-copy-fail` **不受** `http-fetch` 8 条上限影响：供流中断必须留痕。
+     */
+    private fun copy(out: OutputStream, file: File, start: Long, length: Long): CopyResult {
+        if (length <= 0) return CopyResult(0L, 0L, null)
+        val beganMs = System.currentTimeMillis()
+        var written = 0L
+        var error: String? = null
         runCatching {
             FileInputStream(file).use { input ->
                 var remaining = start
@@ -276,17 +311,28 @@ internal class CastHttpServer {
                     if (skipped <= 0) break
                     remaining -= skipped
                 }
-                if (remaining > 0) return
+                if (remaining > 0) return@runCatching
                 val buffer = ByteArray(BUFFER_SIZE)
                 var left = length
                 while (left > 0) {
                     val read = input.read(buffer, 0, minOf(buffer.size.toLong(), left).toInt())
                     if (read <= 0) break
                     out.write(buffer, 0, read)
+                    written += read
                     left -= read
                 }
             }
-        }.onFailure { Log.w(TAG, "copy failed", it) }
+        }.onFailure {
+            Log.w(TAG, "copy failed", it)
+            error = "${it.javaClass.simpleName}:${it.message ?: "-"}"
+        }
+        fetchTrace.noteWritten(written)
+        val reason = error
+        if (reason != null) {
+            fetchTrace.noteError(reason)
+            CastNetworkLog.log("http-copy-fail sent=$written/$length err=$reason")
+        }
+        return CopyResult(written, System.currentTimeMillis() - beganMs, error)
     }
 
     private fun respondText(socket: Socket, code: Int, text: String) {
@@ -300,13 +346,21 @@ internal class CastHttpServer {
         }
     }
 
-    /** 落盘一条取流记录（每轮限量，避免一次播放刷爆环形日志） */
-    private fun logRequest(socket: Socket, path: String, range: String?, status: Int) {
+    /**
+     * 落盘一条取流记录（每轮限量，避免一次播放刷爆环形日志）。
+     *
+     * @param detail 发文件时的供流明细（[formatFetchDetail]）；404/416 走默认空串，
+     *   这样既有的 `http-fetch … status=404` 判读格式一字不变。
+     */
+    private fun logRequest(socket: Socket, path: String, range: String?, status: Int, detail: String = "") {
         // getAndUpdate 保证 3 个 worker 并发时不会一起越过上限
         val previous = loggedRequests.getAndUpdate { if (it >= MAX_LOGGED_REQUESTS) it else it + 1 }
         if (previous >= MAX_LOGGED_REQUESTS) return
         val from = runCatching { socket.inetAddress.hostAddress }.getOrNull() ?: "?"
-        CastNetworkLog.log("http-fetch from=$from path=${path.take(48)} range=${range ?: "-"} status=$status")
+        CastNetworkLog.log(
+            "http-fetch from=$from path=${path.take(48)} range=${range ?: "-"} status=$status" +
+                if (detail.isEmpty()) "" else " $detail"
+        )
     }
 
     companion object {
@@ -317,6 +371,21 @@ internal class CastHttpServer {
         private const val MAX_HEADERS = 32
         private const val MAX_LOGGED_REQUESTS = 8
         private const val BUFFER_SIZE = 64 * 1024
+
+        /**
+         * 供流明细格式（抽成纯函数供单测锁定）。
+         *
+         * R7 要区分「电视一次拉完大块后几十秒没新请求」（FLAC 长连接的正常表现）
+         * 与「请求来了但只写出很少字节就断了」（供流中断），故同时记
+         * 实际写出 / 计划长度 / 起点 / 耗时 / 异常原因，附在 `http-fetch` 同一行。
+         */
+        fun formatFetchDetail(
+            start: Long,
+            length: Long,
+            written: Long,
+            costMs: Long,
+            error: String?
+        ): String = "sent=$written/$length start=$start cost=${costMs}ms err=${error ?: "-"}"
 
         /**
          * 由解析结果算 HTTP 状态：**只有真正分段才 206**。

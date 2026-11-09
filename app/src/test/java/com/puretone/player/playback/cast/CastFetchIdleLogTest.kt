@@ -102,6 +102,42 @@ class CastFetchIdleLogTest {
         assertEquals("cast-fetch-idle ms=34000 state=PAUSED", r.lines.last())
     }
 
+    // R7：PAUSED 跳变要带现场快照，但 1Hz 轮询的其余帧绝不能重复求值
+    // （keepAliveSnapshot 会读 PowerManager，逐帧读既费电又刷屏）。
+
+    @Test
+    fun `PAUSED快照追加到同一行`() {
+        val r = Recorder()
+        val subject = CastFetchIdleLog(logger = r.log)
+        subject.onState(paused = true, idleMs = 34_631L) {
+            "progress=120000 duration=220000 wake=true doze=off " +
+                "requests=7 bytes=25123456 ages=[120] err=-"
+        }
+        assertEquals(
+            "cast-fetch-idle ms=34631 state=PAUSED progress=120000 duration=220000 " +
+                "wake=true doze=off requests=7 bytes=25123456 ages=[120] err=-",
+            r.lines[0]
+        )
+    }
+
+    @Test
+    fun `持续PAUSED不重复求值快照`() {
+        val r = Recorder()
+        val subject = CastFetchIdleLog(logger = r.log)
+        var evaluated = 0
+        val snapshot = { evaluated++; "requests=1" }
+        subject.onState(paused = false, idleMs = 1_000L, snapshot = snapshot)
+        subject.onState(paused = true, idleMs = 2_000L, snapshot = snapshot)
+        subject.onState(paused = true, idleMs = 3_000L, snapshot = snapshot)
+        assertEquals(1, evaluated)
+        assertEquals("cast-fetch-idle ms=2000 state=PAUSED requests=1", r.lines[0])
+        // 恢复 PLAYING 后再次进入 PAUSED 才算新跳变，才重新取快照
+        subject.onState(paused = false, idleMs = 4_000L, snapshot = snapshot)
+        subject.onState(paused = true, idleMs = 5_000L, snapshot = snapshot)
+        assertEquals(2, evaluated)
+        assertEquals("cast-fetch-idle ms=5000 state=PAUSED requests=1", r.lines[1])
+    }
+
     @Test
     fun `采样档位为5秒`() {
         assertEquals(5_000L, CastFetchIdleLog.STEP_MS)
