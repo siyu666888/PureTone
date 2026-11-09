@@ -11,6 +11,7 @@ import java.net.Socket
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * 自有投送用的本地文件服务（HTTP/1.1，支持 Range）。
@@ -56,8 +57,15 @@ internal class CastHttpServer {
     @Volatile
     private var running = false
 
-    /** 每次投送最多落盘几条取流日志：足够证明「电视来过」，又不至于刷爆诊断 */
-    private var loggedRequests = 0
+    /**
+     * **本轮投送**最多落盘几条取流日志：足够证明「电视来过」，又不至于刷爆诊断。
+     *
+     * 换曲时由 [urlFor] 清零（P2-4）：旧实现只在 [stop] 清零，连续投屏时前 8 条
+     * 被头一两首占满，之后每首歌「电视到底来没来拉流」在诊断里完全不可见——
+     * 191939 报告 883 行只有 18 条 `http-fetch` 就是这个原因。
+     * 3 个 worker 并发调用 [logRequest]，故用原子计数，避免 check-then-increment 竞态。
+     */
+    private val loggedRequests = AtomicInteger(0)
 
     /**
      * 当前这一轮投送的 URL token。换曲后旧 URL 仍在 [entries] 里（电视可能还在拉旧流），
@@ -70,7 +78,7 @@ internal class CastHttpServer {
      * 当前 token 最近一次成功取流的墙钟。
      *
      * 与 [loggedRequests] 不同，它**不受日志条数上限影响**：诊断文件里看不到
-     * `http-fetch` 时，可能只是前 8 条已记满，不能据此断言电视没来取流。
+     * `http-fetch` 时，可能只是本轮前 8 条已记满，不能据此断言电视没来取流。
      * [DlnaCastManager] 用它判定「投屏是否真建立」，见 [CastState.isEstablished]。
      */
     private val lastFetchMs = java.util.concurrent.atomic.AtomicLong(0L)
@@ -122,6 +130,8 @@ internal class CastHttpServer {
         // 新一轮投送：旧 token 的取流不再算数，避免把「上一首的重连」当成本曲已建立
         activeToken = token
         lastFetchMs.set(0L)
+        // 取流日志按「轮」重置，否则连播几首后诊断里只剩头一两首的 http-fetch
+        loggedRequests.set(0)
         val url = "http://$host:$port/file/$token"
         CastNetworkLog.log("http-url host=$host port=$port mime=$mimeType")
         return url
@@ -133,7 +143,7 @@ internal class CastHttpServer {
         server = null
         acceptor = null
         entries.clear()
-        loggedRequests = 0
+        loggedRequests.set(0)
         activeToken = null
         lastFetchMs.set(0L)
     }
@@ -202,11 +212,13 @@ internal class CastHttpServer {
             }
             is RangeSpec.Partial -> {
                 markFetchIfActive(token)
-                sendFile(socket, method, entry, spec.start, spec.end, rangeHeader)
+                sendFile(socket, method, entry, spec.start, spec.end, spec, rangeHeader)
             }
             RangeSpec.Full -> {
                 markFetchIfActive(token)
-                sendFile(socket, method, entry, 0L, (size - 1).coerceAtLeast(0L), rangeHeader)
+                // 无法识别的 Range 一律按整文件 200 下发；但原始头仍传下去供诊断落盘，
+                // 这样电视发了什么非法 Range 在报告里依旧可见（P1-1）。
+                sendFile(socket, method, entry, 0L, (size - 1).coerceAtLeast(0L), spec, rangeHeader)
             }
         }
     }
@@ -216,18 +228,25 @@ internal class CastHttpServer {
         if (token == activeToken) lastFetchMs.set(System.currentTimeMillis())
     }
 
+    /**
+     * @param spec 响应状态**只由解析结果决定**（[responseStatus]），不看 [rangeHeader]
+     *   是否为空——电视发一个无法解析的 `Range: garbage` 时旧实现会误回 206 +
+     *   `Content-Range: 0-{size-1}` 却发整文件，协议自相矛盾（P1-1）。
+     * @param rangeHeader 仅用于诊断日志，保留原始值不参与响应构造。
+     */
     private fun sendFile(
         socket: Socket,
         method: String,
         entry: Entry,
         start: Long,
         end: Long,
+        spec: RangeSpec,
         rangeHeader: String?
     ) {
         val size = entry.file.length()
         val length = end - start + 1
-        val partial = rangeHeader != null
-        val status = if (partial) 206 else 200
+        val status = responseStatus(spec)
+        val partial = status == 206
         val header = buildString {
             append("HTTP/1.1 ").append(status).append(if (partial) " Partial Content\r\n" else " OK\r\n")
             append("Content-Type: ").append(entry.mimeType).append("\r\n")
@@ -281,10 +300,11 @@ internal class CastHttpServer {
         }
     }
 
-    /** 落盘一条取流记录（限量，避免一次播放刷爆环形日志） */
+    /** 落盘一条取流记录（每轮限量，避免一次播放刷爆环形日志） */
     private fun logRequest(socket: Socket, path: String, range: String?, status: Int) {
-        if (loggedRequests >= MAX_LOGGED_REQUESTS) return
-        loggedRequests++
+        // getAndUpdate 保证 3 个 worker 并发时不会一起越过上限
+        val previous = loggedRequests.getAndUpdate { if (it >= MAX_LOGGED_REQUESTS) it else it + 1 }
+        if (previous >= MAX_LOGGED_REQUESTS) return
         val from = runCatching { socket.inetAddress.hostAddress }.getOrNull() ?: "?"
         CastNetworkLog.log("http-fetch from=$from path=${path.take(48)} range=${range ?: "-"} status=$status")
     }
@@ -297,6 +317,18 @@ internal class CastHttpServer {
         private const val MAX_HEADERS = 32
         private const val MAX_LOGGED_REQUESTS = 8
         private const val BUFFER_SIZE = 64 * 1024
+
+        /**
+         * 由解析结果算 HTTP 状态：**只有真正分段才 206**。
+         *
+         * 旧实现用 `rangeHeader != null` 判分段，导致无法识别的 Range 头也回 206
+         * 却发整文件（P1-1）。抽成纯函数让 [sendFile] 与单测共用同一判据。
+         */
+        fun responseStatus(spec: RangeSpec): Int = when (spec) {
+            is RangeSpec.Partial -> 206
+            RangeSpec.Full -> 200
+            RangeSpec.Unsatisfiable -> 416
+        }
 
         /**
          * 解析 `Range: bytes=…`。

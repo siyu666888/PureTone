@@ -7,8 +7,10 @@
   1) 公网请求 —— 全部显式使用 HTTPS，不需要明文：
        · iTunes Search API   https://itunes.apple.com/search   （元数据/封面）
        · LRCLIB 歌词         https://lrclib.net/api/...
-     （见 app/src/main/java/com/puretone/player/data/metadata/ 下两个 Provider）
-     今后若新增任何 http:// 公网端点，应改为 HTTPS，而非依赖本配置放行。
+       · AMLL TTML 歌词      https://api.amll.dev/v1/lyrics/...
+     （见 app/src/main/java/com/puretone/player/data/metadata/ 下三个 Provider）
+     三个域名在下方 <domain-config> 里**显式拒绝明文**（P2-2）：
+     今后误写成 http:// 会被系统直接阻断，而不是靠人工审计发现。
 
   2) DLNA 投屏（UPnPCast 库）—— 向局域网渲染设备的 LAN IP 发起明文 HTTP 控制指令
      （SOAP/SetAVTransportURI 等），且本机起 HTTP 服务供渲染设备拉取文件。
@@ -16,8 +18,9 @@
   ⚠️ 为什么不能「仅局域网放行明文」：
      Android 的 Network Security Config 的 <domain-config> 只接受主机名，
      不支持按 CIDR / 网段白名单，无法写成「仅 192.168.0.0/16 允许明文」。
-     因此明文能力在 base-config 中保留，但严格限定于 DLNA 局域网场景——
-     App 不会向任何公网主机发明文（已代码核实）。
+     因此明文能力在 base-config 中保留；但「无法按网段收窄」不等于「只能全局放行」——
+     对**已知公网域名**可以逐条显式拒绝明文，见下方 <domain-config>。
+     LAN IP 仍不在任何 domain-config 里，故走 base-config 的放行，DLNA 不受影响。
 
   说明：自分发（不上 Google Play），不受 Google Play 的 16KB 页对齐**政策**约束。
   但这里要区分两件常被混为一谈的事：
@@ -42,4 +45,14 @@
             <certificates src="system" />
         </trust-anchors>
     </base-config>
+
+    <!-- P2-2：base-config 的全局放行只为 LAN IP 服务。对三个已知公网端点
+         显式拒绝明文，把「靠人工审计保证只用 HTTPS」升级成系统级拦截。
+         LAN IP 不匹配任何 domain，仍走上面的 base-config，DLNA 投屏不受影响。 -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">itunes.apple.com</domain>
+        <domain includeSubdomains="true">lrclib.net</domain>
+        <domain includeSubdomains="true">api.amll.dev</domain>
+        <domain includeSubdomains="true">amll.dev</domain>
+    </domain-config>
 </network-security-config>

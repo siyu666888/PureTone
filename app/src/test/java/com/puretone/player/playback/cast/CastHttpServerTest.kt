@@ -57,4 +57,31 @@ class CastHttpServerTest {
     fun `大小写不敏感`() {
         assertEquals(CastHttpServer.RangeSpec.Partial(0, 9), parse("Bytes=0-9", 100))
     }
+
+    // P1-1：响应状态只认解析结果，不能因为「请求里带过 Range 头」就回 206。
+    // 旧实现 sendFile 用 rangeHeader != null 判分段，非法 Range 会回 206 +
+    // Content-Range: 0-{size-1} 却发整文件，协议自相矛盾。
+
+    @Test
+    fun `无法识别的Range按整文件200下发`() {
+        val spec = parse("garbage", 100)
+        assertEquals(CastHttpServer.RangeSpec.Full, spec)
+        assertEquals(200, CastHttpServer.responseStatus(spec))
+    }
+
+    @Test
+    fun `不以bytes开头的Range按整文件200下发`() {
+        assertEquals(200, CastHttpServer.responseStatus(parse("items=0-9", 100)))
+    }
+
+    @Test
+    fun `合法分段才是206`() {
+        assertEquals(206, CastHttpServer.responseStatus(parse("bytes=0-9", 100)))
+    }
+
+    @Test
+    fun `没有Range头是200且越界范围是416`() {
+        assertEquals(200, CastHttpServer.responseStatus(parse(null, 100)))
+        assertEquals(416, CastHttpServer.responseStatus(parse("bytes=100-", 100)))
+    }
 }

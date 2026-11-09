@@ -130,7 +130,10 @@ class AmllLyricsProvider @Inject constructor() {
             val id = item.optLong("id", 0L)
             if (id <= 0L) continue
             val names = item.optJSONArray("musicNames")
-            val musicName = names?.optString(0) ?: item.optString("musicName")
+            // 显式 JSON null 会变成字面量 "null"：直接跳过脏候选，别让它进匹配管道（P1-2）
+            val musicName = names?.optNonNullString(0)
+                ?: item.optNonNullString("musicName")
+                ?: continue
             if (!out.containsKey(id)) out[id] = musicName
         }
     }
@@ -140,7 +143,8 @@ class AmllLyricsProvider @Inject constructor() {
         val body = getText("${NetworkConfig.AMLL_GET_URL}?id=$id") ?: return null
         val root = runCatching { JSONObject(body) }.getOrNull() ?: return null
         if (root.optInt("status") != 200) return null
-        return root.optJSONObject("data")?.optString("lyrics")?.takeIf { it.isNotBlank() }
+        // 旧写法会把显式 null 的 lyrics 变成 "null" 字符串交给 TTML 转换器
+        return root.optJSONObject("data")?.optNonNullString("lyrics")
     }
 
     /**

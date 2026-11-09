@@ -1,7 +1,6 @@
 package com.puretone.player.playback.cast
 
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -29,6 +28,14 @@ internal object SoapClient {
 
     /** 正文落盘上限：SOAP fault 的关键信息都在开头，截断避免刷爆诊断文件 */
     private const val BODY_LIMIT = 300
+
+    /**
+     * 响应体**读取**上限（P1-3）：局域网内一台被攻陷或异常的设备可以在 GET/POST
+     * 后无限返回数据，旧实现 `readText()` 会一次性读进内存直到 OOM。
+     * 合法 SCPD / 设备描述 XML 通常只有几 KB，256KB 绰绰有余。
+     * 与 [BODY_LIMIT] 不是一回事：那个只截断**日志展示**，这个限制**实际读取量**。
+     */
+    private const val MAX_BODY_BYTES = 256 * 1024
 
     /**
      * 一次 HTTP 往返。
@@ -79,9 +86,25 @@ internal object SoapClient {
     private fun readBody(connection: HttpURLConnection, status: Int): String {
         val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             ?: return ""
-        return runCatching {
-            BufferedReader(InputStreamReader(stream, "UTF-8")).use { it.readText() }
-        }.getOrDefault("")
+        return runCatching { readLimited(stream) }.getOrDefault("")
+    }
+
+    /**
+     * 最多读 [limit] 字节，绝不把整个响应用 `readText()` 吞进内存（P1-3）。
+     *
+     * 抽成 `internal` 是为了纯 JVM 单测能直接用 `ByteArrayInputStream` 锁定截断行为，
+     * 不必起 HTTP 连接。按字节截断时末尾若正好是半个 UTF-8 字符，`String` 会替换成
+     * U+FFFD 而不抛异常——SOAP fault 的关键信息都在开头，不影响诊断。
+     */
+    internal fun readLimited(stream: InputStream, limit: Int = MAX_BODY_BYTES): String {
+        val buffer = ByteArray(limit)
+        var read = 0
+        while (read < buffer.size) {
+            val count = stream.read(buffer, read, buffer.size - read)
+            if (count < 0) break
+            read += count
+        }
+        return String(buffer, 0, read, Charsets.UTF_8)
     }
 
     /**

@@ -57,12 +57,13 @@ class ItunesMetadataProvider @Inject constructor() : SongMetadataProvider {
         val out = ArrayList<MetadataCandidate>()
         for (i in 0 until results.length()) {
             val obj = results.optJSONObject(i) ?: continue
-            val title = obj.optString("trackName").takeIf { it.isNotBlank() && it != "null" } ?: continue
-            val artist = obj.optString("artistName").takeIf { it.isNotBlank() && it != "null" } ?: "未知艺术家"
-            val album = obj.optString("collectionName").takeIf { it.isNotBlank() && it != "null" }.orEmpty()
-            val art = obj.optString("artworkUrl100").takeIf { it.isNotBlank() && it != "null" }
-                ?.replace("100x100bb", "600x600bb")
-            val year = obj.optString("releaseDate").takeIf { it.length >= 4 }?.take(4)?.toIntOrNull() ?: 0
+            // 统一走 JsonOpt 的空值口径（P1-2），原先四处手写 takeIf 收敛成一处判据
+            val title = obj.optNonNullString("trackName") ?: continue
+            val artist = obj.optNonNullString("artistName") ?: "未知艺术家"
+            val album = obj.optNonNullString("collectionName").orEmpty()
+            val art = obj.optNonNullString("artworkUrl100")?.replace("100x100bb", "600x600bb")
+            val year = obj.optNonNullString("releaseDate")?.takeIf { it.length >= 4 }
+                ?.take(4)?.toIntOrNull() ?: 0
             out += MetadataCandidate(title = title, artist = artist, album = album, artworkUrl = art, year = year)
         }
         return out

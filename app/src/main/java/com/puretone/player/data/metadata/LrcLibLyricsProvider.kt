@@ -82,7 +82,7 @@ class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i) ?: continue
             if (!titleMatches(obj, title)) continue
-            obj.optLyrics("syncedLyrics")?.let { return it }
+            obj.optNonNullString("syncedLyrics")?.let { return it }
         }
         return null
     }
@@ -92,36 +92,24 @@ class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i) ?: continue
             if (!titleMatches(obj, title)) continue
-            obj.optLyrics("plainLyrics")?.let { return it }
+            obj.optNonNullString("plainLyrics")?.let { return it }
         }
         return null
     }
 
     /** 搜索结果的曲名是否与请求曲名一致（一致或为同曲变体） */
     private fun titleMatches(obj: JSONObject, title: String): Boolean =
-        LyricsTitleMatch.isAcceptable(obj.optString("trackName"), title)
+        LyricsTitleMatch.isAcceptable(obj.optNonNullString("trackName").orEmpty(), title)
 
     private fun pickFrom(obj: JSONObject?, durationMs: Long): String? {
         if (obj == null) return null
-        obj.optLyrics("syncedLyrics")?.let { return it }
-        obj.optLyrics("plainLyrics")?.let { return plainToLrc(it, durationMs) }
+        obj.optNonNullString("syncedLyrics")?.let { return it }
+        obj.optNonNullString("plainLyrics")?.let { return plainToLrc(it, durationMs) }
         return null
     }
 
-    /**
-     * 取非空字符串字段。
-     *
-     * P1-1（第二轮复审）：Android 框架 `org.json`（API 26–34 行为一致，已用
-     * android-all 字节码实证）的 `JSONObject.optString` 对**显式 JSON null** 返回
-     * 字面量字符串 `"null"` 而非空串：`JSONObject.NULL.toString()` = "null" →
-     * `JSON.toString` = `String.valueOf(...)` → `optString` 的 `result != null` 判定
-     * 使其通过。LRCLIB 对缺失字段正是返回 `"plainLyrics":null`（键显式为 null），
-     * 因此裸 `takeIf { it.isNotBlank() }` 会把四个字母 "null" 当成歌词返回，
-     * 导致歌词被写进 .lrc 文件、界面提示「已保存」却永远不显示。
-     * 同仓 [ItunesMetadataProvider] 早已用 `!= "null"` 防御，这里保持一致。
-     */
-    private fun JSONObject.optLyrics(name: String): String? =
-        optString(name).takeIf { it.isNotBlank() && it != "null" }
+    // 字符串字段的空值口径统一到 JsonOpt.optNonNullString（P1-2），
+    // 原先本类私有的 optLyrics 扩展已删除，避免三个渠道各写一份防护。
 
     private fun buildGetUrl(title: String, artist: String): String = buildString {
         append(NetworkConfig.LRCLIB_GET_URL)
