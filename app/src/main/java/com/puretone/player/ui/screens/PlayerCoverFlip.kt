@@ -1,5 +1,6 @@
 package com.puretone.player.ui.screens
 
+import com.puretone.player.ui.components.ControlIconSizes
 import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
 import android.animation.ValueAnimator
@@ -448,16 +449,16 @@ internal fun LyricsFace(
                 icon = Icons.Rounded.RemoveCircleOutline,
                 contentDescription = stringResource(R.string.pt_player_023),
                 onClick = { onFontSize((fontSizeSp - 2).coerceAtLeast(12)) },
-                buttonSize = 48.dp,
-                iconSize = 18.dp
+                buttonSize = ControlIconSizes.Button,
+                iconSize = ControlIconSizes.IconTiny
             )
             Text(stringResource(R.string.pt_player_015), style = MaterialTheme.typography.titleMedium)
             ControlIconButton(
                 icon = Icons.Rounded.AddCircleOutline,
                 contentDescription = stringResource(R.string.pt_player_024),
                 onClick = { onFontSize((fontSizeSp + 2).coerceAtMost(30)) },
-                buttonSize = 48.dp,
-                iconSize = 18.dp
+                buttonSize = ControlIconSizes.Button,
+                iconSize = ControlIconSizes.IconTiny
             )
         }
         if (lyrics == null || lyrics.lines.isEmpty()) {

@@ -166,11 +166,17 @@ internal class CastDeviceDiscovery(
     private suspend fun searchOnce(timeoutMs: Long): List<CastDevice> {
         val started = System.currentTimeMillis()
         val raw = withContext(Dispatchers.IO) { DLNACast.search(timeout = timeoutMs) }
+        // P2-3 第五轮：库通道的 LOCATION 不经 onDatagram（拿不到应答源），库自发
+        // 的描述 GET 也不经自有 SoapClient。这里在设备进入 lastDevices / UI /
+        // 投送链路之前补一道目标校验：明显畸形目标剔除，域名 / IPv6 / 非 URL
+        // 形状的 id 放行留痕，合法单播 IPv4 零变化。注意拦不住库内部那次请求。
+        val keep = LibraryDeviceTargetPolicy.screenAll(raw.map { it.id }, CastTargetDiagnostics::emit)
+        val accepted = raw.filterIndexed { index, _ -> keep[index] }
         val elapsed = System.currentTimeMillis() - started
-        val result = raw.map { CastDevice(it.id, it.name, it.address, it.isTV) }
+        val result = accepted.map { CastDevice(it.id, it.name, it.address, it.isTV) }
         CastNetworkLog.logSearch("ssdp", timeoutMs, result.size, elapsed)
         if (result.isNotEmpty()) {
-            lastDevices = raw
+            lastDevices = accepted
             lastDevicesAt = System.currentTimeMillis()
             recordKnown(result)
         }

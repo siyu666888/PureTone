@@ -20,6 +20,20 @@ val appVersionName = "1.9.6"
 val appVersionCode = 58
 
 /**
+ * 构建身份标签，写进 BuildConfig，由启动期 `cast-build variant=…` 落盘。
+ *
+ * 为什么需要：两枚不同的 APK 在「全部 ACCEPT、无异常」的正常路径下，投屏诊断可能
+ * 逐字相同（P2-3 的判定串只在 verdict≠ACCEPT 时落盘，服务器复用时 `start()` 不重跑），
+ * 导致真机报告无法反推装的是哪枚包。见
+ * `dist/v1.9.6_213812-215108判读_包身份订正与P2-3零误杀验收_2026-11-11.md`。
+ *
+ * 出包时用 `-PcastVariant=VERIFY-<时间戳>` 显式指定可读标签；未指定时自动带构建时刻，
+ * 保证任意两枚 APK 的诊断都不会同形。显式传参时值固定，同参数构建仍可 UP-TO-DATE。
+ */
+val castVariant: String = (findProperty("castVariant") as? String)?.takeIf { it.isNotBlank() }
+    ?: "dev-${appVersionName}-c${appVersionCode}-${System.currentTimeMillis()}"
+
+/**
  * 产物文件名包含完整版本号。
  * AGP 会以 archivesName 为基名，再拼接 ABI 与构建类型：
  *   PureTone-v1.0.0-arm64-v8a-release.apk
@@ -75,6 +89,8 @@ android {
         targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersionName
+        // 构建身份标签：诊断导出必有 `cast-build variant=…`，详见文件顶部 castVariant 注释
+        buildConfigField("String", "CAST_VARIANT", "\"$castVariant\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ksp {
             arg("room.incremental", "true")

@@ -8,6 +8,7 @@ import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.util.Log
+import com.puretone.player.BuildConfig
 import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
@@ -47,6 +48,20 @@ object CastNetworkLog {
     private const val MAX_LINES = 120
 
     private const val TRIM_THRESHOLD_BYTES = 48 * 1024
+
+    /**
+     * 构建身份行：只读常量，**不经过 [log]**，避免 JVM 单测里踩 Android Log stub。
+     *
+     * 只在启动期落一行是不够的：本文件有 [MAX_LINES] 行环形上限，跑几轮投屏后
+     * 启动行就会被裁掉，诊断报告重新变得无法反推装的是哪枚 APK。所以 [read]
+     * 还会用 [withIdentity] 保证导出时恒定带这一行——这是「永久消除同形」的关键。
+     */
+    val IDENTITY_LINE: String =
+        "cast-build variant=${BuildConfig.CAST_VARIANT} " +
+            "version=${BuildConfig.VERSION_NAME} code=${BuildConfig.VERSION_CODE} " +
+            "type=${BuildConfig.BUILD_TYPE}"
+
+    private const val IDENTITY_MARKER = "cast-build variant="
 
     @Volatile
     private var logFile: File? = null
@@ -107,10 +122,25 @@ object CastNetworkLog {
         }
     }
 
-    /** 读取已落盘的日志（诊断导出用） */
+    /**
+     * 保证导出的正文含且仅含一条构建身份行。
+     *
+     * 纯函数，便于 JVM 单测直接覆盖三种情形：空文件 / 已含身份行 / 启动行被 [trim] 裁掉。
+     * 已有身份行时原样返回，不重复注入、不改写任何投屏日志。
+     */
+    internal fun withIdentity(body: String): String {
+        if (body.lines().any { it.contains(IDENTITY_MARKER) }) return body
+        val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+        return "[$stamp] $IDENTITY_LINE\n$body"
+    }
+
+    /** 读取已落盘的日志（诊断导出用）；恒定带构建身份行，见 [withIdentity] */
     fun read(context: Context): String? {
         val target = logFile ?: File(context.filesDir, FILE_NAME)
-        return runCatching { if (target.isFile) target.readText() else null }.getOrNull()
+        return runCatching {
+            val body = if (target.isFile) target.readText() else ""
+            withIdentity(body)
+        }.getOrNull()
     }
 
     private fun trim(file: File) {

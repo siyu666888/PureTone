@@ -68,12 +68,32 @@ internal object ControlUrls {
     /**
      * 把 `raw` 解析成绝对地址。
      *
-     * @return 绝对地址；[raw] 为空或 [locationUrl] 不含授权部分时返回 null
+     * 绝对写法（`http(s)://…`）先经 [ControlUrlHostPolicy] 校验目标 host 与
+     * [locationUrl] 是否指向同一台设备；指向另一 IP（或畸形 URL）时返回 null。
+     * **相对写法分支一字未改**——真机「多屏互动」的 `_urn:` / `../` 全靠它。
+     *
+     * @param diagnostic 可选的诊断输出，仅生产调用侧传 `CastNetworkLog::log`，
+     *   只记 `REJECT` / `UNVERIFIED`。纯函数与 JVM 单测不传：[CastNetworkLog]
+     *   依赖 `android.util.Log`，在单测里触发会因 stub 抛异常。
+     * @return 绝对地址；[raw] 为空、[locationUrl] 不含授权部分、或目标被拒时返回 null
      */
-    fun join(locationUrl: String, raw: String): String? {
+    fun join(
+        locationUrl: String,
+        raw: String,
+        diagnostic: ((String) -> Unit)? = null
+    ): String? {
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return null
-        if (trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true)) return trimmed
+        if (trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true)) {
+            val decision = ControlUrlHostPolicy.verify(locationUrl, trimmed)
+            if (decision.verdict != ControlUrlHostPolicy.Verdict.ACCEPT) {
+                diagnostic?.invoke(
+                    "control-url ${decision.verdict.name.lowercase()} " +
+                        "host=${decision.host ?: "?"} reason=${decision.reason} location=$locationUrl"
+                )
+            }
+            return if (decision.verdict == ControlUrlHostPolicy.Verdict.REJECT) null else trimmed
+        }
         val authority = authorityOf(locationUrl) ?: return null
         val path = if (trimmed.startsWith("/")) {
             normalize(trimmed)

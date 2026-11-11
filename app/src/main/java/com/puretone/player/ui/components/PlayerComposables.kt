@@ -190,7 +190,7 @@ fun PlayPauseButton(
     isPlaying: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    size: Dp = 84.dp
+    size: Dp = ControlIconSizes.PlayPause
 ) {
     val scheme = MaterialTheme.colorScheme
     val interactionSource = remember { MutableInteractionSource() }
@@ -259,8 +259,8 @@ fun ControlIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     active: Boolean = false,
-    buttonSize: Dp = 48.dp,
-    iconSize: Dp = 28.dp,
+    buttonSize: Dp = ControlIconSizes.Button,
+    iconSize: Dp = ControlIconSizes.IconStandard,
     showActiveDot: Boolean = false,
     activeTint: Color = MaterialTheme.colorScheme.primary,
     inactiveTint: Color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -340,8 +340,8 @@ fun PlayModeIconButton(
     mode: PlayMode,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    buttonSize: Dp = 48.dp,
-    iconSize: Dp = 26.dp
+    buttonSize: Dp = ControlIconSizes.Button,
+    iconSize: Dp = ControlIconSizes.IconCompact
 ) {
     val (icon, desc) = when (mode) {
         PlayMode.SEQUENTIAL -> ControlIcons.RepeatAll to stringResource(R.string.pt_ui_005)
@@ -365,8 +365,8 @@ fun FavoriteButton(
     favorite: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    buttonSize: Dp = 48.dp,
-    iconSize: Dp = 26.dp
+    buttonSize: Dp = ControlIconSizes.Button,
+    iconSize: Dp = ControlIconSizes.IconCompact
 ) {
     ControlIconButton(
         icon = if (favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,

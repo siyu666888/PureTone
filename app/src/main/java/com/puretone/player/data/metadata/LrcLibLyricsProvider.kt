@@ -5,11 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
 import java.net.URLEncoder
-import java.net.URL
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -131,44 +127,12 @@ class LrcLibLyricsProvider @Inject constructor() : LyricsProvider {
         }
     }
 
-    private fun getJson(url: String): JSONObject? {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = NetworkConfig.CONNECT_TIMEOUT_MS
-            readTimeout = NetworkConfig.READ_TIMEOUT_MS
-            // LRCLIB 建议携带 UA
-            setRequestProperty("User-Agent", NetworkConfig.USER_AGENT)
-        }
-        return try {
-            val code = connection.responseCode
-            if (code !in 200..299) return null
-            val body = BufferedReader(InputStreamReader(connection.inputStream, "UTF-8")).use { it.readText() }
-            runCatching { JSONObject(body) }.getOrNull()
-        } catch (_: Exception) {
-            null
-        } finally {
-            connection.disconnect()
-        }
-    }
+    // LRCLIB 建议携带 UA；HTTP 样板统一走 HttpUtil（P3-1）
+    private fun getJson(url: String): JSONObject? =
+        HttpUtil.getText(url, NetworkConfig.USER_AGENT)?.let { runCatching { JSONObject(it) }.getOrNull() }
 
-    private fun getJsonArray(url: String): JSONArray? {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = NetworkConfig.CONNECT_TIMEOUT_MS
-            readTimeout = NetworkConfig.READ_TIMEOUT_MS
-            setRequestProperty("User-Agent", NetworkConfig.USER_AGENT)
-        }
-        return try {
-            val code = connection.responseCode
-            if (code !in 200..299) return null
-            val body = BufferedReader(InputStreamReader(connection.inputStream, "UTF-8")).use { it.readText() }
-            runCatching { JSONArray(body) }.getOrNull()
-        } catch (_: Exception) {
-            null
-        } finally {
-            connection.disconnect()
-        }
-    }
+    private fun getJsonArray(url: String): JSONArray? =
+        HttpUtil.getText(url, NetworkConfig.USER_AGENT)?.let { runCatching { JSONArray(it) }.getOrNull() }
 
     /** 纯文本歌词按歌曲时长均排为伪 LRC（无同步时间轴时的兜底，保证高亮可用） */
     private fun plainToLrc(plain: String, durationMs: Long): String {

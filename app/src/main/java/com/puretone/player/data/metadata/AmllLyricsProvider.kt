@@ -3,10 +3,6 @@ package com.puretone.player.data.metadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -165,24 +161,8 @@ class AmllLyricsProvider @Inject constructor() {
         return score
     }
 
-    /** 简单的文本 GET；失败返回 null */
-    private fun getText(url: String): String? {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = NetworkConfig.CONNECT_TIMEOUT_MS
-            readTimeout = NetworkConfig.READ_TIMEOUT_MS
-            setRequestProperty("User-Agent", NetworkConfig.USER_AGENT)
-        }
-        return try {
-            val code = connection.responseCode
-            if (code !in 200..299) return null
-            BufferedReader(InputStreamReader(connection.inputStream, "UTF-8")).use { it.readText() }
-        } catch (_: Exception) {
-            null
-        } finally {
-            connection.disconnect()
-        }
-    }
+    /** 简单的文本 GET；失败返回 null（HTTP 样板统一走 [HttpUtil]，P3-1） */
+    private fun getText(url: String): String? = HttpUtil.getText(url, NetworkConfig.USER_AGENT)
 
     companion object {
         /** 搜索返回条数上限：够用且不至于拉太多 */

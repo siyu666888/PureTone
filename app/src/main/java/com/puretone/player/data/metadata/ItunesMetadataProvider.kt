@@ -3,11 +3,7 @@ package com.puretone.player.data.metadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
 import java.net.URLEncoder
-import java.net.URL
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,21 +30,10 @@ class ItunesMetadataProvider @Inject constructor() : SongMetadataProvider {
                 append("&term=")
                 append(URLEncoder.encode(term.trim(), "UTF-8"))
             }
-            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = NetworkConfig.CONNECT_TIMEOUT_MS
-                readTimeout = NetworkConfig.READ_TIMEOUT_MS
-            }
-            try {
-                val code = connection.responseCode
-                if (code !in 200..299) return@withContext emptyList()
-                val body = BufferedReader(InputStreamReader(connection.inputStream, "UTF-8")).use { it.readText() }
-                parse(body)
-            } catch (_: Exception) {
-                emptyList()
-            } finally {
-                connection.disconnect()
-            }
+            // HTTP 样板统一走 HttpUtil（P3-1）；iTunes 原本不设 UA，故不传 userAgent
+            val body = HttpUtil.getText(url) ?: return@withContext emptyList()
+            // 解析异常与抽取前一样被吞掉，返回空列表
+            runCatching { parse(body) }.getOrDefault(emptyList())
         }
 
     private fun parse(body: String): List<MetadataCandidate> {

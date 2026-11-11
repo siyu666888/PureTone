@@ -1,5 +1,6 @@
 package com.puretone.player.ui.screens
 
+import com.puretone.player.ui.components.ControlIconSizes
 import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.background
@@ -308,8 +309,8 @@ internal fun CastTransportRow(
         CastRoundButton(
             icon = ControlIcons.SkipPrevious,
             description = stringResource(R.string.pt_player_016),
-            size = 56.dp,
-            iconSize = 30.dp,
+            size = ControlIconSizes.ButtonLarge,
+            iconSize = ControlIconSizes.IconRemote,
             containerColor = sideBackground,
             iconTint = sideTint,
             enabled = enabled,
@@ -318,8 +319,8 @@ internal fun CastTransportRow(
         CastRoundButton(
             icon = if (isPlaying) ControlIcons.Pause else ControlIcons.Play,
             description = stringResource(R.string.pt_player_022),
-            size = 72.dp,
-            iconSize = 36.dp,
+            size = ControlIconSizes.ButtonHero,
+            iconSize = ControlIconSizes.IconRemoteHero,
             containerColor = mainBackground,
             iconTint = mainTint,
             enabled = enabled,
@@ -328,8 +329,8 @@ internal fun CastTransportRow(
         CastRoundButton(
             icon = ControlIcons.SkipNext,
             description = stringResource(R.string.pt_player_017),
-            size = 56.dp,
-            iconSize = 30.dp,
+            size = ControlIconSizes.ButtonLarge,
+            iconSize = ControlIconSizes.IconRemote,
             containerColor = sideBackground,
             iconTint = sideTint,
             enabled = enabled,

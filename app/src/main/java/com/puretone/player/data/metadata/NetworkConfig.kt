@@ -25,6 +25,15 @@ object NetworkConfig {
     /** User-Agent：便于服务端识别来源，也便于运营方在异常时联系（LRCLIB 明确要求） */
     const val USER_AGENT: String = "PureTone (https://github.com/puretone)"
 
+    /**
+     * 响应体上限（字节）：与投屏通道 `SoapClient.MAX_BODY_BYTES` 同为 256 KiB。
+     *
+     * 刻意不直接引用 `SoapClient` 的常量：那会把 `data/metadata` 反向挂到 `playback/cast`，
+     * 让歌词渠道依赖投屏实现。两处口径在各自 KDoc 里互相注明，改一处时须同步另一处。
+     * 正常歌词 / iTunes JSON 远小于该值，仅用于拦住异常服务端把内存吃满。
+     */
+    const val MAX_RESPONSE_BYTES: Int = 256 * 1024
+
     /** iTunes Search API 根地址 */
     const val ITUNES_SEARCH_BASE: String = "https://itunes.apple.com/search"
 

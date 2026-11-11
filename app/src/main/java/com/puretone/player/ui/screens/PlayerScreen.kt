@@ -1,5 +1,6 @@
 package com.puretone.player.ui.screens
 
+import com.puretone.player.ui.components.ControlIconSizes
 import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
 import android.net.Uri
@@ -251,8 +252,8 @@ fun PlayerScreen(
                     icon = Icons.Outlined.Equalizer,
                     contentDescription = stringResource(R.string.pt_player_013),
                     onClick = { navController.navigate(Routes.EQ) },
-                    buttonSize = 48.dp,
-                    iconSize = 22.dp
+                    buttonSize = ControlIconSizes.Button,
+                    iconSize = ControlIconSizes.IconSmall
                 )
                 // P2-4：歌词入口原为「点封面翻转」的隐藏手势，新用户很难发现。
                 // 补一个可见切换按钮（与封面翻转共享翻转态），保留点按翻转为快捷方式。
@@ -284,8 +285,8 @@ fun PlayerScreen(
                 PlayModeIconButton(
                     mode = playMode,
                     onClick = vm::cyclePlayMode,
-                    buttonSize = 48.dp,
-                    iconSize = 26.dp
+                    buttonSize = ControlIconSizes.Button,
+                    iconSize = ControlIconSizes.IconCompact
                 )
 
                 Row(
@@ -297,16 +298,16 @@ fun PlayerScreen(
                         icon = ControlIcons.SkipPrevious,
                         contentDescription = stringResource(R.string.pt_player_016),
                         onClick = vm::prev,
-                        buttonSize = 56.dp,
-                        iconSize = 40.dp
+                        buttonSize = ControlIconSizes.ButtonLarge,
+                        iconSize = ControlIconSizes.IconLarge
                     )
                     PlayPauseButton(isPlaying = state.isPlaying, onClick = vm::togglePlay)
                     ControlIconButton(
                         icon = ControlIcons.SkipNext,
                         contentDescription = stringResource(R.string.pt_player_017),
                         onClick = vm::next,
-                        buttonSize = 56.dp,
-                        iconSize = 40.dp
+                        buttonSize = ControlIconSizes.ButtonLarge,
+                        iconSize = ControlIconSizes.IconLarge
                     )
                 }
 
@@ -314,8 +315,8 @@ fun PlayerScreen(
                     icon = ControlIcons.Queue,
                     contentDescription = stringResource(R.string.pt_player_018),
                     onClick = { showQueue = true },
-                    buttonSize = 48.dp,
-                    iconSize = 28.dp
+                    buttonSize = ControlIconSizes.Button,
+                    iconSize = ControlIconSizes.IconStandard
                 )
             }
         }
@@ -406,22 +407,22 @@ fun PlayerScreen(
                         icon = ControlIcons.SkipPrevious,
                         contentDescription = stringResource(R.string.pt_player_016),
                         onClick = vm::prev,
-                        buttonSize = 56.dp,
-                        iconSize = 40.dp
+                        buttonSize = ControlIconSizes.ButtonLarge,
+                        iconSize = ControlIconSizes.IconLarge
                     )
                     ControlIconButton(
                         icon = if (state.isPlaying) ControlIcons.Pause else ControlIcons.Play,
                         contentDescription = stringResource(R.string.pt_player_022),
                         onClick = vm::togglePlay,
-                        buttonSize = 56.dp,
-                        iconSize = 40.dp
+                        buttonSize = ControlIconSizes.ButtonLarge,
+                        iconSize = ControlIconSizes.IconLarge
                     )
                     ControlIconButton(
                         icon = ControlIcons.SkipNext,
                         contentDescription = stringResource(R.string.pt_player_017),
                         onClick = vm::next,
-                        buttonSize = 56.dp,
-                        iconSize = 40.dp
+                        buttonSize = ControlIconSizes.ButtonLarge,
+                        iconSize = ControlIconSizes.IconLarge
                     )
                 }
             }

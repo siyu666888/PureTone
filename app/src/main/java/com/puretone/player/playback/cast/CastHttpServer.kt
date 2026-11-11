@@ -6,10 +6,10 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -31,12 +31,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * ## 安全边界
  *
  * 只按 **token** 发文件，绝不按路径取：请求 `/file/<token>` 命中注册表才发，
- * 其余一律 404。端口由系统分配（`ServerSocket(0)`），局域网内没有可枚举的目录结构。
+ * 其余一律 404。端口由系统分配，局域网内没有可枚举的目录结构。
+ *
+ * P2-1 起监听**优先绑定到该 Wi-Fi IPv4 本身**（而不是 `0.0.0.0`），从网络层
+ * 拒绝热点/VPN 等其它网卡进来的连接；绑定不成功则回退 `0.0.0.0`，见 [start]。
  */
 internal class CastHttpServer {
-
-    /** 已登记的可投送文件 */
-    private data class Entry(val file: File, val mimeType: String)
 
     /** 一次 GET 的实际供流结果，只用于诊断，不参与响应构造 */
     private data class CopyResult(val written: Long, val costMs: Long, val error: String?)
@@ -53,9 +53,14 @@ internal class CastHttpServer {
         data object Unsatisfiable : RangeSpec
     }
 
-    private val entries = ConcurrentHashMap<String, Entry>()
+    /** token 注册表：自带 30 分钟沉寂淘汰，见 [CastEntryRegistry]（P2-1） */
+    private val registry = CastEntryRegistry()
     private var server: ServerSocket? = null
     private var acceptor: Thread? = null
+
+    /** 本次监听实际绑定的 Wi-Fi IPv4；null = 回退到 `0.0.0.0`（旧行为） */
+    @Volatile
+    private var boundHost: String? = null
 
     @Volatile
     private var running = false
@@ -71,7 +76,7 @@ internal class CastHttpServer {
     private val loggedRequests = AtomicInteger(0)
 
     /**
-     * 当前这一轮投送的 URL token。换曲后旧 URL 仍在 [entries] 里（电视可能还在拉旧流），
+     * 当前这一轮投送的 URL token。换曲后旧 URL 仍在注册表里（电视可能还在拉旧流），
      * 只有命中当前 token 的请求才算「新曲被取流」，否则会把旧曲的重连误当成新曲已建立。
      */
     @Volatile
@@ -108,22 +113,57 @@ internal class CastHttpServer {
     /**
      * 启动监听（幂等）。
      *
-     * 绑定 `0.0.0.0` 由系统选端口——**对外公布的地址**才是关键，
-     * 见 [urlFor] 的 `host` 参数。
+     * [bindHost] 是调用方从 Wi-Fi 网卡取到的 IPv4（见 [urlFor] 的 `host` 参数）。
+     * 能判准且能绑定时就绑到该地址，从网络层拒绝其它网卡的连接；解析失败、
+     * `BindException`（该地址不属于本机）或任何异常都**回退** `ServerSocket(0)`
+     * 的旧行为——加固绝不能让投屏起不来。走哪个分支由
+     * `http-server started … bind=… reason=…` 落盘，真机可直接判读。
+     *
+     * 端口仍由系统分配；`bind=any` 时行为与改造前完全一致。
      */
-    fun start(): Boolean {
+    fun start(bindHost: String? = null): Boolean {
         if (running) return true
         return runCatching {
-            val socket = ServerSocket(0)
-            server = socket
+            val decision = CastServerBindPolicy.decide(bindHost)
+            val candidate = decision.bindHost
+            var reason = decision.reason
+            var bound: String? = null
+            var socket: ServerSocket? = null
+            if (decision.mode == CastServerBindPolicy.Mode.BIND_IPV4 && candidate != null) {
+                // 纯数字 IPv4 字面量不触发 DNS；仍包一层，异常一律回退。
+                val address = runCatching { InetAddress.getByName(candidate) }.getOrNull()
+                if (address == null) {
+                    reason = "resolve-failed"
+                } else {
+                    socket = runCatching { ServerSocket(0, DEFAULT_BACKLOG, address) }
+                        .onFailure { Log.w(TAG, "bind $candidate failed, fallback to any", it) }
+                        .getOrNull()
+                    if (socket == null) {
+                        reason = "bind-failed"
+                    } else {
+                        bound = candidate
+                    }
+                }
+            }
+            val actual = socket ?: ServerSocket(0)
+            boundHost = bound
+            server = actual
             running = true
-            acceptor = Thread({ acceptLoop(socket) }, "PureTone-CastHttp-accept").apply {
+            acceptor = Thread({ acceptLoop(actual) }, "PureTone-CastHttp-accept").apply {
                 isDaemon = true
                 start()
             }
-            CastNetworkLog.log("http-server started port=${socket.localPort}")
+            CastNetworkLog.log(
+                "http-server started port=${actual.localPort} bind=${bound ?: "any"} reason=$reason"
+            )
             true
         }.getOrElse {
+            // 端口已分配但后续步骤失败时必须关掉，避免监听端口泄漏。
+            runCatching { server?.close() }
+            server = null
+            acceptor = null
+            boundHost = null
+            running = false
             Log.w(TAG, "start failed", it)
             CastNetworkLog.log("http-server start_fail ${it.javaClass.simpleName} ${it.message}")
             false
@@ -136,9 +176,21 @@ internal class CastHttpServer {
      * @param host 手机在**局域网内**的 IPv4（由调用方从 Wi-Fi 网络取，不能用枚举顺序）
      */
     fun urlFor(file: File, mimeType: String, host: String): String? {
-        if (!running && !start()) return null
+        if (!running && !start(host)) return null
+        // 会话中途 Wi-Fi 换了 IP：socket 仍绑在旧地址上。重建会换端口，连带
+        // lastOwnCast 存的旧 URL 与电视旧连接一起失效，故只留痕、不擅自重建；
+        // 真机看到这行即可判断该重连一次投屏，而不是去查「电视没来取流」。
+        val bound = boundHost
+        if (bound != null && !bound.equals(host, ignoreCase = true)) {
+            CastNetworkLog.log("http-server host_changed bound=$bound urlHost=$host")
+        }
         val token = UUID.randomUUID().toString().replace("-", "")
-        entries[token] = Entry(file, mimeType)
+        // P2-1：登记新 token 时淘汰沉寂超过 30 分钟的旧条目，避免旧 URL 永久有效。
+        // 正在供流的旧 token 会因 serve() 命中而刷新时刻，不会被误删。
+        val evicted = registry.register(token, file, mimeType)
+        if (evicted.isNotEmpty()) {
+            CastNetworkLog.log("http-token-prune removed=${evicted.size} remaining=${registry.size()}")
+        }
         // 新一轮投送：旧 token 的取流不再算数，避免把「上一首的重连」当成本曲已建立
         activeToken = token
         lastFetchMs.set(0L)
@@ -156,7 +208,8 @@ internal class CastHttpServer {
         runCatching { server?.close() }
         server = null
         acceptor = null
-        entries.clear()
+        boundHost = null
+        registry.clear()
         loggedRequests.set(0)
         fetchTrace.reset()
         activeToken = null
@@ -216,7 +269,7 @@ internal class CastHttpServer {
             return
         }
         val token = path.substringBefore('?').removePrefix("/file/")
-        val entry = entries[token]
+        val entry = registry.find(token)
         if (entry == null) {
             logRequest(socket, path, rangeHeader, 404)
             respondText(socket, 404, "File Not Found")
@@ -255,7 +308,7 @@ internal class CastHttpServer {
     private fun sendFile(
         socket: Socket,
         method: String,
-        entry: Entry,
+        entry: CastEntryRegistry.Snapshot,
         start: Long,
         end: Long,
         spec: RangeSpec,
@@ -367,6 +420,9 @@ internal class CastHttpServer {
         private const val TAG = "CastHttpServer"
 
         private const val WORKER_COUNT = 3
+
+        /** 绑定具体 IP 时使用的 backlog（与 JDK `ServerSocket(port)` 的默认值一致） */
+        private const val DEFAULT_BACKLOG = 50
         private const val SOCKET_TIMEOUT_MS = 15_000
         private const val MAX_HEADERS = 32
         private const val MAX_LOGGED_REQUESTS = 8

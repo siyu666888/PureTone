@@ -20,6 +20,14 @@ import java.net.URL
  * 与库行为对齐的两点细节必须保留，否则会被电视判为非法请求：
  * - `Content-Type: text/xml; charset=utf-8`；
  * - `SOAPAction` 的值为**带双引号**的 `"命名空间#动作名"`。
+ *
+ * ## 目标校验（P2-3 第三处）
+ *
+ * [request] 在打开连接**之前**先过一遍 [SoapTargetPolicy]：明显畸形 / 环回 /
+ * 非 http(s) 的目标直接返回 `Result(-1, "blocked-target…")`，绝不发包。
+ * 合法单播 IPv4 与域名 / IPv6 一律放行，正常路径零行为变化。
+ * 诊断不写在本类里——[CastNetworkLog.log] 首行是 `Log.i`，而本类被 JVM 单测
+ * 直接调用；改由生产调用侧通过可选 `diagnostic` 回调注入。
  */
 internal object SoapClient {
 
@@ -47,17 +55,37 @@ internal object SoapClient {
     }
 
     /** GET 一份设备描述或其他静态资源 */
-    fun get(url: String): Result = request(url, soapAction = null, payload = null)
+    fun get(url: String, diagnostic: ((String) -> Unit)? = null): Result =
+        request(url, soapAction = null, payload = null, diagnostic = diagnostic)
 
     /**
      * 发一条 SOAP 动作。
      *
      * @param body 动作元素本身（不含 Envelope），由 [envelope] 包装
      */
-    fun post(url: String, soapAction: String, body: String): Result =
-        request(url, soapAction, envelope(body))
+    fun post(
+        url: String,
+        soapAction: String,
+        body: String,
+        diagnostic: ((String) -> Unit)? = null
+    ): Result = request(url, soapAction, envelope(body), diagnostic)
 
-    private fun request(url: String, soapAction: String?, payload: String?): Result {
+    private fun request(
+        url: String,
+        soapAction: String?,
+        payload: String?,
+        diagnostic: ((String) -> Unit)?
+    ): Result {
+        val decision = SoapTargetPolicy.verify(url)
+        if (decision.verdict != SoapTargetPolicy.Verdict.ACCEPT) {
+            diagnostic?.invoke(
+                "soap-target ${decision.verdict.name.lowercase()} " +
+                    "url=${snippet(url, 120)} host=${decision.host ?: "-"} reason=${decision.reason}"
+            )
+        }
+        if (decision.verdict == SoapTargetPolicy.Verdict.REJECT) {
+            return Result(-1, "blocked-target reason=${decision.reason}")
+        }
         var connection: HttpURLConnection? = null
         return try {
             connection = URL(url).openConnection() as HttpURLConnection

@@ -73,7 +73,7 @@ internal object CastProbe {
      */
     suspend fun inspect(locationUrl: String, deviceName: String): Report = withContext(Dispatchers.IO) {
         try {
-            val descResult = SoapClient.get(locationUrl)
+            val descResult = SoapClient.get(locationUrl, diagnostic = CastTargetDiagnostics::emit)
             if (!descResult.ok) {
                 CastNetworkLog.log("probe-desc http=${descResult.status} url=$locationUrl")
                 return@withContext Report(
@@ -130,7 +130,7 @@ internal object CastProbe {
             return
         }
         val body = "<u:GetTransportInfo xmlns:u=\"$AVT_NS\"><InstanceID>0</InstanceID></u:GetTransportInfo>"
-        val r = SoapClient.post(url, "$AVT_NS#GetTransportInfo", body)
+        val r = SoapClient.post(url, "$AVT_NS#GetTransportInfo", body, diagnostic = CastTargetDiagnostics::emit)
         CastNetworkLog.log("probe-avt http=${r.status} body=${SoapClient.snippet(r.body)}")
     }
 
@@ -146,7 +146,7 @@ internal object CastProbe {
             return
         }
         val body = "<u:GetProtocolInfo xmlns:u=\"$CMS_NS\"></u:GetProtocolInfo>"
-        val r = SoapClient.post(url, "$CMS_NS#GetProtocolInfo", body)
+        val r = SoapClient.post(url, "$CMS_NS#GetProtocolInfo", body, diagnostic = CastTargetDiagnostics::emit)
         val sink = sinkProtocols(r.body)
         CastNetworkLog.log("probe-sink http=${r.status} ${formatSupport(sink)}")
         if (sink.isEmpty() && r.ok) {
@@ -176,15 +176,15 @@ internal object CastProbe {
             return null
         }
         val body = "<u:GetVolume xmlns:u=\"$RC_NS\"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetVolume>"
-        val r = SoapClient.post(url, "$RC_NS#GetVolume", body)
+        val r = SoapClient.post(url, "$RC_NS#GetVolume", body, diagnostic = CastTargetDiagnostics::emit)
         val raw = SoapClient.xmlValue(r.body, "CurrentVolume")?.toIntOrNull()
         CastNetworkLog.log("probe-vol http=${r.status} current=${raw ?: "-"}")
-        val scpd = ControlUrls.join(locationUrl, svc.scpdUrl)
+        val scpd = ControlUrls.join(locationUrl, svc.scpdUrl, CastNetworkLog::log)
         val max = if (scpd == null) {
             CastNetworkLog.log("probe-vol scpd=无法解析 raw=${svc.scpdUrl}")
             DlnaTransport.DEFAULT_VOLUME_MAX
         } else {
-            val scpdResult = SoapClient.get(scpd)
+            val scpdResult = SoapClient.get(scpd, diagnostic = CastTargetDiagnostics::emit)
             // 与 DlnaTransport.deviceVolumeMax 一致：只有 HTTP 成功才采信 SCPD 量程，
             // 否则退回标准量程，避免同一个 raw 值被两条路径折算成两个百分比。
             val parsed = if (scpdResult.ok) {
@@ -210,7 +210,7 @@ internal object CastProbe {
         val host = ControlUrls.authorityOf(locationUrl) ?: return
         val guessed = "$host/AVTransport/control"
         val body = "<u:GetTransportInfo xmlns:u=\"$AVT_NS\"><InstanceID>0</InstanceID></u:GetTransportInfo>"
-        val r = SoapClient.post(guessed, "$AVT_NS#GetTransportInfo", body)
+        val r = SoapClient.post(guessed, "$AVT_NS#GetTransportInfo", body, diagnostic = CastTargetDiagnostics::emit)
         val real = desc.services.firstOrNull { it.serviceType.contains("AVTransport", true) }
             ?.let { resolveControlUrl(locationUrl, it.controlUrl) }
         CastNetworkLog.log(
@@ -252,7 +252,11 @@ internal object CastProbe {
      * `_urn:schemas-upnp-org:service:AVTransport_control` 这种相对写法，
      * JDK 会因「非法 scheme 首字符」直接抛异常（详见该类注释）。
      */
-    fun resolveControlUrl(locationUrl: String, raw: String): String? = ControlUrls.join(locationUrl, raw)
+    fun resolveControlUrl(
+        locationUrl: String,
+        raw: String,
+        diagnostic: ((String) -> Unit)? = null
+    ): String? = ControlUrls.join(locationUrl, raw, diagnostic)
 
     /** 服务类型标签：诊断里看全名太长，只取末尾的短名 */
     fun shortType(serviceType: String): String = when {

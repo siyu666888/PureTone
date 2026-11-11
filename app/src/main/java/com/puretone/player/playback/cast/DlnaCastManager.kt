@@ -235,6 +235,12 @@ class DlnaCastManager @Inject constructor(
     /** 初始化底层引擎（Application.onCreate 调用一次；可重复调用，库内部幂等替换） */
     fun init(context: Context) {
         CastNetworkLog.init(context.filesDir)
+        // 启动期落盘构建身份：cast_network.txt 里也能直接看出装的是哪枚包。
+        // 诊断导出另有 CastNetworkLog.withIdentity() 兜底，不受 120 行环形上限影响。
+        CastNetworkLog.log(CastNetworkLog.IDENTITY_LINE)
+        // P2-3：把目标校验诊断接到真实落盘通道。CastTargetDiagnostics 默认是 noop，
+        // 所以 JVM 单测里那些被直接调用的纯函数不会踩 Android Log stub。
+        CastTargetDiagnostics.install(CastNetworkLog::log)
         try {
             DLNACast.init(context.applicationContext)
             CastNetworkLog.log("DLNACast.init ok")

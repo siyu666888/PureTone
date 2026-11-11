@@ -165,22 +165,22 @@ fun MiniPlayer(
                     icon = ControlIcons.SkipPrevious,
                     contentDescription = stringResource(R.string.pt_ui_012),
                     onClick = onPrev,
-                    buttonSize = 48.dp,
-                    iconSize = 24.dp
+                    buttonSize = ControlIconSizes.Button,
+                    iconSize = ControlIconSizes.IconMini
                 )
                 ControlIconButton(
                     icon = if (state.isPlaying) ControlIcons.Pause else ControlIcons.Play,
                     contentDescription = stringResource(R.string.pt_ui_013),
                     onClick = onToggle,
-                    buttonSize = 48.dp,
-                    iconSize = 24.dp
+                    buttonSize = ControlIconSizes.Button,
+                    iconSize = ControlIconSizes.IconMini
                 )
                 ControlIconButton(
                     icon = ControlIcons.SkipNext,
                     contentDescription = stringResource(R.string.pt_ui_014),
                     onClick = onNext,
-                    buttonSize = 48.dp,
-                    iconSize = 24.dp
+                    buttonSize = ControlIconSizes.Button,
+                    iconSize = ControlIconSizes.IconMini
                 )
             }
 

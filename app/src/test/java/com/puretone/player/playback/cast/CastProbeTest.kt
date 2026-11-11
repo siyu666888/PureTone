@@ -49,9 +49,22 @@ class CastProbeTest {
     }
 
     @Test
-    fun `已是绝对地址的 controlURL 原样返回`() {
+    fun `已是绝对地址的 controlURL 指向同一台设备时原样返回`() {
         val abs = "http://192.168.101.20:9000/AVTransport/ctrl"
-        assertEquals(abs, CastProbe.resolveControlUrl("http://10.0.0.1/desc.xml", abs))
+        assertEquals(
+            abs,
+            CastProbe.resolveControlUrl("http://192.168.101.20:8080/desc.xml", abs)
+        )
+    }
+
+    @Test
+    fun `跨设备绝对 controlURL 经转发层同样被拒绝`() {
+        assertNull(
+            CastProbe.resolveControlUrl(
+                "http://10.0.0.1/desc.xml",
+                "http://192.168.101.20:9000/ctrl"
+            )
+        )
     }
 
     @Test

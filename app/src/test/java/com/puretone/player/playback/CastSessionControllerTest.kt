@@ -109,6 +109,14 @@ class CastSessionControllerTest {
         /** startCast 成功后会先 delay(600) 等渲染器进入 PLAYING，用信号避免测试依赖虚拟时钟 */
         val seekSignal = CompletableDeferred<Long>()
 
+        /**
+         * 生产侧是「先 seek()、返回后才 noteSeekOptimistic()」。
+         * 旧实现只等 [seekSignal]，await 恢复时乐观窗口可能尚未写入 timeline，
+         * 造成偶发 AssertionError（并非产品缺陷）。补一个完成信号，断言不放宽，
+         * 只是等到完整动作结束。
+         */
+        val optimisticSignal = CompletableDeferred<Unit>()
+
         override fun selectDevice(device: CastDevice) {
             timeline += "select:${device.address}"
         }
@@ -126,6 +134,7 @@ class CastSessionControllerTest {
 
         override fun noteSeekOptimistic() {
             timeline += "optimistic"
+            optimisticSignal.complete(Unit)
         }
 
         override fun markAutoAdvanceNext() {
@@ -199,6 +208,8 @@ class CastSessionControllerTest {
 
         harness.subject.startCast(device(), song())
         val seeked = withTimeout(3_000L) { harness.castPort.seekSignal.await() }
+        // 生产顺序是 seek() 返回后才 noteSeekOptimistic()；等这一步完成再查 timeline
+        withTimeout(3_000L) { harness.castPort.optimisticSignal.await() }
 
         assertEquals(30_000L, seeked)
         assertTrue("timeline=${harness.timeline}", harness.timeline.contains("optimistic"))

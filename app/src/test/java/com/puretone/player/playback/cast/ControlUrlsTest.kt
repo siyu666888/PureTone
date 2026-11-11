@@ -49,9 +49,42 @@ class ControlUrlsTest {
     }
 
     @Test
-    fun `已是绝对地址原样返回`() {
+    fun `绝对地址指向同一台设备时原样返回（端口不参与比较）`() {
         val abs = "http://192.168.1.9:9000/AVTransport/ctrl"
-        assertEquals(abs, ControlUrls.join("http://10.0.0.1/desc.xml", abs))
+        assertEquals(abs, ControlUrls.join("http://192.168.1.9:8200/desc.xml", abs))
+    }
+
+    @Test
+    fun `绝对地址指向另一台设备时被拒绝并落诊断`() {
+        val lines = mutableListOf<String>()
+        assertEquals(
+            null,
+            ControlUrls.join(
+                "http://10.0.0.1/desc.xml",
+                "http://192.168.1.9:9000/AVTransport/ctrl"
+            ) { lines.add(it) }
+        )
+        assertEquals(1, lines.size)
+        assertTrue(lines[0].startsWith("control-url reject "))
+        assertTrue(lines[0].contains("reason=host-mismatch"))
+    }
+
+    @Test
+    fun `域名形式的控制地址放行但留痕`() {
+        val lines = mutableListOf<String>()
+        val abs = "http://MyTV.local:9000/ctrl"
+        assertEquals(abs, ControlUrls.join("http://10.0.0.1/desc.xml", abs) { lines.add(it) })
+        assertTrue(lines.single().startsWith("control-url unverified "))
+    }
+
+    @Test
+    fun `相对写法完全不触发策略与诊断`() {
+        val lines = mutableListOf<String>()
+        assertEquals(
+            "http://10.0.0.1/control/avt",
+            ControlUrls.join("http://10.0.0.1/desc.xml", "/control/avt") { lines.add(it) }
+        )
+        assertTrue(lines.isEmpty())
     }
 
     @Test

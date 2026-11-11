@@ -208,6 +208,20 @@ internal object SsdpDiscovery {
         val text = String(packet.data, 0, packet.length, Charsets.UTF_8)
         val located = parseResponse(text) ?: return
         if (found.containsKey(located.location)) return
+        // P2-3：LOCATION 的 host 必须与应答源一致，否则同一 Wi-Fi 里的设备能借一条
+        // SSDP 应答把 resolveDevices 的 SoapClient.get 引向任意内网 / 公网地址（SSRF）。
+        // 判定放在收包循环里（唯一能拿到 packet.address 的位置），被拒的应答不进 found，
+        // 也不会占用 MAX_DESCRIPTIONS 名额；既有 ownssdp rx 行格式一字未改。
+        val sourceHost = packet.address?.hostAddress
+        val decision = SsdpSourcePolicy.verify(located.location, sourceHost)
+        if (decision.verdict != SsdpSourcePolicy.Verdict.ACCEPT) {
+            val action = if (decision.verdict == SsdpSourcePolicy.Verdict.REJECT) "reject" else "unverified"
+            CastNetworkLog.log(
+                "ownssdp-source $action from=${sourceHost ?: "-"} host=${decision.host ?: "-"} " +
+                    "reason=${decision.reason} location=${located.location.take(120)}"
+            )
+            if (decision.verdict == SsdpSourcePolicy.Verdict.REJECT) return
+        }
         found[located.location] = located
         CastNetworkLog.log(
             "ownssdp rx from=${(packet.address as? Inet4Address)?.hostAddress} " +
@@ -284,7 +298,7 @@ internal object SsdpDiscovery {
         val outcomes = found.take(MAX_DESCRIPTIONS).map { located ->
             async<Pair<CastDevice?, String?>> {
                 val host = hostOf(located.location).orEmpty()
-                val body = runCatching { SoapClient.get(located.location) }.getOrNull()
+                val body = runCatching { SoapClient.get(located.location, diagnostic = CastTargetDiagnostics::emit) }.getOrNull()
                     ?.takeIf { it.ok }?.body
                 val parsed = body?.let { CastProbe.parseDescription(it) }
                 val verdict = CastDeviceFilter.evaluate(

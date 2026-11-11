@@ -44,7 +44,7 @@ internal class DlnaTransport(private val locationUrl: String, private val device
      */
     suspend fun endpoints(): Endpoints? = withContext(Dispatchers.IO) {
         cached?.let { return@withContext it }
-        val desc = SoapClient.get(locationUrl)
+        val desc = SoapClient.get(locationUrl, diagnostic = CastTargetDiagnostics::emit)
         if (!desc.ok) {
             CastNetworkLog.log("own-desc http=${desc.status} url=$locationUrl")
             return@withContext null
@@ -61,13 +61,13 @@ internal class DlnaTransport(private val locationUrl: String, private val device
     private fun resolve(desc: CastProbe.Description, keyword: String): String? {
         val raw = desc.services.firstOrNull { it.serviceType.contains(keyword, ignoreCase = true) }?.controlUrl
             ?: return null
-        return ControlUrls.join(locationUrl, raw)
+        return ControlUrls.join(locationUrl, raw, CastNetworkLog::log)
     }
 
     private fun resolveScpd(desc: CastProbe.Description, keyword: String): String? {
         val raw = desc.services.firstOrNull { it.serviceType.contains(keyword, ignoreCase = true) }?.scpdUrl
         if (raw.isNullOrBlank()) return null
-        return ControlUrls.join(locationUrl, raw)
+        return ControlUrls.join(locationUrl, raw, CastNetworkLog::log)
     }
 
     /**
@@ -87,7 +87,7 @@ internal class DlnaTransport(private val locationUrl: String, private val device
                     "<CurrentURI>${SoapClient.escape(mediaUrl)}</CurrentURI>" +
                     "<CurrentURIMetaData>${SoapClient.escape(didl)}</CurrentURIMetaData>" +
                     "</u:SetAVTransportURI>"
-                val result = SoapClient.post(url, "$AVT_NS#SetAVTransportURI", body)
+                val result = SoapClient.post(url, "$AVT_NS#SetAVTransportURI", body, diagnostic = CastTargetDiagnostics::emit)
                 CastNetworkLog.log(
                     "own-seturi idx=${index + 1}/${variants.size} pi=${protocolInfo.take(24)} " +
                         "http=${result.status} fault=${if (result.ok) "-" else SoapClient.snippet(result.body)}"
@@ -110,7 +110,7 @@ internal class DlnaTransport(private val locationUrl: String, private val device
             return@withContext false
         }
         val body = "<u:$name xmlns:u=\"$AVT_NS\"><InstanceID>0</InstanceID>$extra</u:$name>"
-        val result = SoapClient.post(url, "$AVT_NS#$name", body)
+        val result = SoapClient.post(url, "$AVT_NS#$name", body, diagnostic = CastTargetDiagnostics::emit)
         // 成功也落盘：过去只有失败才写日志，诊断报告里看不到手动 Play/Pause 是否下发，
         // 只能靠 own-state 反推（20261107_165555 的盲区）。命令不频繁，不会刷爆日志。
         if (result.ok) {
@@ -125,7 +125,7 @@ internal class DlnaTransport(private val locationUrl: String, private val device
     suspend fun transportState(): String? = withContext(Dispatchers.IO) {
         val url = endpoints()?.avTransport ?: return@withContext null
         val body = "<u:GetTransportInfo xmlns:u=\"$AVT_NS\"><InstanceID>0</InstanceID></u:GetTransportInfo>"
-        val result = SoapClient.post(url, "$AVT_NS#GetTransportInfo", body)
+        val result = SoapClient.post(url, "$AVT_NS#GetTransportInfo", body, diagnostic = CastTargetDiagnostics::emit)
         if (!result.ok) return@withContext null
         SoapClient.xmlValue(result.body, "CurrentTransportState")
     }
@@ -134,7 +134,7 @@ internal class DlnaTransport(private val locationUrl: String, private val device
     suspend fun position(): Pair<Long, Long>? = withContext(Dispatchers.IO) {
         val url = endpoints()?.avTransport ?: return@withContext null
         val body = "<u:GetPositionInfo xmlns:u=\"$AVT_NS\"><InstanceID>0</InstanceID></u:GetPositionInfo>"
-        val result = SoapClient.post(url, "$AVT_NS#GetPositionInfo", body)
+        val result = SoapClient.post(url, "$AVT_NS#GetPositionInfo", body, diagnostic = CastTargetDiagnostics::emit)
         if (!result.ok) return@withContext null
         val current = parseTime(SoapClient.xmlValue(result.body, "RelTime") ?: "")
         val total = parseTime(SoapClient.xmlValue(result.body, "TrackDuration") ?: "")
@@ -156,7 +156,7 @@ internal class DlnaTransport(private val locationUrl: String, private val device
         val scaled = toDeviceVolume(volume, max)
         val body = "<u:SetVolume xmlns:u=\"$RC_NS\"><InstanceID>0</InstanceID>" +
             "<Channel>Master</Channel><DesiredVolume>$scaled</DesiredVolume></u:SetVolume>"
-        val result = SoapClient.post(url, "$RC_NS#SetVolume", body)
+        val result = SoapClient.post(url, "$RC_NS#SetVolume", body, diagnostic = CastTargetDiagnostics::emit)
         CastNetworkLog.log(
             "own-vol-set $volume% -> $scaled/$max http=${result.status} " +
                 "fault=${if (result.ok) "-" else SoapClient.snippet(result.body)}"
@@ -174,7 +174,7 @@ internal class DlnaTransport(private val locationUrl: String, private val device
         val url = endpoints()?.renderingControl ?: return@withContext null
         val max = deviceVolumeMax()
         val body = "<u:GetVolume xmlns:u=\"$RC_NS\"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetVolume>"
-        val result = SoapClient.post(url, "$RC_NS#GetVolume", body)
+        val result = SoapClient.post(url, "$RC_NS#GetVolume", body, diagnostic = CastTargetDiagnostics::emit)
         val raw = SoapClient.xmlValue(result.body, "CurrentVolume")
         CastNetworkLog.log(
             "own-vol-get http=${result.status} current=$raw/${max} body=${SoapClient.snippet(result.body, 120)}"
@@ -196,7 +196,7 @@ internal class DlnaTransport(private val locationUrl: String, private val device
             volumeMax = DEFAULT_VOLUME_MAX
             return DEFAULT_VOLUME_MAX
         }
-        val result = SoapClient.get(scpd)
+        val result = SoapClient.get(scpd, diagnostic = CastTargetDiagnostics::emit)
         val max = if (result.ok) parseVolumeMax(result.body) else null
         CastNetworkLog.log(
             "own-vol scpd http=${result.status} 音量上限=${max ?: "未声明（按 $DEFAULT_VOLUME_MAX 处理）"}"
