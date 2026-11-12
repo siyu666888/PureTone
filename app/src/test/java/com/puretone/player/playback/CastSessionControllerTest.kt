@@ -2,6 +2,7 @@ package com.puretone.player.playback
 
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.playback.cast.CastDevice
+import com.puretone.player.playback.cast.CastQueuePolicy
 import com.puretone.player.playback.cast.CastResult
 import com.puretone.player.playback.cast.CastState
 import kotlinx.coroutines.CompletableDeferred
@@ -105,6 +106,8 @@ class CastSessionControllerTest {
 
         var castResult: CastResult = CastResult.Success
         var stopCastThrows = false
+        /** play() 是否把渲染器拉回 PLAYING（模拟 seek-recover 成功/失败两条路径） */
+        var playRecovers: Boolean = true
 
         /** startCast 成功后会先 delay(600) 等渲染器进入 PLAYING，用信号避免测试依赖虚拟时钟 */
         val seekSignal = CompletableDeferred<Long>()
@@ -137,6 +140,10 @@ class CastSessionControllerTest {
             optimisticSignal.complete(Unit)
         }
 
+        override fun noteUserSeek() {
+            timeline += "user-seek"
+        }
+
         override fun markAutoAdvanceNext() {
             timeline += "mark-auto-advance"
         }
@@ -162,6 +169,9 @@ class CastSessionControllerTest {
         override suspend fun play(source: String): Boolean {
             timeline += "renderer-play"
             commandSources += source
+            if (playRecovers) {
+                state.value = state.value.copy(playbackState = CastQueuePolicy.STATE_PLAYING)
+            }
             return true
         }
 
@@ -488,6 +498,49 @@ class CastSessionControllerTest {
         runCurrent()
         advanceUntilIdle()
 
+        assertTrue(harness.timeline.contains("recast-current"))
+        assertTrue(harness.timeline.contains("seek-renderer:28000"))
+        assertTrue(harness.timeline.contains("optimistic"))
+        assertFalse(harness.timeline.contains("next"))
+        assertEquals("投屏中断，已自动重连当前曲目", harness.uiState.value.error)
+        harness.subject.unbind()
+    }
+
+    // ---------- A 方案：近期拖动曲中 STOPPED 的就地 play 恢复（174553 体验层修复） ----------
+
+    @Test
+    fun `近期拖动曲中STOPPED先原地play恢复_不整套重投`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(isCasting = true, isEstablished = true)
+        harness.castPort.playRecovers = true
+
+        harness.subject.onCastInterruptedSeekRecover(28_000L)
+        advanceTimeBy(2_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        // 渲染器被 play 拉回 PLAYING → 就地恢复，不进整套重投（无静音拉长）
+        assertFalse("不应整套重投", harness.timeline.contains("recast-current"))
+        assertFalse("不应再 seek 渲染器", harness.timeline.contains("seek-renderer:28000"))
+        assertFalse(harness.timeline.contains("optimistic"))
+        assertEquals(listOf("seek-recover"), harness.castPort.commandSources)
+        harness.subject.unbind()
+    }
+
+    @Test
+    fun `近期拖动曲中STOPPED原地play失败则降级整套重投`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(
+            isCasting = true, isEstablished = true, playbackState = CastQueuePolicy.STATE_STOPPED
+        )
+        harness.castPort.playRecovers = false
+
+        harness.subject.onCastInterruptedSeekRecover(28_000L)
+        advanceTimeBy(2_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        // play 未拉回（渲染器仍 STOPPED）→ 降级整套重投当前曲并续播到中断位置
         assertTrue(harness.timeline.contains("recast-current"))
         assertTrue(harness.timeline.contains("seek-renderer:28000"))
         assertTrue(harness.timeline.contains("optimistic"))

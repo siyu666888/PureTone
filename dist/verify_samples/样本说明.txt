@@ -1,0 +1,14 @@
+PureTone v1.9.7 / VERIFY-20261112-120805 真机取证样本
+==================================================
+1) 「歌🎵×61.m4a」 120 秒 aac / faststart 测试音，文件名 base 247 字节（含 61 个 emoji，均为代理对）。
+2) 同名 .lrc     sidecar 歌词，用于让「下载歌词」本地渠道命中并触发 LyricsStore.save()。
+3) sample_unclosed_p.ttml  含两处缺闭合 <p> 的 TTML，**仅作本地对照**：
+   TtmlToLrc.convert() 只被 AmllLyricsProvider（联网 AMLL 渠道）调用，本机无导入入口，
+   真机不可控注入；该路径已由 2 例 JVM 单测锁定，请勿在手机上尝试导入。
+
+量化预期（base 247 字节 / 121 个 UTF-16 Char）：
+  新实现：按 code point 截到 219 字节 + "_" + 12位hash + ".lrc" = 236 字节 ≤ 255 → 保存成功
+  旧实现：按 Char 迭代，220 预算用不完，原样 247 字节 + 17 = 264 字节 > 255
+          → ENAMETOOLONG，被 save() 的 runCatching 吞掉 → UI 提示「保存失败」
+
+操作步骤见同批交付的《B冷启动C歌词样本_取证操作卡》文档。

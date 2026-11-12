@@ -83,6 +83,30 @@ class TtmlToLrcTest {
     }
 
     @Test
+    fun `缺闭合 p 不吞并后续行也不重复输出`() {
+        // 第一行故意缺 </p>：类注释明确宣称要容错此形态。
+        // 旧实现 bodyEnd 优先取后面某行的 </p>，把两行合并成一行，
+        // 被吞并的第二行又会被 P_OPEN 各自遍历一次、再输出一遍。
+        val ttml = """
+            <tt><body><div>
+            <p begin="00:01.000"><span begin="00:01.000">第一行</span>
+            <p begin="00:05.500"><span begin="00:05.500">第二行</span></p>
+            </div></body></tt>
+        """.trimIndent()
+
+        assertEquals("[00:01.00]第一行\n[00:05.50]第二行\n", TtmlToLrc.convert(ttml))
+    }
+
+    @Test
+    fun `最后一行缺闭合仍按文末收尾`() {
+        // 回归：改为「取更靠前者」后，既找不到 </p> 也找不到下一个 <p 时
+        // 仍必须退回全文末尾，不能把这行丢掉。
+        val ttml = """<tt><body><div><p begin="00:09.000"><span begin="00:09.000">末行</span></div></body></tt>"""
+
+        assertEquals("[00:09.00]末行\n", TtmlToLrc.convert(ttml))
+    }
+
+    @Test
     fun `非 TTML 内容返回 null`() {
         assertNull(TtmlToLrc.convert(""))
         assertNull(TtmlToLrc.convert("hello world"))

@@ -1,7 +1,10 @@
 package com.puretone.player.playback.cast
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * [CastHttpServer.parseRange] 单测。
@@ -104,5 +107,112 @@ class CastHttpServerTest {
                 102_400L, 25_123_456L, 4_096L, 31L, "IOException:Connection reset"
             )
         )
+    }
+
+    // 缓存文件被清理/清空时不能发「200 + Content-Length: 1」却零字节：
+    // 抽成纯函数锁住判定边界，正常文件（size>0）必须一字不变地继续供流。
+
+    @Test
+    fun `正常文件返回实际字节数`() {
+        val file = File.createTempFile("cast-servable", ".bin")
+        try {
+            file.writeBytes(ByteArray(37))
+            assertEquals(37L, CastHttpServer.servableSize(file)!!)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun `空文件不可供流`() {
+        val file = File.createTempFile("cast-empty", ".bin")
+        try {
+            assertNull(CastHttpServer.servableSize(file))
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun `被删除的文件不可供流`() {
+        val file = File.createTempFile("cast-gone", ".bin")
+        file.writeBytes(ByteArray(16))
+        file.delete()
+        assertNull(CastHttpServer.servableSize(file))
+    }
+
+    @Test
+    fun `目录不可供流`() {
+        val probe = File.createTempFile("cast-dir", ".bin")
+        val dir = probe.parentFile!!
+        probe.delete()
+        assertNull(CastHttpServer.servableSize(dir))
+    }
+
+    @Test
+    fun `旧token沉寂超时被淘汰后按404处理`() {
+        val file = File.createTempFile("cast-old", ".bin")
+        try {
+            file.writeBytes(ByteArray(16))
+            var now = 1_000L
+            val registry = CastEntryRegistry(clock = { now })
+            registry.register("old", file, "audio/flac")
+            now += CastEntryRegistry.ENTRY_TTL_MS + 1
+            registry.register("new", file, "audio/flac")
+            assertNull(registry.find("old"))
+            // 文件本身仍可供流：404 只由 token 失效引起，两条路径共用同一出口
+            assertEquals(16L, CastHttpServer.servableSize(file)!!)
+        } finally {
+            file.delete()
+        }
+    }
+
+    // 供流链路一致性收口：HEAD 不算取流、响应头只用一次 size、skip 失败必须留痕。
+
+    @Test
+    fun `只有GET算真正供流`() {
+        assertEquals(true, CastHttpServer.countsAsFetch("GET"))
+        assertEquals(false, CastHttpServer.countsAsFetch("HEAD"))
+        assertEquals(false, CastHttpServer.countsAsFetch("POST"))
+    }
+
+    @Test
+    fun `200响应头逐字保持原格式且不带Content-Range`() {
+        assertEquals(
+            "HTTP/1.1 200 OK\r\nContent-Type: audio/flac\r\nContent-Length: 1000\r\n" +
+                "Accept-Ranges: bytes\r\nConnection: close\r\n\r\n",
+            CastHttpServer.buildFileHeader(200, "audio/flac", 1000L, 0L, 999L, 1000L)
+        )
+    }
+
+    @Test
+    fun `206响应头的total与end共用同一次size判定`() {
+        val size = 1000L
+        val header = CastHttpServer.buildFileHeader(206, "audio/flac", 500L, 500L, 999L, size)
+        assertTrue(header.startsWith("HTTP/1.1 206 Partial Content\r\n"))
+        assertTrue(header.contains("Content-Range: bytes 500-999/$size\r\n"))
+        assertTrue(header.contains("Content-Length: 500\r\n"))
+        assertTrue(header.endsWith("Connection: close\r\n\r\n"))
+    }
+
+    @Test
+    fun `servableSize与响应头串起同一次size`() {
+        val file = File.createTempFile("cast-header", ".bin")
+        try {
+            file.writeBytes(ByteArray(1000))
+            val size = CastHttpServer.servableSize(file)!!
+            val header = CastHttpServer.buildFileHeader(
+                206, "audio/flac", size, 0L, size - 1, size
+            )
+            assertTrue(header.contains("Content-Range: bytes 0-999/1000\r\n"))
+            assertTrue(header.contains("Content-Length: 1000\r\n"))
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun `skip未到位时给出可落盘的失败原因`() {
+        assertEquals("FileTooShort:skip=128", CastHttpServer.skipShortfallReason(128L))
     }
 }

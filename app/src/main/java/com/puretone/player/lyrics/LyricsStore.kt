@@ -38,16 +38,30 @@ class LyricsStore @Inject constructor(
         return File(dir, "${base}_${hash(audioPath)}.lrc")
     }
 
-    /** 按 UTF-8 字节数截断，避免长歌名产生超长文件名（P2-10） */
+    /**
+     * 按 UTF-8 字节数截断，避免长歌名产生超长文件名（P2-10）。
+     *
+     * 必须按 Unicode 码点（而非 UTF-16 Char）迭代：增补平面字符（emoji、CJK 扩展 B）
+     * 在 String 里是一对代理（2 个 Char、UTF-8 占 4 字节），单独把半个代理拿去
+     * `toByteArray` 只会得到替换字符 `?`（1 字节），预算被低估一倍——220「字节」
+     * 实际可能变成 440 字节，ENAMETOOLONG 让歌词静默存不上；预算恰好落在代理对
+     * 中间时还会留下半个代理，产出乱码文件名。按码点整段计算并追加即可两害皆除，
+     * 且 BMP 单 Char 与 ASCII 的片段长度和旧实现完全相同，正常歌名零变化。
+     */
     private fun truncateToBytes(s: String, maxBytes: Int): String {
         if (s.toByteArray(Charsets.UTF_8).size <= maxBytes) return s
         val sb = StringBuilder()
         var bytes = 0
-        for (ch in s) {
-            val len = ch.toString().toByteArray(Charsets.UTF_8).size
+        var index = 0
+        while (index < s.length) {
+            val codePoint = s.codePointAt(index)
+            val end = (index + Character.charCount(codePoint)).coerceAtMost(s.length)
+            val part = s.substring(index, end)
+            val len = part.toByteArray(Charsets.UTF_8).size
             if (bytes + len > maxBytes) break
-            sb.append(ch)
+            sb.append(part)
             bytes += len
+            index = end
         }
         return sb.toString()
     }

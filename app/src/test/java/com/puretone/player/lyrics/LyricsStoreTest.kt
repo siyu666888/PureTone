@@ -3,6 +3,7 @@ package com.puretone.player.lyrics
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -39,6 +40,40 @@ class LyricsStoreTest {
         val audioPath = "/storage/emulated/0/Music/青花瓷.mp3"
         val file = store.fileFor(audioPath)
         assertEquals("青花瓷_${hash(audioPath)}.lrc", file.name)
+    }
+
+    @Test
+    fun `含代理对的长歌名按真实 UTF-8 字节截断`() {
+        val note = "\uD83C\uDFB5" // 🎵，增补平面：2 个 Char / UTF-8 占 4 字节
+        val audioPath = "/storage/emulated/0/Music/${note.repeat(200)}.mp3"
+
+        val file = store.fileFor(audioPath)
+        val nameBytes = file.name.toByteArray(Charsets.UTF_8)
+
+        // 旧实现按 Char 迭代、半个代理只记 1 字节，会放行 110 个 emoji（440 字节），
+        // ext4/FUSE 上 ENAMETOOLONG 被 save() 的 runCatching 吞掉 → 歌词静默存不上。
+        assertTrue("含代理对文件名应 ≤ 255 字节，实际 ${nameBytes.size}", nameBytes.size <= 255)
+        assertTrue("歌词应能真正落盘", store.save(audioPath, "[00:00.00]词\n"))
+        assertEquals("[00:00.00]词\n", store.existing(audioPath)?.readText(Charsets.UTF_8))
+    }
+
+    @Test
+    fun `代理对不会被从中间截断成孤立代理`() {
+        val note = "\uD83C\uDFB5"
+        // 先放一个 3 字节 BMP 汉字，让 220 字节预算落在奇数个代理 Char 上：
+        // 旧实现会在高代理之后 break，留下半个字符写进文件名。
+        val audioPath = "/storage/emulated/0/Music/歌${note.repeat(200)}.mp3"
+        val base = store.fileFor(audioPath).name.substringBeforeLast('_')
+
+        assertTrue(base.toByteArray(Charsets.UTF_8).size <= 220)
+        assertFalse("截断结果含孤立高代理", base.indices.any { i ->
+            java.lang.Character.isHighSurrogate(base[i]) &&
+                (i + 1 >= base.length || !java.lang.Character.isLowSurrogate(base[i + 1]))
+        })
+        assertFalse("截断结果含孤立低代理", base.indices.any { i ->
+            java.lang.Character.isLowSurrogate(base[i]) &&
+                (i == 0 || !java.lang.Character.isHighSurrogate(base[i - 1]))
+        })
     }
 
     @Test

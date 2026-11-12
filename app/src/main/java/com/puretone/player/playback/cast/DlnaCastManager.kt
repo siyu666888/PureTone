@@ -181,6 +181,10 @@ class DlnaCastManager @Inject constructor(
         progressHoldUntilMs = System.currentTimeMillis() + 2_500L
     }
 
+    override fun noteUserSeek() {
+        _state.update { it.copy(lastSeekMs = System.currentTimeMillis()) }
+    }
+
     override fun markAutoAdvanceNext() {
         autoAdvancePending = true
     }

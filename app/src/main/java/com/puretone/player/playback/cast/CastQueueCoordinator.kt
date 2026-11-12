@@ -52,6 +52,15 @@ internal interface CastQueueSink {
     fun onCastInterrupted(progressMs: Long)
 
     /**
+     * 曲中 STOPPED 但处于「用户刚拖过进度条」的保护窗口内 → 先尝试**就地 play** 恢复，
+     * 而非整套重投（A 方案，174553 体验层「拖进度条 2~4s 静音」修复）。
+     *
+     * 宿主应下发一次 Play 尝试就地拉回渲染器；若观察窗口内仍未恢复，再降级走
+     * [onCastInterrupted]（整套重投当前曲），不能推进队列。
+     */
+    fun onCastInterruptedSeekRecover(progressMs: Long)
+
+    /**
      * 投屏连接已不可用（设备离线 / 流错误）。
      *
      * 宿主应停止投屏、把播放回退到本地，并向用户给出提示。
@@ -91,6 +100,12 @@ internal class CastQueueCoordinator(
     /** 墙钟注入：终止态确认窗口要能用虚拟时间单测驱动 */
     private val nowProvider: () -> Long = { System.currentTimeMillis() },
     private val confirmMs: Long = CastStopPolicy.CONFIRM_MS,
+    /**
+     * 用户**手动拖动进度条**后，渲染器瞬间 STOPPED 的「就地恢复」保护窗口。
+     * 该窗口内出现的曲中 STOPPED 改走 play 恢复而非整套重投（A 方案，174553 体验层修复）。
+     * 超过该窗口的 STOPPED 仍按正常曲中中断处理，避免掩盖真实断流。
+     */
+    private val seekProtectMs: Long = 3_000L,
     /** 诊断日志注入：生产层接 [CastNetworkLog]，纯 JVM 单测默认 no-op（Log 未 mock 会抛） */
     private val log: (String) -> Unit = {}
 ) {
@@ -108,12 +123,26 @@ internal class CastQueueCoordinator(
 
         /** 「同一位置」的容差：中断位置相差 < 1s 视为同一处（渲染器取整/网络延迟） */
         const val SAME_SPOT_TOLERANCE_MS = 1_000L
+
+        /**
+         * seek-recover 的短确认窗口：用户拖进度条后的瞬间 STOPPED 只需短窗即可判定，
+         * 比曲中正常中断的 [CastStopPolicy.CONFIRM_MS] 更短，尽快就地 play 恢复、压低静音。
+         */
+        const val SEEK_RECOVER_CONFIRM_MS = 1_000L
     }
 
     private var job: Job? = null
 
     /** 曲中 STOPPED 的待确认窗口：到期仍未恢复才重投当前曲 */
-    private data class PendingStop(val progressMs: Long, val sinceMs: Long)
+    private data class PendingStop(
+        val progressMs: Long,
+        val sinceMs: Long,
+        /** 是否处于「用户拖进度条」保护窗口：是则恢复走就地 play，否则整套重投 */
+        val seekRecover: Boolean = false,
+        /** 确认窗口时长（seek-recover 用短窗 [SEEK_RECOVER_CONFIRM_MS]，其余沿用 [confirmMs]；
+         *  两个构造点均显式传入，此处默认值不参与实际创建） */
+        val windowMs: Long = 0L
+    )
 
     private var pendingStop: PendingStop? = null
 
@@ -196,7 +225,7 @@ internal class CastQueueCoordinator(
     private fun schedulePendingConfirm() {
         pendingConfirmJob?.cancel()
         val pending = pendingStop ?: return
-        val remainingMs = (confirmMs - (nowProvider() - pending.sinceMs)).coerceAtLeast(0L)
+        val remainingMs = (pending.windowMs - (nowProvider() - pending.sinceMs)).coerceAtLeast(0L)
         pendingConfirmJob = scope.launch {
             delay(remainingMs)
             val p = pendingStop ?: return@launch
@@ -209,7 +238,7 @@ internal class CastQueueCoordinator(
             }
             pendingStop = null
             pendingConfirmJob = null
-            onInterruptConfirmed(p.progressMs)
+            onInterruptConfirmed(p.progressMs, p.seekRecover)
         }
     }
 
@@ -220,12 +249,17 @@ internal class CastQueueCoordinator(
      * 位置中断，认定这个位置根本播不下去，放弃重投、改按曲末推进（有下一首投下一首，
      * 末首则结束会话），避免电视画面反复闪烁、用户只能手动切歌打断的死循环。
      */
-    private fun onInterruptConfirmed(progressMs: Long) {
+    private fun onInterruptConfirmed(progressMs: Long, seekRecover: Boolean) {
+        playingSeen = false
+        // 「用户拖进度条」保护窗口内的 STOPPED：先尝试就地 play 恢复，绝不走整套重投。
+        if (seekRecover) {
+            sink.onCastInterruptedSeekRecover(progressMs)
+            return
+        }
         val sameSpot = lastInterruptPosMs >= 0L &&
             abs(progressMs - lastInterruptPosMs) < SAME_SPOT_TOLERANCE_MS
         consecutiveInterrupt = if (sameSpot) consecutiveInterrupt + 1 else 1
         lastInterruptPosMs = progressMs
-        playingSeen = false
         if (consecutiveInterrupt >= MAX_CONSECUTIVE_INTERRUPT) {
             consecutiveInterrupt = 0
             lastInterruptPosMs = -1L
@@ -301,10 +335,10 @@ internal class CastQueueCoordinator(
                 schedulePendingConfirm()
                 return
             }
-            if (CastStopPolicy.isConfirmed(pending.sinceMs, nowProvider(), st.lastFetchMs, confirmMs)) {
+            if (CastStopPolicy.isConfirmed(pending.sinceMs, nowProvider(), st.lastFetchMs, pending.windowMs)) {
                 val progressMs = pending.progressMs
                 clearPendingStop()
-                onInterruptConfirmed(progressMs)
+                onInterruptConfirmed(progressMs, pending.seekRecover)
             }
             return
         }
@@ -322,8 +356,16 @@ internal class CastQueueCoordinator(
             nowMs = nowMs
         )
         if (kind == CastStopPolicy.Kind.MID_TRACK) {
-            // 曲中停止：先观察 [confirmMs]，让电视把重连取流走完；不推进队列。
-            pendingStop = PendingStop(progressMs = st.progressMs, sinceMs = nowMs)
+            // 曲中停止：先观察确认窗口，让电视把重连取流走完；不推进队列。
+            // 「用户刚拖过进度条」保护窗口内的 STOPPED，大概率只是拖动的瞬间复位，
+            // 改走短窗 + 就地 play 恢复（seekRecover），而非整套重投（A 方案）。
+            val recentSeek = st.lastSeekMs > 0L && (nowMs - st.lastSeekMs) < seekProtectMs
+            pendingStop = PendingStop(
+                progressMs = st.progressMs,
+                sinceMs = nowMs,
+                seekRecover = recentSeek,
+                windowMs = if (recentSeek) SEEK_RECOVER_CONFIRM_MS else confirmMs
+            )
             schedulePendingConfirm()
             return
         }

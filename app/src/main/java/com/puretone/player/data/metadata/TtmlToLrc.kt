@@ -59,10 +59,13 @@ object TtmlToLrc {
         for (match in P_OPEN.findAll(ttml)) {
             val attrs = match.groupValues[1]
             val bodyStart = match.range.last + 1
-            // 该 `<p>` 的结束位置：下一个 `</p>` 或下一个 `<p`（容错：可能缺闭合标签）
-            val bodyEnd = ttml.indexOf("</p>", bodyStart).takeIf { it >= 0 }
-                ?: ttml.indexOf("<p", bodyStart).takeIf { it >= 0 }
-                ?: ttml.length
+            // 该 `<p>` 的结束位置取「闭合标签」与「下一个 <p 开标签」中更靠前的那个。
+            // 容错：社区投稿可能缺 </p>；旧实现只在找不到任何 </p> 时才看下一个 <p，
+            // 于是缺闭合的行会一路吞到后面某一行的 </p>，把多行文本合并成一行，
+            // 而被吞并的行仍会被 P_OPEN 各自遍历一次、重复输出，时间轴随之错乱。
+            val closeEnd = ttml.indexOf("</p>", bodyStart).takeIf { it >= 0 } ?: Int.MAX_VALUE
+            val nextOpen = ttml.indexOf("<p", bodyStart).takeIf { it >= 0 } ?: Int.MAX_VALUE
+            val bodyEnd = minOf(closeEnd, nextOpen).let { if (it == Int.MAX_VALUE) ttml.length else it }
             if (bodyEnd <= bodyStart) continue
 
             val body = ttml.substring(bodyStart, bodyEnd)

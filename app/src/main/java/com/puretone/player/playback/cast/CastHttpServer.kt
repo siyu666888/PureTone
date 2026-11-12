@@ -275,60 +275,69 @@ internal class CastHttpServer {
             respondText(socket, 404, "File Not Found")
             return
         }
-        val size = entry.file.length()
+        // 缓存文件在投屏期间被清理时，不能发「200 却零字节」的假成功响应。
+        // token 失效与文件不可用共用同一个 404 出口，判读格式一字不变。
+        val size = servableSize(entry.file)
+        if (size == null) {
+            logRequest(socket, path, rangeHeader, 404)
+            CastNetworkLog.log("http-serve-missing file=${entry.file.name}")
+            respondText(socket, 404, "File Not Found")
+            return
+        }
         when (val spec = parseRange(rangeHeader, size)) {
             is RangeSpec.Unsatisfiable -> {
                 logRequest(socket, path, rangeHeader, 416)
                 respondText(socket, 416, "Range Not Satisfiable")
             }
             is RangeSpec.Partial -> {
-                markFetchIfActive(token)
-                sendFile(socket, method, entry, spec.start, spec.end, spec, rangeHeader)
+                markFetchIfActive(token, method)
+                sendFile(socket, method, entry, size, spec.start, spec.end, spec, rangeHeader)
             }
             RangeSpec.Full -> {
-                markFetchIfActive(token)
+                markFetchIfActive(token, method)
                 // 无法识别的 Range 一律按整文件 200 下发；但原始头仍传下去供诊断落盘，
                 // 这样电视发了什么非法 Range 在报告里依旧可见（P1-1）。
-                sendFile(socket, method, entry, 0L, (size - 1).coerceAtLeast(0L), spec, rangeHeader)
+                sendFile(socket, method, entry, size, 0L, (size - 1).coerceAtLeast(0L), spec, rangeHeader)
             }
         }
     }
 
-    /** 只记「当前这一首」的成功取流时刻，供投屏建立确认读取 */
-    private fun markFetchIfActive(token: String) {
-        if (token == activeToken) lastFetchMs.set(System.currentTimeMillis())
+    /**
+     * 只记「当前这一首」的**真正供流**时刻，供投屏建立确认读取。
+     *
+     * HEAD 只取响应头、一个字节都不发（sendFile 对它直接返回空结果），旧实现却在
+     * 写头之前无条件置位，渲染器一次 HEAD 探测就会把投屏判成「已建立」而实际无声。
+     * GET 仍必须在写头之前置位：一条长连接的 copy 可能持续整首歌，等它结束才置位
+     * 会让进度条冻结（170435 教训），`lastFetchMs > 0L` 判据绝不改回 `>= castStartMs`。
+     */
+    private fun markFetchIfActive(token: String, method: String) {
+        if (countsAsFetch(method) && token == activeToken) {
+            lastFetchMs.set(System.currentTimeMillis())
+        }
     }
 
     /**
      * @param spec 响应状态**只由解析结果决定**（[responseStatus]），不看 [rangeHeader]
      *   是否为空——电视发一个无法解析的 `Range: garbage` 时旧实现会误回 206 +
      *   `Content-Range: 0-{size-1}` 却发整文件，协议自相矛盾（P1-1）。
+     * @param size serve 里一次判定的文件长度，响应头与 Range 终点共用同一值。
      * @param rangeHeader 仅用于诊断日志，保留原始值不参与响应构造。
      */
     private fun sendFile(
         socket: Socket,
         method: String,
         entry: CastEntryRegistry.Snapshot,
+        size: Long,
         start: Long,
         end: Long,
         spec: RangeSpec,
         rangeHeader: String?
     ) {
-        val size = entry.file.length()
         val length = end - start + 1
         val status = responseStatus(spec)
-        val partial = status == 206
-        val header = buildString {
-            append("HTTP/1.1 ").append(status).append(if (partial) " Partial Content\r\n" else " OK\r\n")
-            append("Content-Type: ").append(entry.mimeType).append("\r\n")
-            append("Content-Length: ").append(length).append("\r\n")
-            append("Accept-Ranges: bytes\r\n")
-            if (partial) {
-                append("Content-Range: bytes ").append(start).append('-').append(end)
-                    .append('/').append(size).append("\r\n")
-            }
-            append("Connection: close\r\n\r\n")
-        }
+        // size 由 serve() 的 servableSize() 一次判定后传入，不再二次读 length()：
+        // 文件在判定后被截断时，旧的二次读取会让 206 出现 end > total 的非法头。
+        val header = buildFileHeader(status, entry.mimeType, length, start, end, size)
         val out = socket.getOutputStream()
         out.write(header.toByteArray(Charsets.ISO_8859_1))
         val result = if (method == "GET") {
@@ -364,7 +373,11 @@ internal class CastHttpServer {
                     if (skipped <= 0) break
                     remaining -= skipped
                 }
-                if (remaining > 0) return@runCatching
+                if (remaining > 0) {
+                    // 旧实现在此静默返回，error 保持 null，零字节供流被诊断成「正常」。
+                    error = skipShortfallReason(remaining)
+                    return@runCatching
+                }
                 val buffer = ByteArray(BUFFER_SIZE)
                 var left = length
                 while (left > 0) {
@@ -427,6 +440,64 @@ internal class CastHttpServer {
         private const val MAX_HEADERS = 32
         private const val MAX_LOGGED_REQUESTS = 8
         private const val BUFFER_SIZE = 64 * 1024
+
+        /**
+         * 命中 token 后确认文件仍可供流（纯函数，供单测锁定）。
+         *
+         * 旧实现直接取 `entry.file.length()`：缓存文件被清理或清空时得到 0，
+         * `parseRange` 把 0 判成「整文件下发」、`sendFile` 发出
+         * `200 + Content-Length: 1`，而 `copy` 里 FileInputStream 抛异常被吞，
+         * 结果是「200 却零字节」——客户端会一直等一个填不满的响应。
+         * 这里判为 null，由 `serve` 明确回 404；正常文件（size>0）行为零变化。
+         */
+        fun servableSize(file: File): Long? =
+            file.length().takeIf { it > 0L && file.isFile && file.canRead() }
+
+        /**
+         * 是否算「真正供流」（纯函数，供单测锁定）。
+         *
+         * HEAD 只回响应头、不写 body，不能参与 `lastFetchMs > 0L` 的投屏建立确认；
+         * 只有 GET 会走 copy 真正发字节。
+         */
+        fun countsAsFetch(method: String): Boolean = method == "GET"
+
+        /**
+         * 构造文件响应头（纯函数，供单测逐字锁定）。
+         *
+         * `size` 与 `start`/`end` 必须来自同一次判定，否则文件被并发截断时
+         * 会产出 `Content-Range: bytes 500-999/600` 这类 end > total 的非法头。
+         * 抽出来是为了让「200 带头不带 Content-Range、206 的 total 与 length 一致」
+         * 能在 JVM 单测里锁定，不必起 socket。
+         */
+        fun buildFileHeader(
+            status: Int,
+            mimeType: String,
+            length: Long,
+            start: Long,
+            end: Long,
+            size: Long
+        ): String = buildString {
+            val partial = status == 206
+            append("HTTP/1.1 ").append(status).append(if (partial) " Partial Content\r\n" else " OK\r\n")
+            append("Content-Type: ").append(mimeType).append("\r\n")
+            append("Content-Length: ").append(length).append("\r\n")
+            append("Accept-Ranges: bytes\r\n")
+            if (partial) {
+                append("Content-Range: bytes ").append(start).append('-').append(end)
+                    .append('/').append(size).append("\r\n")
+            }
+            append("Connection: close\r\n\r\n")
+        }
+
+        /**
+         * `skip()` 没跳到 Range 起点时的失败原因（纯函数，供单测锁定）。
+         *
+         * 旧实现在这里 `return@runCatching` 正常返回，error 保持 null，
+         * 于是 `Content-Length>0` 却零字节的供流在诊断里显示成
+         * `sent=0/N err=-` 且没有 `http-copy-fail`，R7 取证无法区分
+         * 「正常但写出 0」与「文件被截断」。
+         */
+        fun skipShortfallReason(remaining: Long): String = "FileTooShort:skip=$remaining"
 
         /**
          * 供流明细格式（抽成纯函数供单测锁定）。

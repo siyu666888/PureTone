@@ -187,6 +187,7 @@ internal class PlaybackController(
         // 不拦住就会把刚拖到的位置又拉回去。
         if (castState().isCasting) {
             dlnaCast.noteSeekOptimistic()
+            dlnaCast.noteUserSeek()
             scope.launch { dlnaCast.seek(ms) }
             uiState.update { it.copy(positionMs = ms) }
             return

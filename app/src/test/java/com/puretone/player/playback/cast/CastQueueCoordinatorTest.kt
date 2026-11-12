@@ -30,6 +30,7 @@ class CastQueueCoordinatorTest {
         var finishedCount: Int = 0
         var lastInterruptProgressMs: Long = -1L
         var lastReason: String? = null
+        var seekRecoverCount: Int = 0
 
         override fun onCastTrackEnded() {
             endedCount++
@@ -41,6 +42,11 @@ class CastQueueCoordinatorTest {
 
         override fun onCastInterrupted(progressMs: Long) {
             interruptedCount++
+            lastInterruptProgressMs = progressMs
+        }
+
+        override fun onCastInterruptedSeekRecover(progressMs: Long) {
+            seekRecoverCount++
             lastInterruptProgressMs = progressMs
         }
 
@@ -63,7 +69,8 @@ class CastQueueCoordinatorTest {
         isConnectionLost: Boolean = false,
         error: String? = null,
         castStartMs: Long = 0L,
-        lastFetchMs: Long = 0L
+        lastFetchMs: Long = 0L,
+        lastSeekMs: Long = 0L
     ) = CastState(
         isCasting = isCasting,
         isPlaying = isPlaying,
@@ -75,7 +82,8 @@ class CastQueueCoordinatorTest {
         isConnectionLost = isConnectionLost,
         error = error,
         castStartMs = castStartMs,
-        lastFetchMs = lastFetchMs
+        lastFetchMs = lastFetchMs,
+        lastSeekMs = lastSeekMs
     )
 
     private fun coordinator(
@@ -377,14 +385,15 @@ class CastQueueCoordinatorTest {
     // ---------- 曲中 STOPPED：确认窗口 + 重投当前曲（2026-11-07 真机「电视画面断开」修复） ----------
 
     /** 真机 16:55:25 现场：28 秒 / 344 秒的曲中停止，本轮投出后墙钟已走 188 秒 */
-    private fun midTrackState(fetchMs: Long = 0L) = state(
+    private fun midTrackState(fetchMs: Long = 0L, lastSeekMs: Long = 0L) = state(
         pushGeneration = 1L,
         isPlaying = false,
         playbackState = CastQueuePolicy.STATE_STOPPED,
         progressMs = 28_000L,
         durationMs = 344_000L,
         castStartMs = 1_000L,
-        lastFetchMs = fetchMs
+        lastFetchMs = fetchMs,
+        lastSeekMs = lastSeekMs
     )
 
     private fun midTrackCoordinator(
@@ -505,6 +514,81 @@ class CastQueueCoordinatorTest {
         )
         assertEquals(1, sink.endedCount)
         assertEquals(0, sink.interruptedCount)
+    }
+
+    // ---------- A 方案：用户拖进度条保护窗口（174553 体验层修复） ----------
+
+    @Test
+    fun `近期拖动时曲中STOPPED走seek恢复而非整套重投`() = runTest {
+        val sink = FakeSink()
+        var now = 189_000L
+        val c = midTrackCoordinator(sink, this) { now }
+
+        c.onState(state(pushGeneration = 1L, isPlaying = false))
+        c.onState(state(pushGeneration = 1L, isPlaying = true, progressMs = 0L))
+        now += 200L
+        // 用户刚拖过进度条（lastSeekMs 距 STOPPED 仅 100ms，落在保护窗口内）
+        c.onState(midTrackState(lastSeekMs = now - 100L))
+        assertEquals(0, sink.seekRecoverCount)
+        assertEquals(0, sink.interruptedCount)
+
+        now += 1_500L
+        c.onState(midTrackState(lastSeekMs = now - 1_600L))
+        // 短窗（1s）到期即走就地 play 恢复，绝不整套重投、绝不跳下一首
+        assertEquals(1, sink.seekRecoverCount)
+        assertEquals(0, sink.interruptedCount)
+        assertEquals(0, sink.endedCount)
+        assertEquals(28_000L, sink.lastInterruptProgressMs)
+    }
+
+    @Test
+    fun `无近期拖动时曲中STOPPED仍整套重投不走seek恢复`() = runTest {
+        val sink = FakeSink()
+        var now = 189_000L
+        val c = midTrackCoordinator(sink, this) { now }
+
+        // 全程未拖过进度条（lastSeekMs 默认 0）：必须仍走正常整套重投
+        c.feedMidTrackStop()
+        assertEquals(0, sink.interruptedCount)
+        assertEquals(0, sink.seekRecoverCount)
+
+        now += 1_000L
+        c.onState(midTrackState())
+        assertEquals(0, sink.interruptedCount)
+        assertEquals(0, sink.seekRecoverCount)
+
+        now += 2_000L
+        c.onState(midTrackState())
+        assertEquals(0, sink.seekRecoverCount) // 关键：不误走 seek-recover
+        assertEquals(1, sink.interruptedCount)  // 仍走正常整套重投
+        assertEquals(28_000L, sink.lastInterruptProgressMs)
+    }
+
+    @Test
+    fun `近期拖动时定时器兜底也走seek恢复短窗`() = runTest {
+        val sink = FakeSink()
+        val base = 189_000L
+        val c = CastQueueCoordinator(
+            scope = this,
+            castState = MutableStateFlow(state()),
+            queueInfo = { CastQueueInfo(hasNext = true, currentDurationMs = 344_000L) },
+            sink = sink,
+            nowProvider = { base + testScheduler.currentTime },
+            confirmMs = 2_500L
+        )
+        c.onState(state(pushGeneration = 1L, isPlaying = false))
+        c.onState(state(pushGeneration = 1L, isPlaying = true, progressMs = 0L))
+        c.onState(midTrackState(lastSeekMs = base - 100L))
+        assertEquals(0, sink.seekRecoverCount)
+
+        // 不喂新帧，只推进虚拟时间：短窗 1s 到期即触发 seek-recover（非 confirmMs 2.5s）
+        advanceTimeBy(1_500L)
+        runCurrent()
+
+        assertEquals(1, sink.seekRecoverCount)
+        assertEquals(28_000L, sink.lastInterruptProgressMs)
+        assertEquals(0, sink.interruptedCount)
+        assertEquals(0, sink.endedCount)
     }
 
     // ---------- D2：确认窗口定时器兜底（真机 20261107_203641） ----------

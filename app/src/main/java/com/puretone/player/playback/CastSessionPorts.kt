@@ -47,6 +47,14 @@ interface CastSessionCastPort {
     /** 记一次乐观 seek，延长不镜像窗口 */
     fun noteSeekOptimistic()
 
+    /**
+     * 记一次用户**手动拖动**进度条（投屏态）。
+     *
+     * 写入 [CastState.lastSeekMs] 供协调器识别「拖进度条引起的瞬间 STOPPED」，
+     * 改用就地 play 恢复而非整套重投（A 方案，见 174553 体验层判读）。
+     */
+    fun noteUserSeek()
+
     suspend fun stopCast()
 
     fun setVolume(volume: Int): Boolean

@@ -103,6 +103,15 @@ data class CastState(
      */
     val lastFetchMs: Long = 0L,
     /**
+     * 用户最近一次**手动拖动**投屏进度条的墙钟时刻（0 = 本轮从未手动拖）。
+     *
+     * 用于「曲中 STOPPED 保护窗口」：用户拖进度条时渲染器会瞬间 STOPPED 再续播，
+     * 这正是 174553 真机每拖一次出现 2~4s 静音的根因——协调器把它当成「曲中中断」
+     * 触发整套重投（`CONFIRM_MS` + `SetAVTransportURI`+`Play`+`Seek`）。在该窗口内
+     * 出现的 STOPPED 改走「就地 play 恢复」而非整套重投，把静音压到 1s 内（A 方案）。
+     */
+    val lastSeekMs: Long = 0L,
+    /**
      * 本轮投屏是否已确认建立：自有通道须观测到电视真来取流（见 [CastEstablishPolicy]），
      * 库通道取流不经过本应用 HTTP 服务，直通为 true。
      *

@@ -8,6 +8,7 @@ import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.playback.cast.CastDevice
 import com.puretone.player.playback.cast.CastNetworkLog
 import com.puretone.player.playback.cast.CastProgressPolicy
+import com.puretone.player.playback.cast.CastQueuePolicy
 import com.puretone.player.playback.cast.CastQueueSink
 import com.puretone.player.playback.cast.CastResult
 import com.puretone.player.playback.cast.CastResumePolicy
@@ -86,6 +87,13 @@ internal class CastSessionController(
          * 否则读到的仍是命令期望态而不是渲染器真实状态。
          */
         const val PLAY_CONFIRM_DELAY_MS = 3_000L
+
+        /**
+         * 曲中 STOPPED seek-recover 时，下发 play 后等待渲染器回报 PLAYING 的观察窗口。
+         * 与 [RECAST_SEEK_DELAY_MS] 同量级；期间用**原始 playbackState** 判恢复（命令宽限
+         * 只遮蔽 isPlaying，见 [com.puretone.player.playback.cast.CastPlayStatePolicy]）。
+         */
+        const val SEEK_RECOVER_OBSERVE_MS = 800L
     }
 
     /** 投屏态的 MediaSession 门面。在 bind 时按当前 player 重建（player 换了就要换包装） */
@@ -437,6 +445,46 @@ internal class CastSessionController(
     }
 
     /**
+     * 曲中 STOPPED 但处于「用户刚拖过进度条」的保护窗口内 → 先尝试**就地 play** 恢复，
+     * 而非整套重投（A 方案，174553 体验层「拖进度条 2~4s 静音」修复）。
+     *
+     * 整套重投（[onCastInterrupted]）会 `SetAVTransportURI`+`Play`+`Seek`，电视重连取流
+     * 带来 2~4s 静音；而用户拖进度条时渲染器本就会瞬间 STOPPED 再续播，多数情况只需补
+     * 一次 `Play` 就能就地拉回，静音压到 ~1s 内。
+     *
+     * 恢复判据必须用**原始** `playbackState`（命中即恢复），不能看 `isPlaying`：命令宽限
+     * （[com.puretone.player.playback.cast.CastPlayStatePolicy]）只遮蔽 `isPlaying`，
+     * `play()` 之后宽限期内 `isPlaying` 恒为命令期望态，会伪造「已恢复」。
+     * 观察窗口内渲染器仍 STOPPED/ERROR → 降级走全套重投（复用 [recastCurrent] + seek 回原位
+     * + noteSeekOptimistic，**但不调 noteUserSeek**，否则会重置 lastSeekMs 再次进本分支递归）。
+     */
+    override fun onCastInterruptedSeekRecover(progressMs: Long) {
+        CastNetworkLog.log("cast-interrupted-seek-recover progress=${progressMs}ms")
+        uiState.update { it.copy(error = "投屏中断，正在尝试原地恢复") }
+        scope.launch {
+            if (!dlnaCast.state.value.isCasting) return@launch
+            dlnaCast.play("seek-recover")
+            delay(SEEK_RECOVER_OBSERVE_MS)
+            val st = dlnaCast.state.value
+            val recovered = st.isCasting && st.playbackState == CastQueuePolicy.STATE_PLAYING
+            if (recovered) {
+                CastNetworkLog.log("cast-interrupted-seek-recover ok progress=${progressMs}ms")
+                uiState.update { it.copy(error = null) }
+                return@launch
+            }
+            // 降级：整套重投当前曲（与 onCastInterrupted 同款时序，队列不动）
+            CastNetworkLog.log("cast-interrupted-seek-recover failed -> recast progress=${progressMs}ms")
+            uiState.update { it.copy(error = "投屏中断，已自动重连当前曲目") }
+            recastCurrent()
+            delay(RECAST_SEEK_DELAY_MS)
+            if (!dlnaCast.state.value.isCasting) return@launch
+            dlnaCast.seek(progressMs)
+            dlnaCast.noteSeekOptimistic()
+            CastNetworkLog.log("cast-interrupted-seek-recast-seek progress=${progressMs}ms")
+        }
+    }
+
+    /**
      * 投屏连接失效（设备离线 / 流错误）→ 停止投屏并把播放回退到本地。
      *
      * 与用户主动「停止投屏」走同一条路径：停渲染器 → MediaSession 切回本地 →
@@ -540,6 +588,7 @@ internal class CastSessionController(
         // 与电视对不上（真机 20261107_203641 里连续拖两次正是这个表现）。
         val ms = positionMs.coerceAtLeast(0L)
         dlnaCast.noteSeekOptimistic()
+        dlnaCast.noteUserSeek()
         uiState.update { it.copy(positionMs = ms) }
         scope.launch { dlnaCast.seek(ms) }
     }
