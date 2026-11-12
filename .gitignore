@@ -22,7 +22,8 @@ app/release/
 /dist/output/*
 !/dist/output/.gitkeep
 /dist/archive/**/*.zip
-/dist/archive/**/SHA256SUMS.txt
+/dist/archive/**/SHA256SUMS*.txt
+/dist/archive/**/README_v*.md
 # 本地真机/模拟器复测证据（截图 + 自动化脚本），不入库
 /dist/verify/
 # 本地门禁/构建日志与临时脚本（非项目资产，防误 add -A）
