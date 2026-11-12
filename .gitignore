@@ -25,3 +25,7 @@ app/release/
 /dist/archive/**/SHA256SUMS.txt
 # 本地真机/模拟器复测证据（截图 + 自动化脚本），不入库
 /dist/verify/
+# 本地门禁/构建日志与临时脚本（非项目资产，防误 add -A）
+.workbuddy/
+# 本地真机原始诊断（含设备 IP/曲目名等运行期数据，公开仓库隐私，不入库）
+/dist/diagnostics/
