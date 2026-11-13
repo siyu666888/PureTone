@@ -56,7 +56,6 @@ import com.puretone.player.ui.components.formatTime
 
 private val CoverCorner = 20.dp
 private val CoverMaxSize = 200.dp
-private val DisconnectHeight = 48.dp
 private val ConnectedGreen = Color(0xFF2EAF6B)
 private val LostOrange = Color(0xFFE8912A)
 
@@ -431,7 +430,7 @@ internal fun CastDisconnectButton(onDisconnect: () -> Unit, modifier: Modifier =
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(DisconnectHeight)
+            .height(ControlIconSizes.Button)
             .clip(CircleShape)
             .border(1.dp, scheme.outlineVariant, CircleShape)
             .clickable(role = Role.Button, onClick = onDisconnect),
