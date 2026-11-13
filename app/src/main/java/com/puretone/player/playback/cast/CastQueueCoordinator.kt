@@ -139,9 +139,9 @@ internal class CastQueueCoordinator(
         val sinceMs: Long,
         /** 是否处于「用户拖进度条」保护窗口：是则恢复走就地 play，否则整套重投 */
         val seekRecover: Boolean = false,
-        /** 确认窗口时长（seek-recover 用短窗 [SEEK_RECOVER_CONFIRM_MS]，其余沿用 [confirmMs]；
-         *  两个构造点均显式传入，此处默认值不参与实际创建） */
-        val windowMs: Long = 0L
+        /** 确认窗口时长（seek-recover 用短窗 [SEEK_RECOVER_CONFIRM_MS]，其余沿用 [confirmMs]）。
+         *  必传：若留 0L 默认值，将来新增构造点漏传会静默变成「0ms 立即确认」（R4-5） */
+        val windowMs: Long
     )
 
     private var pendingStop: PendingStop? = null
@@ -216,6 +216,26 @@ internal class CastQueueCoordinator(
     }
 
     /**
+     * 顺延待确认窗口：以本次取流时刻重新起算，并按**当前墙钟**重新判定是否仍处于
+     * 「用户拖进度条」保护窗（R4-4）。
+     *
+     * [seekProtectMs] 是墙钟口径的 3s；若顺延只改 `sinceMs`、原样保留 `seekRecover`
+     * 与短窗，电视持续来取流就能把窗口一次次续上，名义 3s 被无限延长，A 方案的
+     * 就地 play 会一直生效、掩盖真实断流。过期后须回落到普通中断路径
+     * （[confirmMs] + 整套重投）。两个顺延出口（状态帧与定时器兜底）共用本函数，
+     * 保证口径一致。
+     */
+    private fun postponePendingStop(st: CastState, pending: PendingStop): PendingStop {
+        val nowMs = nowProvider()
+        val recentSeek = st.lastSeekMs > 0L && (nowMs - st.lastSeekMs) < seekProtectMs
+        return pending.copy(
+            sinceMs = st.lastFetchMs,
+            seekRecover = recentSeek,
+            windowMs = if (recentSeek) SEEK_RECOVER_CONFIRM_MS else confirmMs
+        )
+    }
+
+    /**
      * 为当前 [pendingStop] 启动/重置到期定时器。
      *
      * 顺延（电视期间又来取流）后要重新计时：按「剩余时长」重排，避免旧定时器在
@@ -232,7 +252,7 @@ internal class CastQueueCoordinator(
             val st = castState.value
             // 期间电视又来取流 → 顺延窗口重新计时，绝不在这时重投当前曲打断重连。
             if (st.lastFetchMs > p.sinceMs) {
-                pendingStop = p.copy(sinceMs = st.lastFetchMs)
+                pendingStop = postponePendingStop(st, p)
                 schedulePendingConfirm()
                 return@launch
             }
@@ -251,15 +271,19 @@ internal class CastQueueCoordinator(
      */
     private fun onInterruptConfirmed(progressMs: Long, seekRecover: Boolean) {
         playingSeen = false
-        // 「用户拖进度条」保护窗口内的 STOPPED：先尝试就地 play 恢复，绝不走整套重投。
-        if (seekRecover) {
-            sink.onCastInterruptedSeekRecover(progressMs)
-            return
-        }
         val sameSpot = lastInterruptPosMs >= 0L &&
             abs(progressMs - lastInterruptPosMs) < SAME_SPOT_TOLERANCE_MS
         consecutiveInterrupt = if (sameSpot) consecutiveInterrupt + 1 else 1
         lastInterruptPosMs = progressMs
+        // 「用户拖进度条」保护窗口内的 STOPPED：先尝试就地 play 恢复，绝不走整套重投。
+        // 同位置次数仍要照常累计（R4-3）：否则 seekRecover 降级后的整套重投又在同一
+        // 位置 STOPPED 时计数从 1 重来，MAX_CONSECUTIVE_INTERRUPT 保护形同虚设。
+        // 这里不直接 abandon —— 就地 play 不是一次重投，用户拖两次进度条不该跳歌；
+        // 上限留给后续的普通中断路径生效。
+        if (seekRecover) {
+            sink.onCastInterruptedSeekRecover(progressMs)
+            return
+        }
         if (consecutiveInterrupt >= MAX_CONSECUTIVE_INTERRUPT) {
             consecutiveInterrupt = 0
             lastInterruptPosMs = -1L
@@ -331,7 +355,7 @@ internal class CastQueueCoordinator(
         val pending = pendingStop
         if (pending != null) {
             if (st.lastFetchMs > pending.sinceMs) {
-                pendingStop = pending.copy(sinceMs = st.lastFetchMs)
+                pendingStop = postponePendingStop(st, pending)
                 schedulePendingConfirm()
                 return
             }

@@ -743,4 +743,154 @@ class CastQueueCoordinatorTest {
         assertEquals(1, sink.finishedCount)
         assertEquals(0, sink.endedCount)
     }
+
+    // ---------- R4-4：窗口顺延时按墙钟重算「拖动保护窗」 ----------
+
+    @Test
+    fun `顺延时超过拖动保护窗则回落普通中断路径`() = runTest {
+        val sink = FakeSink()
+        var now = 189_000L
+        val c = midTrackCoordinator(sink, this) { now }
+        val seekAt = now
+
+        // 拖动后曲中 STOPPED：进入 1s 短窗 + 就地 play 的 seekRecover 路径
+        c.onState(state(pushGeneration = 1L, isPlaying = false))
+        c.onState(state(pushGeneration = 1L, isPlaying = true, progressMs = 0L))
+        c.onState(midTrackState(lastSeekMs = seekAt))
+
+        // 电视又来取流触发顺延，但此刻墙钟已越过 3s 保护窗
+        now += 3_500L
+        val fetchAt = now
+        c.onState(midTrackState(fetchMs = fetchAt, lastSeekMs = seekAt))
+        assertEquals(0, sink.seekRecoverCount)
+        assertEquals(0, sink.interruptedCount)
+
+        // 必须按普通确认窗 2.5s 重算：1.5s 时不得仍按 1s 短窗误触发
+        now += 1_500L
+        c.onState(midTrackState(fetchMs = fetchAt, lastSeekMs = seekAt))
+        assertEquals(0, sink.interruptedCount)
+        assertEquals(0, sink.seekRecoverCount)
+
+        now += 1_000L
+        c.onState(midTrackState(fetchMs = fetchAt, lastSeekMs = seekAt))
+        assertEquals(1, sink.interruptedCount) // 回落到整套重投
+        assertEquals(0, sink.seekRecoverCount)
+        assertEquals(0, sink.endedCount)
+    }
+
+    @Test
+    fun `顺延时仍在拖动保护窗内保持短窗就地恢复`() = runTest {
+        val sink = FakeSink()
+        var now = 189_000L
+        val c = midTrackCoordinator(sink, this) { now }
+        val seekAt = now - 100L
+
+        c.onState(state(pushGeneration = 1L, isPlaying = false))
+        c.onState(state(pushGeneration = 1L, isPlaying = true, progressMs = 0L))
+        c.onState(midTrackState(lastSeekMs = seekAt))
+
+        // 500ms 后顺延，仍在 3s 保护窗内：短窗与 seekRecover 应保留
+        now += 500L
+        val fetchAt = now
+        c.onState(midTrackState(fetchMs = fetchAt, lastSeekMs = seekAt))
+        assertEquals(0, sink.seekRecoverCount)
+
+        now += 1_000L
+        c.onState(midTrackState(fetchMs = fetchAt, lastSeekMs = seekAt))
+        assertEquals(1, sink.seekRecoverCount)
+        assertEquals(0, sink.interruptedCount)
+    }
+
+    // ---------- R4-3：seekRecover 也累计同位置中断次数 ----------
+
+    @Test
+    fun `同一位置seekRecover后降级重投仍受放弃重投上限保护`() = runTest {
+        val sink = FakeSink()
+        var now = 189_000L
+        val c = midTrackCoordinator(sink, this) { now }
+
+        // 1) 拖动保护窗内曲中 STOPPED → 就地 play（同位置计数记为 1）
+        c.onState(state(pushGeneration = 1L, isPlaying = false))
+        c.onState(state(pushGeneration = 1L, isPlaying = true, progressMs = 0L))
+        c.onState(midTrackState(lastSeekMs = now))
+        now += 1_500L
+        c.onState(midTrackState(lastSeekMs = now - 1_500L))
+        assertEquals(1, sink.seekRecoverCount)
+        assertEquals(0, sink.interruptedCount)
+
+        // 2) 降级整套重投（新代次、lastSeekMs 已由 cast-ok 清零）后同一位置再 STOPPED
+        val recastAt = now
+        c.onState(state(pushGeneration = 2L, isPlaying = false))
+        c.onState(state(pushGeneration = 2L, isPlaying = true, progressMs = 0L))
+        now += 2_000L
+        c.onState(
+            state(
+                pushGeneration = 2L,
+                isPlaying = false,
+                playbackState = CastQueuePolicy.STATE_STOPPED,
+                progressMs = 28_000L,
+                durationMs = 344_000L,
+                castStartMs = recastAt
+            )
+        )
+        now += 3_000L
+        c.onState(
+            state(
+                pushGeneration = 2L,
+                isPlaying = false,
+                playbackState = CastQueuePolicy.STATE_STOPPED,
+                progressMs = 28_000L,
+                durationMs = 344_000L,
+                castStartMs = recastAt
+            )
+        )
+
+        // 计数继承 1 → 2：直接放弃重投改按曲末推进，而不是再整套重投一次
+        assertEquals(0, sink.interruptedCount)
+        assertEquals(1, sink.endedCount)
+    }
+
+    @Test
+    fun `不同位置的seekRecover不误触发放弃重投`() = runTest {
+        val sink = FakeSink()
+        var now = 189_000L
+        val c = midTrackCoordinator(sink, this) { now }
+
+        c.onState(state(pushGeneration = 1L, isPlaying = false))
+        c.onState(state(pushGeneration = 1L, isPlaying = true, progressMs = 0L))
+        c.onState(midTrackState(lastSeekMs = now))
+        now += 1_500L
+        c.onState(midTrackState(lastSeekMs = now - 1_500L))
+        assertEquals(1, sink.seekRecoverCount)
+
+        // 后续普通中断发生在明显不同的位置：计数不该继承，仍整套重投一次
+        val recastAt = now
+        c.onState(state(pushGeneration = 2L, isPlaying = false))
+        c.onState(state(pushGeneration = 2L, isPlaying = true, progressMs = 0L))
+        now += 2_000L
+        c.onState(
+            state(
+                pushGeneration = 2L,
+                isPlaying = false,
+                playbackState = CastQueuePolicy.STATE_STOPPED,
+                progressMs = 40_000L,
+                durationMs = 344_000L,
+                castStartMs = recastAt
+            )
+        )
+        now += 3_000L
+        c.onState(
+            state(
+                pushGeneration = 2L,
+                isPlaying = false,
+                playbackState = CastQueuePolicy.STATE_STOPPED,
+                progressMs = 40_000L,
+                durationMs = 344_000L,
+                castStartMs = recastAt
+            )
+        )
+
+        assertEquals(1, sink.interruptedCount)
+        assertEquals(0, sink.endedCount)
+    }
 }

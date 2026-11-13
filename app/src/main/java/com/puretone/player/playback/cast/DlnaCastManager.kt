@@ -548,19 +548,11 @@ class DlnaCastManager @Inject constructor(
         // 库通道用它自己的 NanoHTTPD，我们看不到取流，直通为 true（默认语义）。
         val established = engine != CastEngine.OWN
         _state.update {
-            it.copy(
-                isCasting = true,
-                isPreparing = false,
+            it.forNewCast(
+                nowMs = nowMs,
                 deviceName = device.name,
                 deviceAddress = device.address,
-                error = null,
-                isConnectionLost = false,
-                progressMs = 0L,
-                durationMs = 0L,
-                hasProgressInfo = false,
-                castStartMs = nowMs,
-                lastFetchMs = 0L,
-                isEstablished = established
+                established = established
             )
         }
         startPolling()

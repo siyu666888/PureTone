@@ -94,6 +94,12 @@ internal class CastSessionController(
          * 只遮蔽 isPlaying，见 [com.puretone.player.playback.cast.CastPlayStatePolicy]）。
          */
         const val SEEK_RECOVER_OBSERVE_MS = 800L
+
+        /** seek-recover 进行中的提示：恢复成功时只清自己写入的这条，不误清期间的新提示 */
+        const val SEEK_RECOVER_NOTICE = "投屏中断，正在尝试原地恢复"
+
+        /** 降级整套重投的提示（与 [onCastInterrupted] 共用同一句文案） */
+        const val RECAST_NOTICE = "投屏中断，已自动重连当前曲目"
     }
 
     /** 投屏态的 MediaSession 门面。在 bind 时按当前 player 重建（player 换了就要换包装） */
@@ -433,7 +439,7 @@ internal class CastSessionController(
         CastNetworkLog.log("cast-interrupted recast progress=${progressMs}ms")
         // 提示落在统一错误通道（PlayerScreen 把它传给遥控页 notice 位，复用已有展示处）；
         // 诊断日志同时留一份可追溯证据，避免提示被 dismiss 后无从查证。
-        uiState.update { it.copy(error = "投屏中断，已自动重连当前曲目") }
+        uiState.update { it.copy(error = RECAST_NOTICE) }
         recastCurrent()
         scope.launch {
             delay(RECAST_SEEK_DELAY_MS)
@@ -456,28 +462,53 @@ internal class CastSessionController(
      * （[com.puretone.player.playback.cast.CastPlayStatePolicy]）只遮蔽 `isPlaying`，
      * `play()` 之后宽限期内 `isPlaying` 恒为命令期望态，会伪造「已恢复」。
      * 观察窗口内渲染器仍 STOPPED/ERROR → 降级走全套重投（复用 [recastCurrent] + seek 回原位
-     * + noteSeekOptimistic，**但不调 noteUserSeek**，否则会重置 lastSeekMs 再次进本分支递归）。
+     * + noteSeekOptimistic，**但不调 noteUserSeek**：保持 lastSeekMs 为原拖动时刻，让 3s
+     * 保护窗自然过期；若刷新它，窗口会被反复续上、在同一轮里多次进本分支）。
+     *
+     * 恢复协程跨越两个 delay（观察窗 800ms + 降级重投 800ms），期间用户可能切歌或结束
+     * 投屏：入口记下代次与当前曲目，醒来后只在同一轮、同一首上继续，绝不把旧曲的
+     * 中断位置 seek 到新曲（R4-2）。降级路径的 [recastCurrent] 会自增 pushGeneration，
+     * 故第二段 delay 只按「曲目未变 + 仍在投屏」守护，不再比对入口代次。
      */
     override fun onCastInterruptedSeekRecover(progressMs: Long) {
         CastNetworkLog.log("cast-interrupted-seek-recover progress=${progressMs}ms")
-        uiState.update { it.copy(error = "投屏中断，正在尝试原地恢复") }
+        val generation = dlnaCast.state.value.pushGeneration
+        val songId = uiState.value.currentSongId
+        uiState.update { it.copy(error = SEEK_RECOVER_NOTICE) }
         scope.launch {
             if (!dlnaCast.state.value.isCasting) return@launch
             dlnaCast.play("seek-recover")
             delay(SEEK_RECOVER_OBSERVE_MS)
             val st = dlnaCast.state.value
-            val recovered = st.isCasting && st.playbackState == CastQueuePolicy.STATE_PLAYING
+            val songChanged = uiState.value.currentSongId != songId
+            if (!st.isCasting || st.pushGeneration != generation || songChanged) {
+                CastNetworkLog.log(
+                    "cast-interrupted-seek-recover canceled casting=${st.isCasting} " +
+                        "gen=${st.pushGeneration} songChanged=$songChanged"
+                )
+                return@launch
+            }
+            val recovered = st.playbackState == CastQueuePolicy.STATE_PLAYING
             if (recovered) {
                 CastNetworkLog.log("cast-interrupted-seek-recover ok progress=${progressMs}ms")
-                uiState.update { it.copy(error = null) }
+                // 只清本分支写入的提示：期间新写入的错误不能被一并抹掉（R4-2）。
+                uiState.update { if (it.error == SEEK_RECOVER_NOTICE) it.copy(error = null) else it }
                 return@launch
             }
             // 降级：整套重投当前曲（与 onCastInterrupted 同款时序，队列不动）
             CastNetworkLog.log("cast-interrupted-seek-recover failed -> recast progress=${progressMs}ms")
-            uiState.update { it.copy(error = "投屏中断，已自动重连当前曲目") }
+            uiState.update { it.copy(error = RECAST_NOTICE) }
             recastCurrent()
             delay(RECAST_SEEK_DELAY_MS)
-            if (!dlnaCast.state.value.isCasting) return@launch
+            val st2 = dlnaCast.state.value
+            val songChangedAfterRecast = uiState.value.currentSongId != songId
+            if (!st2.isCasting || songChangedAfterRecast) {
+                CastNetworkLog.log(
+                    "cast-interrupted-seek-recover canceled before-seek " +
+                        "casting=${st2.isCasting} songChanged=$songChangedAfterRecast"
+                )
+                return@launch
+            }
             dlnaCast.seek(progressMs)
             dlnaCast.noteSeekOptimistic()
             CastNetworkLog.log("cast-interrupted-seek-recast-seek progress=${progressMs}ms")

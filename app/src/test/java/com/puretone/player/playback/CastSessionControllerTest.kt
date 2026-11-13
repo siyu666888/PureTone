@@ -641,4 +641,75 @@ class CastSessionControllerTest {
         assertFalse("暂停必须取消在途的 Play 回读确认", harness.timeline.contains("recast-current"))
         harness.subject.unbind()
     }
+
+    // ---------- R4-2：seek-recover 异步窗口的代次守护与提示清空边界 ----------
+
+    @Test
+    fun `观察窗内切歌则放弃恢复且不覆盖新提示`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(
+            isCasting = true, isEstablished = true, pushGeneration = 1L
+        )
+        harness.uiState.value = PlaybackUiState(currentSongId = 1L)
+        harness.castPort.playRecovers = true
+
+        harness.subject.onCastInterruptedSeekRecover(28_000L)
+        // 观察窗内用户切歌：代次和曲目都变了，还写入了一条新提示
+        harness.castPort.state.value = harness.castPort.state.value.copy(pushGeneration = 2L)
+        harness.uiState.value = harness.uiState.value.copy(currentSongId = 2L, error = "新建的提示")
+        advanceTimeBy(2_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertFalse(harness.timeline.contains("recast-current"))
+        assertFalse(harness.timeline.contains("seek-renderer:28000"))
+        assertEquals("新建的提示", harness.uiState.value.error)
+        harness.subject.unbind()
+    }
+
+    @Test
+    fun `原地恢复成功只清自己写入的提示`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(isCasting = true, isEstablished = true)
+        harness.castPort.playRecovers = true
+
+        harness.subject.onCastInterruptedSeekRecover(28_000L)
+        // 恢复期间另有新提示写入：旧实现会用 error=null 把它抹掉
+        harness.uiState.value = harness.uiState.value.copy(error = "用户的新提示")
+        advanceTimeBy(2_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertEquals("用户的新提示", harness.uiState.value.error)
+        assertFalse(harness.timeline.contains("recast-current"))
+        harness.subject.unbind()
+    }
+
+    @Test
+    fun `降级重投后若已切歌则不把旧位置写回新曲`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(
+            isCasting = true,
+            isEstablished = true,
+            playbackState = CastQueuePolicy.STATE_STOPPED
+        )
+        harness.uiState.value = PlaybackUiState(currentSongId = 1L)
+        harness.castPort.playRecovers = false
+
+        harness.subject.onCastInterruptedSeekRecover(28_000L)
+        // 观察窗走完、进入降级重投后的第二个 delay
+        advanceTimeBy(900L)
+        runCurrent()
+        assertTrue(harness.timeline.contains("recast-current"))
+
+        // 重投自身会自增 pushGeneration，所以这里只改曲目标识来模拟期间切歌
+        harness.uiState.value = harness.uiState.value.copy(currentSongId = 2L)
+        advanceTimeBy(900L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertFalse(harness.timeline.contains("seek-renderer:28000"))
+        assertFalse(harness.timeline.contains("optimistic"))
+        harness.subject.unbind()
+    }
 }

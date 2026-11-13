@@ -132,6 +132,37 @@ data class CastState(
 )
 
 /**
+ * 新一轮投送成功时的状态重置清单（供 DlnaCastManager 的 cast-ok 收尾调用）。
+ *
+ * 抽成纯函数是为了让「每轮必须清零的字段」可被 JVM 单测锁死：此前用 `it.copy(...)`
+ * 逐字段重置时漏了 [lastSeekMs]，上一曲用户拖进度条留下的 3s 保护窗会跨曲泄漏到
+ * 新曲（第四轮审查 R4-1）。新增任何「按轮次」的状态字段，都必须在此同步清零。
+ *
+ * [established] 由通道决定：库通道取流不经过本应用 HTTP 服务，直通 true；自有通道
+ * 置 false，须等观测到本轮真实取流才翻回 true（红线 `lastFetchMs > 0L` 不动）。
+ */
+internal fun CastState.forNewCast(
+    nowMs: Long,
+    deviceName: String?,
+    deviceAddress: String?,
+    established: Boolean
+): CastState = copy(
+    isCasting = true,
+    isPreparing = false,
+    deviceName = deviceName,
+    deviceAddress = deviceAddress,
+    error = null,
+    isConnectionLost = false,
+    progressMs = 0L,
+    durationMs = 0L,
+    hasProgressInfo = false,
+    castStartMs = nowMs,
+    lastFetchMs = 0L,
+    lastSeekMs = 0L,
+    isEstablished = established
+)
+
+/**
  * 投送结果（M3）。
  *
  * 为什么要区分「失败」与「已过期」：断网回退只在**失败**时触发。

@@ -468,6 +468,13 @@ internal class CastHttpServer {
          * 会产出 `Content-Range: bytes 500-999/600` 这类 end > total 的非法头。
          * 抽出来是为了让「200 带头不带 Content-Range、206 的 total 与 length 一致」
          * 能在 JVM 单测里锁定，不必起 socket。
+         *
+         * R4-6：`mimeType` 统一过 [DidlBuilder.safeMimeType] 后再拼进头，防止未来
+         * 接入外部传入的 MIME 时把 `\r\n` 拼成伪造的响应头。与 DIDL 侧同口径
+         * 「回退而非抛异常」——`handle()` 外层只有 `runCatching` 记日志，这里抛异常
+         * 会让电视收不到任何响应头，等于把脏 MIME 升级成取流失败。
+         * [CastSourcePolicy.mimeTypeOf] 的返回值全是单段 `type/subtype`，
+         * 白名单全匹配且 `trim()` 无变化，正常路径逐字不变。
          */
         fun buildFileHeader(
             status: Int,
@@ -479,7 +486,7 @@ internal class CastHttpServer {
         ): String = buildString {
             val partial = status == 206
             append("HTTP/1.1 ").append(status).append(if (partial) " Partial Content\r\n" else " OK\r\n")
-            append("Content-Type: ").append(mimeType).append("\r\n")
+            append("Content-Type: ").append(DidlBuilder.safeMimeType(mimeType)).append("\r\n")
             append("Content-Length: ").append(length).append("\r\n")
             append("Accept-Ranges: bytes\r\n")
             if (partial) {

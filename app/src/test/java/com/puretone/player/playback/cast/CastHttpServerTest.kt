@@ -185,6 +185,66 @@ class CastHttpServerTest {
         )
     }
 
+    // R4-6：MIME 拼进响应头前统一过白名单，锁住「不注入、不抛异常、正常值逐字不变」。
+
+    @Test
+    fun `含CRLF的MIME被回退且不会拼出伪造响应头`() {
+        val header = CastHttpServer.buildFileHeader(
+            200, "audio/flac\r\nX-Injected: 1", 1000L, 0L, 999L, 1000L
+        )
+        assertEquals(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 1000\r\n" +
+                "Accept-Ranges: bytes\r\nConnection: close\r\n\r\n",
+            header
+        )
+        assertEquals(1, header.lines().count { it.startsWith("Content-Type: ") })
+        assertTrue(!header.contains("X-Injected"))
+    }
+
+    @Test
+    fun `各种破坏头结构的MIME都回退到同一个安全值`() {
+        val dirty = listOf(
+            "audio/flac\r\nX-Injected: 1",
+            "audio/flac\nX-Injected: 1",
+            "audio/flac\rX-Injected: 1",
+            "audio/flac; charset=utf-8",
+            "audio/flac\" onload=\"x",
+            "audio / flac",
+            "",
+            "\r\n"
+        )
+        dirty.forEach { mime ->
+            val header = CastHttpServer.buildFileHeader(200, mime, 10L, 0L, 9L, 10L)
+            assertTrue(
+                "脏 MIME 未回退: $mime",
+                header.contains("Content-Type: application/octet-stream\r\n")
+            )
+            assertEquals(
+                "脏 MIME 改变了头结构: $mime",
+                1,
+                header.lines().count { it.startsWith("Content-Type: ") }
+            )
+            assertTrue("脏 MIME 破坏了头尾: $mime", header.endsWith("Connection: close\r\n\r\n"))
+        }
+    }
+
+    @Test
+    fun `mimeTypeOf的全部返回值拼头后逐字不变`() {
+        val names = listOf(
+            "a.mp3", "a.flac", "a.wav", "a.m4a", "a.aac",
+            "a.mp4", "a.ogg", "a.oga", "a.unknown"
+        )
+        names.forEach { name ->
+            val mime = CastSourcePolicy.mimeTypeOf(name)
+            assertEquals(
+                "正常 MIME 被改写: $name / $mime",
+                "HTTP/1.1 200 OK\r\nContent-Type: $mime\r\nContent-Length: 1000\r\n" +
+                    "Accept-Ranges: bytes\r\nConnection: close\r\n\r\n",
+                CastHttpServer.buildFileHeader(200, mime, 1000L, 0L, 999L, 1000L)
+            )
+        }
+    }
+
     @Test
     fun `206响应头的total与end共用同一次size判定`() {
         val size = 1000L
