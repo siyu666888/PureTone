@@ -712,4 +712,69 @@ class CastSessionControllerTest {
         assertFalse(harness.timeline.contains("optimistic"))
         harness.subject.unbind()
     }
+
+    // ---------- 第 6 刀：既有 onCastInterrupted 的异步 seek 窗口守护 ----------
+
+    @Test
+    fun `曲中重投观察窗内切歌则放弃回写旧位置`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(
+            isCasting = true, isEstablished = true, pushGeneration = 1L
+        )
+        harness.uiState.value = PlaybackUiState(currentSongId = 1L)
+
+        harness.subject.onCastInterrupted(28_000L)
+        // 800ms 观察窗内用户切歌：代次与曲目都变了，还写入了一条新提示
+        harness.castPort.state.value = harness.castPort.state.value.copy(pushGeneration = 2L)
+        harness.uiState.value = harness.uiState.value.copy(currentSongId = 2L, error = "新建的提示")
+        advanceTimeBy(1_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertTrue("重投本身仍应发生", harness.timeline.contains("recast-current"))
+        assertFalse(harness.timeline.contains("seek-renderer:28000"))
+        assertFalse(harness.timeline.contains("optimistic"))
+        assertEquals("新建的提示", harness.uiState.value.error)
+        harness.subject.unbind()
+    }
+
+    @Test
+    fun `曲中重投观察窗内结束投屏则放弃回写`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(isCasting = true, isEstablished = true)
+        harness.uiState.value = PlaybackUiState(currentSongId = 1L)
+
+        harness.subject.onCastInterrupted(28_000L)
+        harness.castPort.state.value = harness.castPort.state.value.copy(isCasting = false)
+        advanceTimeBy(1_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertTrue(harness.timeline.contains("recast-current"))
+        assertFalse(harness.timeline.contains("seek-renderer:28000"))
+        assertFalse(harness.timeline.contains("optimistic"))
+        harness.subject.unbind()
+    }
+
+    @Test
+    fun `重投自增代次但曲目未变时仍要seek回中断位置`() = runTest {
+        val harness = Harness(CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        harness.castPort.state.value = CastState(
+            isCasting = true, isEstablished = true, pushGeneration = 1L
+        )
+        harness.uiState.value = PlaybackUiState(currentSongId = 1L)
+
+        harness.subject.onCastInterrupted(28_000L)
+        // 模拟 recastCurrent() 的异步 castSong 自增代次：不能因此误判为「已换代」而丢弃续播
+        harness.castPort.state.value = harness.castPort.state.value.copy(pushGeneration = 2L)
+        advanceTimeBy(1_000L)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertTrue(harness.timeline.contains("recast-current"))
+        assertTrue(harness.timeline.contains("seek-renderer:28000"))
+        assertTrue(harness.timeline.contains("optimistic"))
+        assertFalse(harness.timeline.contains("next"))
+        harness.subject.unbind()
+    }
 }

@@ -434,16 +434,32 @@ internal class CastSessionController(
      * 关键是不能走 [next]：真机 20261107_165555 里电视正在重新拉全量流，App 同秒
      * `SetAVTransportURI` 换成下一首，把电视的重连顶掉，DLNA 播放器直接退出画面。
      * 这里只把同一首重新投出去，等它进入 PLAYING 再 seek 回中断位置，队列完全不动。
+     *
+     * 重投后的 [RECAST_SEEK_DELAY_MS] 观察窗内用户可能切歌 / 结束投屏，醒来时不能把
+     * 旧曲的中断位置 seek 到新曲（与 [onCastInterruptedSeekRecover] 降级段同款守护）。
+     * **此处刻意不比对入口代次**：[recastCurrent] 是异步 `castSong()`，会自增
+     * `pushGeneration`，醒来时代次必然已变；照搬 R4-2 观察窗的「代次不变」判据会把
+     * 正常重投的续播全部挡掉。入口代次只写进取消日志，供真机取证。
      */
     override fun onCastInterrupted(progressMs: Long) {
         CastNetworkLog.log("cast-interrupted recast progress=${progressMs}ms")
+        val songId = uiState.value.currentSongId
+        val generation = dlnaCast.state.value.pushGeneration
         // 提示落在统一错误通道（PlayerScreen 把它传给遥控页 notice 位，复用已有展示处）；
         // 诊断日志同时留一份可追溯证据，避免提示被 dismiss 后无从查证。
         uiState.update { it.copy(error = RECAST_NOTICE) }
         recastCurrent()
         scope.launch {
             delay(RECAST_SEEK_DELAY_MS)
-            if (!dlnaCast.state.value.isCasting) return@launch
+            val st = dlnaCast.state.value
+            val songChanged = uiState.value.currentSongId != songId
+            if (!st.isCasting || songChanged) {
+                CastNetworkLog.log(
+                    "cast-interrupted-seek canceled casting=${st.isCasting} " +
+                        "songChanged=$songChanged gen=${st.pushGeneration} entryGen=$generation"
+                )
+                return@launch
+            }
             dlnaCast.seek(progressMs)
             dlnaCast.noteSeekOptimistic()
             CastNetworkLog.log("cast-interrupted-seek progress=${progressMs}ms")

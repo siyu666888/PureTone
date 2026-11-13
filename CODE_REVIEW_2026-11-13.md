@@ -307,4 +307,37 @@ BUILD SUCCESSFUL in 54s
 
 证据：`dist/v1.9.8_第5刀_R4-6_MIME头注入防御_改码与门禁_2026-11-13.md`。红线数值一处未动，未碰 `DidlBuilder` / `CastSourcePolicy` 本身，未出包装机。
 
-**四轮审查 6 项发现 R4-1~R4-6 至此全部落地。** 按 19:41 单独授权执行一次本地 commit（仅本地，未 push）；未 bump / tag / push / Release / 出包，正式 v1.9.8 三 ABI 字节未动。剩余代码待确认项只有「既有 `onCastInterrupted()` 补同款代次守护」小刀；`#197`（无真机）、`#220`（KSP2 暂缓）与 A 方案真机验收仍未闭环。
+**四轮审查 6 项发现 R4-1~R4-6 至此全部落地。** 按 19:41 单独授权执行一次本地 commit `107bcf6`（仅本地，未 push）；未 bump / tag / push / Release / 出包，正式 v1.9.8 三 ABI 字节未动。「既有 `onCastInterrupted()` 补同款代次守护」小刀**已于 §十一 落地**（该刀未 commit）；`#197`（无真机）、`#220`（KSP2 暂缓）与 A 方案真机验收仍未闭环。
+
+---
+
+## 十一、第 6 刀落地记录（11-13 20:04「做那把小刀」授权）
+
+| 项 | 状态 | 落地方式 |
+| --- | --- | --- |
+| 既有 `onCastInterrupted()` 异步 seek 窗口守护 | **已修复** | 入口记 `songId`（代次仅留痕），800ms 醒来校验 `isCasting && 曲目未变`，取消写 `cast-interrupted-seek canceled …` 诊断 |
+
+**第四处对报告建议的订正**：§二 R4-2 补充说「既有 `onCastInterrupted` 可另开一小刀补同款守护」，但「同款」在此应取 R4-2 **第二段**口径而非第一段。`recastCurrent()` → `PlaybackManager.recastCurrentIfCasting()` 是异步 `scope.launch { castSong() }`，`castSong()` 会 `castEpoch.incrementAndGet()` 并写 `pushGeneration`，800ms 后代次必然已变；照搬第一段「代次 == 入口代次」会 100% 挡掉正常重投后的 seek（与第 3 刀订正同一个坑，方向相反）。故只按「曲目 + 投屏态」守护，入口代次只写进取消日志供真机取证。
+
+**残余窄窗（明确记录）**：窗口内「同一首换设备重投」时曲目不变、仍在投屏，旧协程仍会 seek 到旧位置；代价仅一次 seek。不引入「入口代次 +1」这类脆弱假设 —— `castSong()` 失败重试 / APE 转码分支会让 epoch 多次自增。详见证据文档 §六。
+
+新增 3 例 JVM 单测：切歌放弃回写 / 结束投屏放弃回写 / **重投自增代次但同曲仍须 seek**（锁住订正，防回归）。改动仅 `CastSessionController.kt`（+18/-1）与 `CastSessionControllerTest.kt`（+65）。
+
+门禁：定向 `K6_TEST_EXIT=0` / `BUILD SUCCESSFUL in 2m12s`；全量 `GATE_EXIT=0` / `BUILD SUCCESSFUL in 4m35s`；**103 类 / 1015 例 / 0 失败**（本轮 +3，四轮累计 +15）、lint 0 issue、detekt 0 finding、197 主源 Kotlin 文件最大 1069 行零超限、`assembleDebug` 成功。日志 `.workbuddy/gate_20261113_k6_unit.log` / `gate_20261113_k6_full.log`。
+
+证据：`dist/v1.9.8_第6刀_onCastInterrupted异步窗口守护_改码与门禁_2026-11-13.md`。红线数值一处未动，未出包装机。**本轮未 commit**（20:04 只授权做刀），`main` 仍 `107bcf6` / ahead 2，工作树留改动给 diff。
+
+至此第四轮审查的**全部代码待确认项收口**，剩余均为真机 / 环境类事项：A 方案 seek-recover 真机验收（VERIFY-104721 零触发）、`#197`、`#220`、`DisconnectHeight` 目视，以及 `bind=any` 回退 / 热点 / VPN / 换 IP 等历史取证项。
+
+---
+
+## 十二、A 方案真机取证收口（11-13 22:05 追加）
+
+用户 22:05 明确授权「收口」，采纳 `dist/v1.9.8_VERIFY-20261113-203452_215846判读_*` §八 的建议。权威结论文书：`dist/v1.9.8_A方案seek-recover真机取证收口_2026-11-13.md`。
+
+- **结论原文**：「A 方案真机未复现曲中 STOPPED 触发条件，保留 JVM 单测覆盖（103 类 / 1015 例）与既有代码；不再为凑触发条件无限出包 / 取证。」必须带「**曲中**」二字；**收口 ≠ 已验收，也 ≠ 修复无效**。
+- **状态口径**：本报告 §十 / §十一 中「A 方案真机验收仍未闭环」「VERIFY-104721 零触发」均为各自撰写时刻的状态描述，**最终状态以本节为准**：三轮 VERIFY（104721 零 STOPPED、210439 五次曲末 STOPPED、215846 按 v2 卡施压达标仍 1 次曲末 STOPPED）合计 104+ 次拖动、6 次 STOPPED、曲中 STOPPED 0 次，手机侧可控变量已穷尽，剩余触发权在电视侧。
+- **代码结论不变**：R4-1~R4-6（`107bcf6`）、第 6 刀（未 commit）与 A 方案主链路（`aff7704`）全部保留；红线（10s 曲末容差、3s 保护窗、2500/1000ms 确认窗等）一处未动；103 类 / 1015 例单测继续作为唯一运行期替代覆盖。
+- **不再执行**：不再出 VERIFY 包、不再写新操作卡、不再为凑触发条件改红线或代码；v2 卡与两轮判读文档转为方法 / 证据存档。
+- **其余未闭环项继续挂起**：`#197`（无真机 Baseline Profile）、`#220`（KSP2 暂缓）、`DisconnectHeight` 目视、`bind=any` 回退 / 热点 / VPN / 换 IP、UNVERIFIED 口径、`HttpUtil` 元数据联网、G1 KICK、18~39s 超慢取流、R5 第二台品牌、R3 曲中按停止。C 项真机验证已由用户 11-13 17:37 取消。
+- **边界**：本节及收口文书只写文档与状态记忆；未改码 / 测试 / 红线，未 commit / bump / tag / push / Release / 出包，未重打 zip / 重传资料库，正式三 ABI 字节未动。
