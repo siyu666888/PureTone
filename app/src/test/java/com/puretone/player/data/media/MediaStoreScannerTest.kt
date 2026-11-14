@@ -1,6 +1,7 @@
 package com.puretone.player.data.media
 
 import android.content.Context
+import android.database.MatrixCursor
 import android.provider.MediaStore
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
@@ -10,9 +11,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import org.robolectric.fakes.RoboCursor
+import org.robolectric.shadows.ShadowContentResolver
 
 /**
  * 扫描器过滤规则回归测试。
@@ -21,6 +21,12 @@ import org.robolectric.fakes.RoboCursor
  * （把应删除的录音路径传给 NOT IN 查询，反而删掉音乐、留下录音）。
  * 本测试锁定 Kotlin 侧二次过滤这一兜底层：即使 SQL LIKE 在个别机型失效，
  * 录音/铃声/提示音也必须被剔除，正常音乐必须保留。
+ *
+ * robolectric 4.18 适配：4.15+ 的 `FakeMediaProvider` 会真执行 selection，
+ * 原来的 `setCursor(RoboCursor)` 注入失效；统一改用 [SqlLikeDisabledProvider]
+ * （忽略 selection + `MatrixCursor`），既保住「SQL LIKE 失效」语义，也出清了
+ * deprecated `RoboCursor`。每个走 `scan()` 的用例都补了负向断言，证明 provider
+ * 确实被调用且确实返回全量行，避免假绿灯。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -39,19 +45,20 @@ class MediaStoreScannerTest {
         mime, 2024, 1, 1_000L, 1_000L
     )
 
-    private fun register(vararg rows: Array<Any?>) {
-        val cursor = RoboCursor()
-        cursor.setColumnNames(PROJECTION.toList())
-        cursor.setResults(rows)
-        shadowOf(ApplicationProvider.getApplicationContext<Context>().contentResolver)
-            .setCursor(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, cursor)
+    /** 注册「忽略 selection」的 MediaStore provider，返回替身供负向断言使用。 */
+    private fun register(vararg rows: Array<Any?>): SqlLikeDisabledProvider {
+        val provider = SqlLikeDisabledProvider(PROJECTION.toTypedArray(), rows.asList())
+        ShadowContentResolver.registerProviderInternal(MediaStore.AUTHORITY, provider)
+        return provider
     }
 
     @Test
     fun `keeps music and drops recordings even when sql like fails`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         // 4 首正常音乐（含 Download/ 下的 ogg），5 个录音/非音乐
-        register(
+        // provider 忽略 selection，9 行原样返回——恰好模拟"SQL LIKE 失效"的机型，
+        // 验证 Kotlin 兜底过滤。
+        val provider = register(
             songRow(1, "Song A", "/storage/emulated/0/Music/a.mp3", "audio/mpeg", 200_000),
             songRow(2, "Song B", "/storage/emulated/0/Music/b.flac", "audio/flac", 300_000),
             songRow(3, "Song C", "/storage/emulated/0/Music/c.m4a", "audio/mp4", 180_000),
@@ -62,10 +69,21 @@ class MediaStoreScannerTest {
             songRow(8, "Note", "/storage/emulated/0/Music/Voice 002.amr", "audio/amr", 50_000),
             songRow(9, "Rec", "/storage/emulated/0/VoiceRecorder/rec2.3gp", "audio/3gpp", 70_000)
         )
-        // RoboCursor 不应用 selection，全部 9 行都会返回——
-        // 恰好模拟"SQL LIKE 失效"的机型，验证 Kotlin 兜底过滤。
+
         val result = MediaStoreScanner(context).scan()
         val paths = result.songs.map { it.path }
+
+        // 防假绿灯负向断言：selection 确实经真实 query 路径送达 provider，
+        // 且 provider 确实忽略了它、返回全部 9 行——否则 Kotlin 兜底过滤根本没被覆盖。
+        assertTrue(
+            "SQL selection 未送达 provider → 未走真实查询路径",
+            provider.receivedSelections.isNotEmpty()
+        )
+        assertTrue(
+            "selection 缺少时长/MIME 条件 → 查询路径可疑：${provider.receivedSelections}",
+            provider.receivedSelections.any { it.contains("duration") && it.contains("mime_type") }
+        )
+        assertEquals("provider 应忽略 selection 返回全部 9 行", 9, provider.returnedRows)
 
         assertEquals(4, result.songs.size)
         assertTrue(paths.contains("/storage/emulated/0/Music/a.mp3"))
@@ -86,21 +104,23 @@ class MediaStoreScannerTest {
     @Test
     fun `keeps music that merely has music-like names`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        register(
+        val provider = register(
             // 名字里带"录音"但确属音乐目录的音乐文件不应被误杀
             songRow(1, "录音棚的春天", "/storage/emulated/0/Music/录音棚的春天.mp3", "audio/mpeg", 200_000),
             songRow(2, "Recorded Live", "/storage/emulated/0/Music/live.flac", "audio/flac", 300_000)
         )
         val result = MediaStoreScanner(context).scan()
 
+        // 负向断言：确认 2 行确实经 provider 送达，而不是查询恒空导致的巧合通过。
+        assertTrue("查询未送达 provider", provider.receivedSelections.isNotEmpty())
+        assertEquals("provider 应返回全部 2 行", 2, provider.returnedRows)
         assertEquals(2, result.songs.size)
         assertEquals(0, result.skippedNonMusic)
     }
 
     /**
      * 多卷去重（P1-6）：同一路径经主卷与 SD 卷各返回一次（mediaStoreId 不同），
-     * 只入库一次。Robolectric 的 getExternalVolumeNames 返回空，卷枚举走不到，
-     * 这里直接验证 readRows 的合并语义。
+     * 只入库一次。这里直接验证 readRows 的合并语义（不经过 provider）。
      */
     @Test
     fun `readRows dedups by path across volumes`() {
@@ -109,9 +129,8 @@ class MediaStoreScannerTest {
         val songsByPath = LinkedHashMap<String, ScannedSong>()
         val albumArtCache = HashMap<String, Boolean>()
 
-        fun cursor(vararg rows: Array<Any?>) = RoboCursor().apply {
-            setColumnNames(PROJECTION.toList())
-            setResults(rows)
+        fun cursor(vararg rows: Array<Any?>) = MatrixCursor(PROJECTION.toTypedArray()).apply {
+            rows.forEach { addRow(it.asList()) }
         }
 
         val primary = cursor(songRow(1, "A", "/storage/emulated/0/Music/a.mp3", "audio/mpeg", 200_000))
@@ -135,7 +154,7 @@ class MediaStoreScannerTest {
     @Test
     fun `normalizes unknown artist and album placeholders`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        register(
+        val provider = register(
             songRow(
                 1, "Song A", "/storage/emulated/0/Music/a.mp3", "audio/mpeg", 200_000,
                 artist = "<unknown>", album = "<Unknown>"
@@ -151,6 +170,9 @@ class MediaStoreScannerTest {
         )
         val result = MediaStoreScanner(context).scan()
 
+        // 负向断言：确认 3 行确实经 provider 送达。
+        assertTrue("查询未送达 provider", provider.receivedSelections.isNotEmpty())
+        assertEquals("provider 应返回全部 3 行", 3, provider.returnedRows)
         assertEquals(3, result.songs.size)
         // 占位符一律归一为空串（真实值原样保留 trim）
         assertTrue(result.songs.all { it.artist.isEmpty() })
@@ -223,18 +245,15 @@ class MediaStoreScannerTest {
     @Test
     fun `readPaths 与入库口径一致，排除录音与系统目录`() {
         val scanner = MediaStoreScanner(ApplicationProvider.getApplicationContext())
-        val cursor = RoboCursor()
-        cursor.setColumnNames(
-            listOf(MediaStore.Audio.Media.DATA, MediaStore.Audio.Media.MIME_TYPE)
+        val cursor = MatrixCursor(
+            arrayOf(MediaStore.Audio.Media.DATA, MediaStore.Audio.Media.MIME_TYPE)
         )
-        cursor.setResults(
-            arrayOf(
-                arrayOf<Any?>("/storage/emulated/0/Music/a.mp3", "audio/mpeg"),
-                arrayOf<Any?>("/storage/emulated/0/Music/b.flac", "audio/flac"),
-                arrayOf<Any?>("/storage/emulated/0/Recordings/rec.m4a", "audio/mp4"),
-                arrayOf<Any?>("/storage/emulated/0/Sounds/voice.amr", "audio/amr")
-            )
-        )
+        listOf(
+            arrayOf<Any?>("/storage/emulated/0/Music/a.mp3", "audio/mpeg"),
+            arrayOf<Any?>("/storage/emulated/0/Music/b.flac", "audio/flac"),
+            arrayOf<Any?>("/storage/emulated/0/Recordings/rec.m4a", "audio/mp4"),
+            arrayOf<Any?>("/storage/emulated/0/Sounds/voice.amr", "audio/amr")
+        ).forEach { cursor.addRow(it.asList()) }
 
         val paths = scanner.readPaths(cursor)
 

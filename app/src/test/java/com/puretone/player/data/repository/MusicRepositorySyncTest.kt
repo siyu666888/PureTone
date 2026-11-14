@@ -8,6 +8,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.puretone.player.data.local.PureToneDatabase
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.media.MediaStoreScanner
+import com.puretone.player.data.media.SqlLikeDisabledProvider
 import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.playback.ReplayGainExtractor
 import kotlinx.coroutines.CoroutineScope
@@ -22,9 +23,8 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import org.robolectric.fakes.RoboCursor
+import org.robolectric.shadows.ShadowContentResolver
 import java.io.File
 
 /**
@@ -32,7 +32,13 @@ import java.io.File
  *
  * 背景：用户反馈"扫描结果全是录音类文件"。根因是 [MusicRepository.syncLibrary]
  * 把"应删除的路径集合"传给了 `DELETE ... WHERE path NOT IN (...)`，语义反了，
- * 结果音乐被删光、录音全部留下。这两个用例锁定正确语义与空扫描保护。
+ * 结果音乐被删光、录音全部留下。这几个用例锁定正确语义与空扫描保护。
+ *
+ * robolectric 4.18 适配：改用 [SqlLikeDisabledProvider]（忽略 selection +
+ * `MatrixCursor`）取代失效的 `setCursor(RoboCursor)`。替身会记录两类 query：
+ * 变更行/全量（13 列 + SORT_TITLE）与增量路径清单（2 列 + sortOrder=null）。
+ * 每个用例都据此补了**可证伪的负向断言**：既证明 provider 确实被调用、确实返回
+ * 预期行数，也用 `pathListQueries` 区分全量/增量，避免「查询恒空」造成的巧合通过。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -86,19 +92,29 @@ class MusicRepositorySyncTest {
         favorite = favorite
     )
 
-    /** 注册 MediaStore 扫描结果（模拟系统媒体库当前内容） */
-    private fun registerMediaStore(vararg paths: String) {
+    /**
+     * 注册 MediaStore 扫描结果（模拟系统媒体库当前内容），返回替身供负向断言。
+     *
+     * [pathListUnavailable] 为 true 时，只让「增量路径清单」查询返回空 cursor，
+     * 用于模拟清单不可信、必须命中安全闸的场景；变更行查询仍照常返回全部行。
+     */
+    private fun registerMediaStore(
+        vararg paths: String,
+        pathListUnavailable: Boolean = false
+    ): SqlLikeDisabledProvider {
         val rows = Array(paths.size) { i ->
             arrayOf<Any?>(
                 i.toLong(), paths[i].substringAfterLast('/'), "Artist", "Album", 1L,
                 200_000L, paths[i], 1_000L, "audio/mpeg", 2024, 1, 1_000L, 1_000L
             )
         }
-        val cursor = RoboCursor()
-        cursor.setColumnNames(PROJECTION.toList())
-        cursor.setResults(rows)
-        shadowOf(ApplicationProvider.getApplicationContext<Context>().contentResolver)
-            .setCursor(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, cursor)
+        val provider = SqlLikeDisabledProvider(
+            columns = PROJECTION.toTypedArray(),
+            rows = rows.asList(),
+            pathListUnavailable = pathListUnavailable
+        )
+        ShadowContentResolver.registerProviderInternal(MediaStore.AUTHORITY, provider)
+        return provider
     }
 
     @Test
@@ -116,9 +132,14 @@ class MusicRepositorySyncTest {
             )
         )
         // 本次扫描（过滤后）只剩 2 首音乐
-        registerMediaStore(musicA, musicB)
+        val provider = registerMediaStore(musicA, musicB)
 
         val result = repo.syncLibrary()
+
+        // 负向断言：2 行确实经 provider 送达，且本次走的是全量（无路径清单查询）。
+        assertTrue("查询未送达 provider", provider.fullProjectionQueries > 0)
+        assertEquals("provider 应返回全部 2 行", 2, provider.returnedRows)
+        assertEquals("本例不应走增量", 0, provider.pathListQueries)
 
         val remaining = db.songDao().getAll()
         assertEquals(2, remaining.size)
@@ -139,19 +160,23 @@ class MusicRepositorySyncTest {
      * 场景：用户清了 App 数据（或数据被外部清除），但 DataStore 里的 lastScanMs
      * 可能仍在。此时若走增量，只会拉到「上次之后的变更行」——一个空库永远补不回来。
      *
-     * 判别原理：测试环境下增量路径查询拿不到数据（见下一条用例），会命中安全闸
-     * 返回 total=0；只有真正走了全量才会有 added=2 / total=2。
+     * 判别原理（4.18 替身）：全量 `scan()` 只发 13 列变更行查询；增量
+     * `scanChanged()` 会额外发一次 2 列路径清单查询。用 `pathListQueries == 0`
+     * 断言确实走了全量，比 `added == 2` 更可证伪（后者在两种分支下都可能成立）。
      */
     @Test
     fun `empty library forces full scan even with previous timestamp`() = runTest {
         settings.setLastScanMs(System.currentTimeMillis() - 60_000)
-        registerMediaStore(
+        val provider = registerMediaStore(
             "/storage/emulated/0/Music/a.mp3",
             "/storage/emulated/0/Music/b.flac"
         )
 
         val result = repo.syncLibrary()
 
+        assertTrue("查询未送达 provider", provider.fullProjectionQueries > 0)
+        assertEquals("provider 应返回全部 2 行", 2, provider.returnedRows)
+        assertEquals("空库必须走全量：不应发出路径清单查询", 0, provider.pathListQueries)
         assertEquals("空库应走全量并入库 2 首", 2, result.added)
         assertEquals(2, result.total)
         assertEquals(2, db.songDao().getAll().size)
@@ -164,6 +189,10 @@ class MusicRepositorySyncTest {
      * 说明本次同步不可信——此时按安全闸处理，而不是把库里所有行都当成「已删除」。
      * 注意这与全量扫描不同：增量下「变更行」为空是完全正常的（没有改动），
      * 所以安全闸的判据必须是路径清单，不能是变更行。
+     *
+     * 4.18 替身下用 `pathListUnavailable = true` **显式**模拟清单不可信；
+     * 三条负向断言分别证明：provider 确实被调用、走的确实是增量、
+     * 且清单确实为空——排除「provider 根本没被调用」也会绿灯的巧合。
      */
     @Test
     fun `incremental sync without path list never deletes`() = runTest {
@@ -174,15 +203,31 @@ class MusicRepositorySyncTest {
             )
         )
         settings.setLastScanMs(System.currentTimeMillis() - 60_000)
-        // 库非空 + 有时间戳 → 走增量；路径清单在测试环境下必然为空
-        registerMediaStore("/storage/emulated/0/Music/a.mp3")
+        // 库非空 + 有时间戳 → 走增量；清单查询显式返回空以命中安全闸
+        val provider = registerMediaStore(
+            "/storage/emulated/0/Music/a.mp3",
+            pathListUnavailable = true
+        )
 
         val result = repo.syncLibrary()
 
+        assertTrue("变更行查询未送达 provider", provider.fullProjectionQueries > 0)
+        assertTrue("本例应走增量并发出路径清单查询", provider.pathListQueries > 0)
+        assertEquals(
+            "路径清单应为空以命中安全闸：${provider.queryLog}",
+            0,
+            provider.pathListCursorRows
+        )
         assertEquals("路径清单不可信时不得删歌", 0, result.removed)
         assertEquals("曲库应保持原样", 2, db.songDao().getAll().size)
     }
 
+    /**
+     * 扫描结果为空时不得清空曲库。
+     *
+     * 与「provider 根本没被调用」区分：4.18 下查询恒返回空也会让断言变绿，
+     * 因此必须显式证明 provider 被调用且确实返回 0 行。
+     */
     @Test
     fun `empty scan does not wipe library`() = runTest {
         db.songDao().upsertAll(
@@ -192,10 +237,13 @@ class MusicRepositorySyncTest {
             )
         )
         // 扫描结果为空（如授权被撤、媒体库暂不可读）：不得清空曲库
-        registerMediaStore()
+        val provider = registerMediaStore()
 
         val result = repo.syncLibrary()
 
+        assertTrue("查询未送达 provider → 无法区分 provider 是否生效", provider.fullProjectionQueries > 0)
+        assertEquals("本次扫描应确实读到 0 行", 0, provider.returnedRows)
+        assertEquals("本例不应走增量", 0, provider.pathListQueries)
         assertEquals(2, db.songDao().getAll().size)
         assertEquals(0, result.removed)
         assertEquals(2, result.total)
