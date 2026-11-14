@@ -426,10 +426,10 @@
     <string name="pt_settings_035" formatted="false">APE 转码缓存</string>
     <!-- 清理 -->
     <string name="pt_settings_036" formatted="false">清理</string>
-    <!-- 响度（ReplayGain） -->
-    <string name="pt_settings_037" formatted="false">响度（ReplayGain）</string>
-    <!-- 启用 ReplayGain -->
-    <string name="pt_settings_038" formatted="false">启用 ReplayGain</string>
+    <!-- 响度（ReplayGain 归一化） -->
+    <string name="pt_settings_037" formatted="false">响度</string>
+    <!-- 启用响度 -->
+    <string name="pt_settings_038" formatted="false">启用响度</string>
     <!-- 曲目 -->
     <string name="pt_settings_039" formatted="false">曲目</string>
     <!-- 专辑 -->
@@ -438,8 +438,8 @@
     <string name="pt_settings_041" formatted="false">模式</string>
     <!-- 补偿 (dB) -->
     <string name="pt_settings_042" formatted="false">补偿 (dB)</string>
-    <!-- 依据音频文件内 ReplayGain 标签自动调整响度，文件无标签时本项不生效。 -->
-    <string name="pt_settings_043" formatted="false">依据音频文件内 ReplayGain 标签自动调整响度，文件无标签时本项不生效。</string>
+    <!-- 依据音频文件内响度标签自动调整，文件无标签时本项不生效。 -->
+    <string name="pt_settings_043" formatted="false">依据音频文件内响度标签自动调整，文件无标签时本项不生效。</string>
     <!-- PureTone · 纯净之音 -->
     <string name="pt_settings_044" formatted="false">PureTone · 纯净之音</string>
     <!-- 系统 -->

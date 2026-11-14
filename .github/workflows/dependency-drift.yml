@@ -50,7 +50,7 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: ${{ runner.os }}-gradle-
 
-      # dependencyUpdates 来自 com.github.ben-manes.versions 插件（根项目已 apply），
+      # dependencyUpdates 来自 io.github.ben-manes.versions 插件（根项目已 apply），
       # 它会解析所有声明的依赖并比对 Maven Central / Gradle Plugin Portal 的最新版。
       # 该任务不会修改任何文件，只产出报告。
       - name: 生成依赖漂移报告
