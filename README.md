@@ -66,15 +66,15 @@
 | 分类 | 技术 |
 | --- | --- |
 | 语言 | Kotlin 2.0.21 |
-| UI | Jetpack Compose (BOM 2024.09.00) · Material 3 |
-| 架构 | 单向数据流 · ViewModel + StateFlow · Hilt 2.51.1 依赖注入 |
+| UI | Jetpack Compose (BOM 2025.02.00) · Material 3 |
+| 架构 | 单向数据流 · ViewModel + StateFlow · Hilt 2.56.2 依赖注入 |
 | 播放 | AndroidX Media3 (ExoPlayer 1.6.0) + media3-session |
-| 持久化 | Room 2.6.1 (KSP，schema v7) · DataStore 1.1.1 |
+| 持久化 | Room 2.7.0 (KSP，schema v7) · DataStore 1.1.1 |
 | 图片 | Coil 2.7.0 |
 | 音频处理 | `dev.ffmpegkit-maintained:ffmpeg-kit-min` 6.0.3（本地 vendored AAR，16KB 页对齐） |
 | 桌面小部件 | Glance AppWidget |
 | 构建 | AGP 8.6.1 · Gradle Wrapper 8.14.6（本地亦可用独立 Gradle 8.7）· JDK 17 · compileSdk 35 / targetSdk 35 / minSdk 26 |
-| 测试 | Robolectric 4.12.2 · Turbine 1.1.0（**488 用例 / 57 类全绿**） |
+| 测试 | Robolectric 4.12.2 · Turbine 1.1.0（**103 类 / 1015 例全绿**） |
 | 静态检查 | Android Lint（`warningsAsErrors` + baseline 冻结 16 条存量）· detekt 1.23.8（baseline 当前 0 条，存量已清零）· 文件行数门禁 ≤ 1200 行（白名单 0 个） |
 | CI | GitHub Actions（单测 / Debug+Release 构建 / apksigner 验签 / Baseline Profile 打包断言 **+ 规则有效性校验** / lint / detekt / 文件行数 / **16KB 对齐真门禁**）+ Dependabot 依赖升级 + 每周依赖漂移巡检 |
 
