@@ -329,39 +329,40 @@ fun SettingsScreen(
                 }
             }
 
-            // ReplayGain（P1）：响度归一化，让不同音量的歌曲听起来响度一致
+            // ReplayGain（P1）：响度归一化，让不同音量的歌曲听起来响度一致。
+            // 关闭（默认）时只显示总开关；开启后才展开模式 / 补偿 / 说明，避免无关设置常驻。
             SettingsGroup(title = stringResource(R.string.pt_settings_037)) {
                 SwitchRow(
                     label = stringResource(R.string.pt_settings_038),
                     checked = s.replayGainEnabled,
                     onChanged = { vm.setReplayGainEnabled(it) }
                 )
-                // 模式：按曲目（每首独立归一）/ 按专辑（同专辑内响度一致，曲目间过渡更平）
-                val rgModes = listOf(PureToneSettings.RG_TRACK, PureToneSettings.RG_ALBUM)
-                val rgModeLabels = listOf(stringResource(R.string.pt_settings_039), stringResource(R.string.pt_settings_040))
-                SettingsSegmentRow(
-                    label = stringResource(R.string.pt_settings_041),
-                    options = rgModeLabels,
-                    selectedIndex = rgModes.indexOf(s.replayGainMode).coerceAtLeast(0),
-                    enabled = s.replayGainEnabled,
-                    onSelect = { vm.setReplayGainMode(rgModes[it]) }
-                )
-                // preamp：在 RG 增益之上叠加的手调补偿（dB，范围 -12 ~ +12）
-                SliderRow(
-                    label = stringResource(R.string.pt_settings_042),
-                    value = s.replayGainPreampDb,
-                    valueRange = PureToneSettings.RG_PREAMP_MIN_DB..PureToneSettings.RG_PREAMP_MAX_DB,
-                    steps = 48, // -12..12 共 24 个整数 dB，每 0.5 一档 → 48 步
-                    enabled = s.replayGainEnabled,
-                    valueText = "%.1f dB".format(s.replayGainPreampDb),
-                    onValueChange = { vm.setReplayGainPreamp(it) }
-                )
-                Text(
-                    stringResource(R.string.pt_settings_043),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
+                if (s.replayGainEnabled) {
+                    // 模式：按曲目（每首独立归一）/ 按专辑（同专辑内响度一致，曲目间过渡更平）
+                    val rgModes = listOf(PureToneSettings.RG_TRACK, PureToneSettings.RG_ALBUM)
+                    val rgModeLabels = listOf(stringResource(R.string.pt_settings_039), stringResource(R.string.pt_settings_040))
+                    SettingsSegmentRow(
+                        label = stringResource(R.string.pt_settings_041),
+                        options = rgModeLabels,
+                        selectedIndex = rgModes.indexOf(s.replayGainMode).coerceAtLeast(0),
+                        onSelect = { vm.setReplayGainMode(rgModes[it]) }
+                    )
+                    // preamp：在 RG 增益之上叠加的手调补偿（dB，范围 -12 ~ +12）
+                    SliderRow(
+                        label = stringResource(R.string.pt_settings_042),
+                        value = s.replayGainPreampDb,
+                        valueRange = PureToneSettings.RG_PREAMP_MIN_DB..PureToneSettings.RG_PREAMP_MAX_DB,
+                        steps = 48, // -12..12 共 24 个整数 dB，每 0.5 一档 → 48 步
+                        valueText = "%.1f dB".format(s.replayGainPreampDb),
+                        onValueChange = { vm.setReplayGainPreamp(it) }
+                    )
+                    Text(
+                        stringResource(R.string.pt_settings_043),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
             }
 
             // 诊断（P3-1）：导出崩溃与设备信息，便于远程定位问题（不含任何个人曲库内容）。
