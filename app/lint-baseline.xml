@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- 2026-11-06 清零：16 条存量告警已逐条处理。
-     真修 12 条（删冗余注解/死分支/未用资源、state 去装箱、TOML、图标单色层、目录合并）；
-     4 条业务上必须保留的行为改为就地 tools:ignore 并写明理由。
-     保留空骨架供 lint.baseline 指向；新增告警一律按 warningsAsErrors 直接失败。 -->
-<issues format="6" by="lint 8.6.0" type="baseline" client="gradle" dependencies="false" name="AGP (8.6.0)" variant="all" version="8.6.0" />
+<issues format="6" by="lint 9.5.1" type="baseline" client="gradle" dependencies="false" name="AGP (9.5.1)" variant="all" version="9.5.1">
+
+</issues>

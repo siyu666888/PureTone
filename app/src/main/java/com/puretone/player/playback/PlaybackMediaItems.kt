@@ -1,6 +1,7 @@
 package com.puretone.player.playback
 
 import android.net.Uri
+import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import com.puretone.player.data.local.entity.SongEntity
@@ -28,7 +29,7 @@ internal object PlaybackMediaItems {
      * 对非本应用目录会失败。
      */
     fun mediaStoreUri(song: SongEntity): Uri =
-        Uri.parse("content://media/external/audio/media/${song.mediaStoreId}")
+        "content://media/external/audio/media/${song.mediaStoreId}".toUri()
 
     /**
      * 裸文件路径 → URI，转义 `#` / `?`（P3-23）。
@@ -38,7 +39,7 @@ internal object PlaybackMediaItems {
      * 使错误类型更准确、避免偶发的路径截断误播。
      */
     fun rawPathUri(path: String): Uri =
-        Uri.parse(path.replace("#", "%23").replace("?", "%3F"))
+        path.replace("#", "%23").replace("?", "%3F").toUri()
 
     /** 由歌曲 + 实际播放 URI 构造媒体项；[playUri] 为空时回退到源文件路径 */
     fun toMediaItem(song: SongEntity, playUri: Uri?): MediaItem {
@@ -46,7 +47,7 @@ internal object PlaybackMediaItems {
             .setTitle(song.title)
             .setArtist(song.artist)
             .setAlbumTitle(song.album)
-            .setArtworkUri(song.coverUri?.let { Uri.parse(it) })
+            .setArtworkUri(song.coverUri?.let { it.toUri() })
             .setIsBrowsable(false)
             .setIsPlayable(true)
             .setDurationMs(song.duration)
@@ -81,7 +82,7 @@ internal object PlaybackMediaItems {
         songId = song.id,
         title = song.title,
         artist = song.artist,
-        coverUri = song.coverUri?.let { Uri.parse(it) },
+        coverUri = song.coverUri?.let { it.toUri() },
         durationMs = song.duration,
         isApe = song.isApe,
         filePath = song.path,

@@ -19,7 +19,6 @@ plugins {
     // 这里**不能再带 version**（否则报 "already on the classpath"）；
     // 而 androidx.baselineprofile 不在 classpath 上，**必须带 version**。
     id("com.android.test")
-    id("org.jetbrains.kotlin.android")
     alias(libs.plugins.baselineprofile)
     // P2-2 配套：benchmark 模块也纳入 detekt 门禁（配置与 app 模块同源）。
     // 注意：detekt 插件在 app 模块已 apply，故这里**不能带 version**

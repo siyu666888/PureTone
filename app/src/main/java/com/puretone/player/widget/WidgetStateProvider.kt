@@ -5,7 +5,9 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
-import android.net.Uri
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.scale
+import androidx.core.net.toUri
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.MusicRepository
 import com.puretone.player.data.settings.PureToneSettings
@@ -85,7 +87,7 @@ class WidgetStateProvider @Inject constructor(
     private fun decodeCoverUri(raw: String?): Bitmap? {
         val value = raw?.takeIf { it.isNotBlank() } ?: return null
         return runCatching {
-            val uri = Uri.parse(value)
+            val uri = value.toUri()
             val stream = if (uri.scheme.isNullOrBlank()) {
                 // 无 scheme = 绝对路径（用户手动/联网匹配写入的封面文件）
                 val file = File(value)
@@ -144,7 +146,7 @@ class WidgetStateProvider @Inject constructor(
         val left = (src.width - side) / 2
         val top = (src.height - side) / 2
         val cropped = Bitmap.createBitmap(src, left, top, side, side)
-        return Bitmap.createScaledBitmap(cropped, size, size, true)
+        return cropped.scale(size, size)
     }
 }
 

@@ -5,6 +5,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import androidx.core.net.toUri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.puretone.player.util.UnknownText
 import kotlinx.coroutines.Dispatchers
@@ -326,7 +327,7 @@ class MediaStoreScanner @Inject constructor(
         // P1-6：键带卷名（ALBUM_ID 每卷独立，见 scan() 里的缓存声明）
         val key = "$volumeName:$albumId"
         cache[key]?.let { return it }
-        val uri = Uri.parse("content://media/$volumeName/audio/albumart/$albumId")
+        val uri = "content://media/$volumeName/audio/albumart/$albumId".toUri()
         val exists = runCatching {
             context.contentResolver.openInputStream(uri)?.use { input -> input.read() != -1 } ?: false
         }.getOrDefault(false)
