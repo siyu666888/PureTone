@@ -340,7 +340,7 @@ fun BrowseScreen(
                         ) {
                             Icon(
                                 Icons.Filled.PlayArrow,
-                                contentDescription = null,
+                                contentDescription = null, // 装饰性，非交互
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(Modifier.size(6.dp))

@@ -110,7 +110,7 @@ internal fun QueueRow(
             if (entry.coverUri != null) {
                 AsyncImage(
                     model = entry.coverUri,
-                    contentDescription = null,
+                    contentDescription = null, // 装饰性，非交互
                     modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
                     contentScale = ContentScale.Crop
                 )

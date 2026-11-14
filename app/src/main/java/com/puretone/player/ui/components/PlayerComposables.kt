@@ -103,7 +103,7 @@ fun SongRow(
                 if (selected) {
                     Icon(
                         Icons.Rounded.Check,
-                        contentDescription = null,
+                        contentDescription = null, // 装饰性，非交互
                         tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(16.dp)
                     )
@@ -120,7 +120,7 @@ fun SongRow(
             if (song.coverUri != null) {
                 AsyncImage(
                     model = song.coverUri,
-                    contentDescription = null,
+                    contentDescription = null, // 装饰性，非交互
                     modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
                     contentScale = ContentScale.Crop
                 )

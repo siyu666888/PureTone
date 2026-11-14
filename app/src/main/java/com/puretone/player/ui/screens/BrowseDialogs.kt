@@ -97,7 +97,7 @@ fun SongActionSheet(
                     if (song.coverUri != null) {
                         AsyncImage(
                             model = song.coverUri,
-                            contentDescription = null,
+                            contentDescription = null, // 装饰性，非交互
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop
                         )
@@ -159,7 +159,7 @@ private fun ActionItem(
     ) {
         Icon(
             imageVector,
-            contentDescription = null,
+            contentDescription = null, // 装饰性，非交互
             tint = if (tint != Color.Unspecified) tint else MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.size(22.dp)
         )
