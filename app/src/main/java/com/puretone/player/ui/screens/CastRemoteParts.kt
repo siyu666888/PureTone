@@ -76,7 +76,7 @@ internal fun CastBackdrop(coverUri: Uri?) {
         if (!isPureBlack && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && coverUri != null) {
             AsyncImage(
                 model = coverUri,
-                contentDescription = null,
+                contentDescription = null, // 装饰性，非交互
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()

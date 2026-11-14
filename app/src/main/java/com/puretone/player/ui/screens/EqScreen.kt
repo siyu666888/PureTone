@@ -119,14 +119,17 @@ fun EqScreen(
                                 modifier = Modifier.padding(vertical = 6.dp),
                                 style = MaterialTheme.typography.labelLarge
                             )
-                            Icon(
-                                imageVector = Icons.Filled.Delete,
-                                contentDescription = stringResource(R.string.pt_eq_006, name),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .size(20.dp)
-                                    .clickable { vm.deleteCustomPreset(name) }
-                            )
+                            IconButton(
+                                onClick = { vm.deleteCustomPreset(name) },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Delete,
+                                    contentDescription = stringResource(R.string.pt_eq_006, name),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }

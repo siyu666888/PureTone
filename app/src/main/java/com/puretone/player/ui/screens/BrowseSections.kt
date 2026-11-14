@@ -218,7 +218,7 @@ private fun AlbumCard(album: AlbumSummary, onClick: () -> Unit) {
             if (album.coverUri != null) {
                 AsyncImage(
                     model = album.coverUri,
-                    contentDescription = null,
+                    contentDescription = null, // 装饰性，非交互
                     modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
                     contentScale = ContentScale.Crop
                 )
@@ -277,7 +277,7 @@ internal fun ArtistsTabContent(
                     if (artist.coverUri != null) {
                         AsyncImage(
                             model = artist.coverUri,
-                            contentDescription = null,
+                            contentDescription = null, // 装饰性，非交互
                             modifier = Modifier.fillMaxSize().clip(CircleShape),
                             contentScale = ContentScale.Crop
                         )
@@ -340,7 +340,7 @@ internal fun FoldersTabContent(
                 ) {
                     Icon(
                         Icons.Rounded.Folder,
-                        contentDescription = null,
+                        contentDescription = null, // 装饰性，非交互
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(28.dp)
                     )

@@ -245,7 +245,7 @@ private fun CastDeviceRow(
     ) {
         androidx.compose.material3.Icon(
             if (device.isTV) Icons.Filled.CastConnected else Icons.Outlined.Cast,
-            contentDescription = null,
+            contentDescription = null, // 装饰性，非交互
             tint = MaterialTheme.colorScheme.primary
         )
         Column(modifier = Modifier.weight(1f)) {

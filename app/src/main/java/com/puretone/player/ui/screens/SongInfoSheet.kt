@@ -163,7 +163,7 @@ fun SongInfoSheet(
                     if (coverUri != null) {
                         AsyncImage(
                             model = coverUri,
-                            contentDescription = null,
+                            contentDescription = null, // 装饰性，非交互
                             modifier = Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(10.dp)),
                             contentScale = ContentScale.Crop
                         )

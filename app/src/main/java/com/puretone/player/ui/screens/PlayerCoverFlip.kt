@@ -363,7 +363,7 @@ private fun CoverFace(
             if (coverModel != null) {
                 AsyncImage(
                     model = coverModel,
-                    contentDescription = null,
+                    contentDescription = null, // 装饰性，非交互
                     modifier = Modifier.fillMaxSize(0.86f).clip(CircleShape),
                     contentScale = ContentScale.Crop
                 )

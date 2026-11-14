@@ -110,7 +110,7 @@ fun DefaultCover(
             val iconSize = defaultCoverIconSize(minDp.value, rich).dp
             Icon(
                 imageVector = glyph.icon,
-                contentDescription = null,
+                contentDescription = null, // 装饰性，非交互
                 tint = Color.White,
                 modifier = Modifier.size(iconSize),
             )
@@ -147,7 +147,7 @@ fun VinylCenterLabel(
         if (glyph != null) {
             Icon(
                 imageVector = glyph,
-                contentDescription = null,
+                contentDescription = null, // 装饰性，非交互
                 tint = Color.White,
                 modifier = Modifier
                     .size(d * VINYL_GLYPH_RATIO)

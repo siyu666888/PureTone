@@ -111,7 +111,7 @@ fun MiniPlayer(
                     if (coverUri != null) {
                         AsyncImage(
                             model = coverUri,
-                            contentDescription = null,
+                            contentDescription = null, // 装饰性封面，非交互
                             modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
                             contentScale = ContentScale.Crop
                         )
