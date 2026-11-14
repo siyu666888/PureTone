@@ -2,12 +2,16 @@ package com.puretone.player.playback.cast
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.ConnectivityManager.NetworkCallback
 import android.net.LinkAddress
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Looper
 import android.util.Log
+import java.util.concurrent.CopyOnWriteArrayList
 import com.puretone.player.BuildConfig
 import java.io.File
 import java.net.Inet4Address
@@ -67,6 +71,17 @@ object CastNetworkLog {
     private var logFile: File? = null
 
     /**
+     * 已连接网络清单：替代 API 31+ 已弃用的 [ConnectivityManager.getAllNetworks]
+     * （该 API 无同步替代）。由 [ensureNetworkTracking] 注册 [NetworkCallback] 后，
+     * 随系统网络变化实时维护，供 [snapshot] 检测双网卡（Wi-Fi+蜂窝）共存风险。
+     * 回调在系统线程触发，故用并发安全容器。
+     */
+    private val availableNetworks = CopyOnWriteArrayList<Network>()
+
+    @Volatile
+    private var callbackRegistered = false
+
+    /**
      * 上一次搜索是否**真的**成功 acquire 了组播锁。
      *
      * 为什么不用「能否建出锁对象」来代替：`createMulticastLock()` 在所有设备上都能建出来，
@@ -108,6 +123,41 @@ object CastNetworkLog {
     /** 初始化落盘位置（Application.onCreate 调用一次） */
     fun init(filesDir: File) {
         logFile = File(filesDir, FILE_NAME)
+    }
+
+    /**
+     * 惰性注册网络回调以采集「所有已连接网络」，替代 API 31+ 弃用的 getAllNetworks。
+     *
+     * 仅注册一次；要求调用线程具备 Looper（Application.onCreate / 主线程 / snapshot 调用处）。
+     * 无 Looper 的线程（如部分单测环境）跳过注册，[snapshot] 自动退回 activeNetwork，
+     * 不会因此丢失主网络信息，也不会因缺 Looper 抛异常。
+     */
+    private fun ensureNetworkTracking(context: Context) {
+        if (callbackRegistered) return
+        synchronized(this) {
+            if (callbackRegistered) return
+            runCatching {
+                val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                if (cm != null && Looper.myLooper() != null) {
+                    val cb = object : NetworkCallback() {
+                        override fun onAvailable(network: Network) {
+                            if (!availableNetworks.contains(network)) availableNetworks.add(network)
+                        }
+
+                        override fun onLost(network: Network) {
+                            availableNetworks.remove(network)
+                        }
+                    }
+                    cm.registerNetworkCallback(
+                        NetworkRequest.Builder()
+                            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                            .build(),
+                        cb,
+                    )
+                }
+            }
+            callbackRegistered = true
+        }
     }
 
     /** 追加一行带时间戳的记录 */
@@ -177,8 +227,13 @@ object CastNetworkLog {
 
             // 所有处于「已连接」状态的网络传输类型：双网卡（Wi-Fi+蜂窝）共存时，
             // SSDP 组播很可能被路由到蜂窝接口，从而收不到回包——这行一眼暴露该风险。
-            val transports = cm?.allNetworks?.mapNotNull { net ->
-                cm.getNetworkCapabilities(net)?.let { c ->
+            // 注：getAllNetworks() 在 API 31+ 弃用且无同步替代，改用 [ensureNetworkTracking]
+            // 维护的 availableNetworks；回调尚未触发时退回 activeNetwork，主网络不漏记。
+            ensureNetworkTracking(context)
+            val networks = availableNetworks.toList()
+                .ifEmpty { listOfNotNull(cm?.activeNetwork) }
+            val transports = networks.mapNotNull { net ->
+                cm?.getNetworkCapabilities(net)?.let { c ->
                     when {
                         c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
                         c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
@@ -187,7 +242,7 @@ object CastNetworkLog {
                         else -> null
                     }
                 }
-            }?.distinct().orEmpty()
+            }.distinct().orEmpty()
             sb.append("active_transports=").append(if (transports.isEmpty()) "none" else transports.joinToString(","))
             sb.appendLine()
 

@@ -15,8 +15,8 @@ plugins {
  * 同时用于 versionName 与产物文件名（archivesName），避免二者漂移。
  * 发版时只改这里（版本号按语义化版本递增）。
  */
-val appVersionName = "1.9.12"
-val appVersionCode = 64
+val appVersionName = "1.9.13"
+val appVersionCode = 65
 
 /**
  * 构建身份标签，写进 BuildConfig，由启动期 `cast-build variant=…` 落盘。

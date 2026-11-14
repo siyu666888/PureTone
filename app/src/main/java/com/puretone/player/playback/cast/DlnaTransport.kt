@@ -20,7 +20,7 @@ import kotlinx.coroutines.withContext
  * 于是「电视拒绝投送」不再是黑箱：诊断里能看到「第几档 protocolInfo 被拒、
  * 返回 500 还是 404、fault 说的什么」。
  */
-internal class DlnaTransport(private val locationUrl: String, private val deviceLabel: String) {
+internal open class DlnaTransport(private val locationUrl: String, private val deviceLabel: String) {
 
     /** 设备描述里与本项目相关的一组控制端点 */
     data class Endpoints(
@@ -150,7 +150,7 @@ internal class DlnaTransport(private val locationUrl: String, private val device
      *
      * 控制地址缺失时返回 null（调用方据此退回库的通道）。
      */
-    suspend fun setVolume(volume: Int): Boolean? = withContext(Dispatchers.IO) {
+    open suspend fun setVolume(volume: Int): Boolean? = withContext(Dispatchers.IO) {
         val url = endpoints()?.renderingControl ?: return@withContext null
         val max = deviceVolumeMax()
         val scaled = toDeviceVolume(volume, max)
@@ -170,7 +170,7 @@ internal class DlnaTransport(private val locationUrl: String, private val device
      * 同时把响应原文落盘：只有看到设备自己报的 `CurrentVolume`，才能区分
      * 「我们发错了」与「它收下不做」。读不到返回 null（与「音量为 0」严格区分）。
      */
-    suspend fun volume(): Int? = withContext(Dispatchers.IO) {
+    open suspend fun volume(): Int? = withContext(Dispatchers.IO) {
         val url = endpoints()?.renderingControl ?: return@withContext null
         val max = deviceVolumeMax()
         val body = "<u:GetVolume xmlns:u=\"$RC_NS\"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetVolume>"
