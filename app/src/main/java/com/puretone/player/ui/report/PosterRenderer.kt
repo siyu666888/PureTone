@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import androidx.core.graphics.createBitmap
 
 /**
  * 听歌报告分享海报渲染器（需求4 阶段2，方案 7 方案A）。
@@ -31,7 +32,7 @@ object PosterRenderer {
 
     /** 渲染一份海报 */
     fun render(content: PosterContent, theme: PosterTheme): Bitmap {
-        val bitmap = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(W, H, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val p = palette(theme)
         canvas.drawColor(p.bg)

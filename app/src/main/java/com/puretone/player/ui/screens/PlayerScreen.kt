@@ -3,7 +3,7 @@ package com.puretone.player.ui.screens
 import com.puretone.player.ui.components.ControlIconSizes
 import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
-import android.net.Uri
+import androidx.core.net.toUri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -94,7 +94,7 @@ fun PlayerScreen(
     // 旧实现只显示 entry 快照，导致改完歌曲信息播放页/迷你条仍是旧标题旧封面。
     val displayTitle = currentSong?.title ?: entry?.title ?: ""
     val displayArtist = currentSong?.artist ?: entry?.artist ?: ""
-    val displayCover = currentSong?.coverUri?.let { Uri.parse(it) } ?: entry?.coverUri
+    val displayCover = currentSong?.coverUri?.let { it.toUri() } ?: entry?.coverUri
 
     // 播放顺序（三态：顺序播放 / 随机播放 / 单曲循环），由播放状态派生
     val playMode = state.toPlayMode()

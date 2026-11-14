@@ -3,6 +3,7 @@ import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
 
 import android.net.Uri
+import androidx.core.net.toUri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -120,7 +121,7 @@ fun PureToneApp(initialRoute: String? = null) {
                                 onNext = playerVm::next,
                                 liveTitle = currentSong?.title,
                                 liveArtist = currentSong?.artist,
-                                liveCoverUri = currentSong?.coverUri?.let { Uri.parse(it) }
+                                liveCoverUri = currentSong?.coverUri?.let { it.toUri() }
                             )
                         }
                         NavigationBar {
