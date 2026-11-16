@@ -230,6 +230,45 @@ class ReportFormatTest {
     }
 
     @Test
+    fun `formatPeriodBadge 的周角标年份用周所属年而不是日历年`() {
+        // 跨年周：周区间起点是 ISO 周一（ReportPeriod.lastCompletedWeeks），落点上一年 12 月、
+        // 却属于下一年的第 1 周（ISO 第 1 周 = 含当年第一个周四的那周）——年份必须跟周号同源。
+        // 旧实现拼日历年，这里会输出「周报 · 2024 第 1 周」。
+        assertEquals(
+            "周报 · 2025 第 1 周",
+            ReportFormat.formatPeriodBadge(context, PeriodType.WEEK, epochAtNoon(LocalDate.parse("2024-12-30")))
+        )
+        // 下一个即将发生的同类周（周一 2029-12-31 = ISO 2030-W01）
+        assertEquals(
+            "周报 · 2030 第 1 周",
+            ReportFormat.formatPeriodBadge(context, PeriodType.WEEK, epochAtNoon(LocalDate.parse("2029-12-31")))
+        )
+        // 非周一的落点（仍在 ISO 2026-W53 内）：角标函数对任意 startMs 都按周所属年
+        assertEquals(
+            "周报 · 2026 第 53 周",
+            ReportFormat.formatPeriodBadge(context, PeriodType.WEEK, epochAtNoon(LocalDate.parse("2027-01-01")))
+        )
+        // 年内周不受影响（回归护栏）
+        assertEquals(
+            "周报 · 2026 第 47 周",
+            ReportFormat.formatPeriodBadge(context, PeriodType.WEEK, epochAtNoon(LocalDate.parse("2026-11-16")))
+        )
+        assertEquals(
+            "周报 · 2026 第 53 周",
+            ReportFormat.formatPeriodBadge(context, PeriodType.WEEK, epochAtNoon(LocalDate.parse("2026-12-28")))
+        )
+        // 月报 / 年报用日历年，语义正确，不随周口径一起变
+        assertEquals(
+            "月报 · 2024 年 12 月",
+            ReportFormat.formatPeriodBadge(context, PeriodType.MONTH, epochAtNoon(LocalDate.parse("2024-12-30")))
+        )
+        assertEquals(
+            "年报 · 2024 年",
+            ReportFormat.formatPeriodBadge(context, PeriodType.YEAR, epochAtNoon(LocalDate.parse("2024-12-30")))
+        )
+    }
+
+    @Test
     fun `formatRangeText 按周期给出区间年月`() {
         val start = epochAtNoon(LocalDate.parse("2026-11-02"))
         val end = epochAtNoon(LocalDate.parse("2026-11-09"))

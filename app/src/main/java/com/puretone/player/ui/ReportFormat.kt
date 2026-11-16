@@ -35,13 +35,24 @@ object ReportFormat {
         }
     }
 
-    /** 周期角标，如「周报 · 2026 第45周」 */
+    /**
+     * 周期角标，如「周报 · 2026 第45周」。
+     *
+     * 周角标的年份是**周所属年**（ISO week-based year），不是日历年：ISO 第 1 周是含当年
+     * 第一个周四的那周，它的周一可能落在上一年 12 月（周一 2029-12-31 = ISO 2030-W01）。
+     * 年份与周号必须同源，否则跨年周会拼成「周报 · 2029 第 1 周」。月报 / 年报用日历年。
+     */
     fun formatPeriodBadge(context: Context, type: PeriodType, startMs: Long): String {
         val d = Instant.ofEpochMilli(startMs).atZone(ZoneId.systemDefault()).toLocalDate()
         return when (type) {
             PeriodType.WEEK -> {
-                val wk = d.get(WeekFields.ISO.weekOfWeekBasedYear())
-                context.getString(R.string.pt_report_badge_week, d.year, wk)
+                // 周号是 ISO 周号，属于「周所属年」而不是日历年：跨年周的周一落在上一年 12 月，
+                // 但它属于下一年的第 1 周（ISO 第 1 周 = 含当年第一个周四的那周）。年份与周号
+                // 必须同源，否则 2024-12-30 会拼成「周报 · 2024 第 1 周」。
+                val fields = WeekFields.ISO
+                val wk = d.get(fields.weekOfWeekBasedYear())
+                val weekBasedYear = d.get(fields.weekBasedYear())
+                context.getString(R.string.pt_report_badge_week, weekBasedYear, wk)
             }
             PeriodType.MONTH -> context.getString(R.string.pt_report_badge_month, d.year, d.monthValue)
             PeriodType.YEAR -> context.getString(R.string.pt_report_badge_year, d.year)
