@@ -8,6 +8,7 @@ import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
+import com.puretone.player.PureToneApplication
 import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.repository.MusicRepository
 import com.puretone.player.data.settings.PureToneSettings
@@ -101,7 +102,7 @@ data class PlaybackUiState(
 @Singleton
 @OptIn(UnstableApi::class)
 class PlaybackManager @Inject constructor(
-    @ApplicationContext private val appContext: Context,
+    @param:ApplicationContext private val appContext: Context,
     private val musicRepository: MusicRepository,
     private val apeTranscoder: ApeTranscoder,
     private val audioEffectController: AudioEffectController,
@@ -152,6 +153,9 @@ class PlaybackManager @Inject constructor(
         SupervisorJob() + Dispatchers.Main.immediate +
             CoroutineExceptionHandler { _, t ->
                 Log.e(TAG, "uncaught exception in PlaybackManager scope (swallowed to avoid crash)", t)
+                // C4：与上面的 KDoc 一致，把异常写进导出用的 crash_last.txt，
+                // 兼顾「不崩」与「可观测」；写盘失败也只吞掉，不让诊断动作拖垮进程。
+                runCatching { PureToneApplication.writeCrash("PlaybackManager.scope", t) }
             }
     )
 

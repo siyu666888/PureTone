@@ -65,17 +65,17 @@
 
 | 分类 | 技术 |
 | --- | --- |
-| 语言 | Kotlin 2.0.21 |
-| UI | Jetpack Compose (BOM 2025.02.00) · Material 3 |
-| 架构 | 单向数据流 · ViewModel + StateFlow · Hilt 2.56.2 依赖注入 |
-| 播放 | AndroidX Media3 (ExoPlayer 1.6.0) + media3-session |
-| 持久化 | Room 2.7.0 (KSP，schema v7) · DataStore 1.1.1 |
+| 语言 | Kotlin 2.2.10（AGP 9.5.1 内置 Kotlin，无 `kotlin.android` 插件） |
+| UI | Jetpack Compose (BOM 2025.09.01) · Material 3 |
+| 架构 | 单向数据流 · ViewModel + StateFlow · Hilt 2.60.1 依赖注入 |
+| 播放 | AndroidX Media3 (ExoPlayer 1.6.1) + media3-session |
+| 持久化 | Room 2.7.2 (KSP2，schema v8) · DataStore 1.1.7 |
 | 图片 | Coil 2.7.0 |
 | 音频处理 | `dev.ffmpegkit-maintained:ffmpeg-kit-min` 6.0.3（本地 vendored AAR，16KB 页对齐） |
-| 桌面小部件 | Glance AppWidget |
-| 构建 | AGP 8.6.1 · Gradle Wrapper 8.14.6（本地亦可用独立 Gradle 8.7）· JDK 17 · compileSdk 35 / targetSdk 35 / minSdk 26 |
-| 测试 | Robolectric 4.12.2 · Turbine 1.1.0（**103 类 / 1015 例全绿**） |
-| 静态检查 | Android Lint（`warningsAsErrors` + baseline 冻结 16 条存量）· detekt 1.23.8（baseline 当前 0 条，存量已清零）· 文件行数门禁 ≤ 1200 行（白名单 0 个） |
+| 桌面小部件 | Glance AppWidget 1.1.0 |
+| 构建 | AGP 9.5.1 · Gradle Wrapper 9.6.0 · Build Tools 36.0.0 · JDK 17 · compileSdk 35 / targetSdk 35 / minSdk 26 |
+| 测试 | Robolectric 4.18 · Turbine 1.2.1（**112 类 / 1116 例全绿**） |
+| 静态检查 | Android Lint（`warningsAsErrors` + baseline 存量 0 条）· detekt 1.23.8（baseline 存量 0 条）· 文件行数门禁 ≤ 1200 行（白名单 0 个） |
 | CI | GitHub Actions（单测 / Debug+Release 构建 / apksigner 验签 / Baseline Profile 打包断言 **+ 规则有效性校验** / lint / detekt / 文件行数 / **16KB 对齐真门禁**）+ Dependabot 依赖升级 + 每周依赖漂移巡检 |
 
 ---
@@ -135,11 +135,14 @@ keyPassword=你的密钥口令
 然后构建，并把交付包收集到工程内唯一输出目录：
 
 ```bash
-./gradlew assembleRelease
-./scripts/package-release.sh          # 三包 → dist/output/ + SHA256SUMS.txt
-# 产物：dist/output/PureTone-v1.9.2-{arm64-v8a,x86_64,universal}-release.apk
+./gradlew assembleRelease -PcastVariant=<版本>-official
+bash scripts/package-release.sh --zip official   # 三包 → dist/output/ + SHA256SUMS.txt + 聚合 zip
+# 产物：dist/output/PureTone-v<版本>-{arm64-v8a,x86_64,universal}-release.apk
 # Gradle 原生中间产物仍在 app/build/outputs/apk/release/（不用于分发）
 ```
+
+> 正式包必须显式传 `-PcastVariant=<版本>-official`：该串会写进 DEX，
+> 供 `tools/dex_strings.py` 核对包身份（真机取证时先看 `cast-build` 身份串）。
 
 > 产物文件名带版本号（`archivesName` 与 `versionName` 同源，不会漂移）。
 > **安装包统一输出到 `dist/output/`，不再输出到桌面**；历史包按版本 / 交付批次归档在 `dist/archive/`。
@@ -167,8 +170,8 @@ bash scripts/check-file-size.sh # 文件行数上限 1200 行（detekt 的 Large
 
 | 门禁 | 管什么 | 存量 |
 | --- | --- | --- |
-| lint | Android 特有正确性 | `app/lint-baseline.xml` 冻结 16 条 |
-| detekt | Kotlin 结构与复杂度 | `app/detekt-baseline.xml` 冻结 1 条 |
+| lint | Android 特有正确性 | `app/lint-baseline.xml` 存量 0 条（2026-11-04 清零） |
+| detekt | Kotlin 结构与复杂度 | `app/detekt-baseline.xml` 存量 0 条（2026-11-04 清零） |
 | 文件行数 | 文件规模 | `scripts/check-file-size.sh` 上限 1200 行，白名单 0 个（当前无豁免） |
 
 **清理存量告警的纪律**（务必遵守）：从 baseline 里**删掉对应条目再修代码**，
@@ -184,14 +187,14 @@ Android 15 起支持 16KB 页大小设备，Google Play 自 2025-11-01 起要求
 | 关 | 管什么 | 谁负责 | 本项目现状 |
 | --- | --- | --- | --- |
 | ZIP 层 | APK 内未压缩 `.so` 的条目偏移按 16KB 对齐 | AGP 打包 + `zipalign` | ✅ 3 个 ABI 包全部通过 |
-| ELF 层 | `.so` 内 `PT_LOAD` 段的 `p_align` ≥ 16384 | **第三方库的编译方式**，打包工具管不了 | ✅ 26 个 `.so` 全部合规（不合规 0 个） |
+| ELF 层 | `.so` 内 `PT_LOAD` 段的 `p_align` ≥ 16384 | **第三方库的编译方式**，打包工具管不了 | ✅ 三包合计 48 个 `.so` 全部合规（arm64 11 / universal 26 / x86_64 11，不合规 0 个） |
 
 ```bash
 # ELF 层检查（自研解析器，零外部依赖，不需要 NDK）
 python3 tools/check_16kb_alignment.py app/build/outputs/apk/release/*universal-release.apk
 
 # ZIP 层检查（官方工具）
-$ANDROID_HOME/build-tools/35.0.0/zipalign -c -P 16 -v 4 <apk>
+$ANDROID_HOME/build-tools/36.0.0/zipalign -c -P 16 -v 4 <apk>   # Windows 本地为 zipalign.exe
 ```
 
 > **「zipalign 通过」≠「支持 16KB」**——这是最容易搞混的一点：ZIP 层由 AGP 打包保证，
@@ -201,7 +204,7 @@ $ANDROID_HOME/build-tools/35.0.0/zipalign -c -P 16 -v 4 <apk>
 > 会让 **APE 转码** 与 **ReplayGain** 在 16KB 页设备上加载失败（详见
 > `dist/v1.7.24_P0-3_16KB对齐实测_2026-11-01.md`）。
 >
-> 现状（v1.9.2 / commit `9eff959`）：已换用 `dev.ffmpegkit-maintained:ffmpeg-kit-min:6.0.3`
+> 自 v1.9.2（commit `9eff959`）起：已换用 `dev.ffmpegkit-maintained:ffmpeg-kit-min:6.0.3`
 > 维护版（仅 arm64-v8a / x86_64，全 16KB 对齐），universal 包 **26 个 `.so` 全部合规**；
 > 同时 ABI 收敛为 arm64-v8a / x86_64 / universal 三包。CI 的
 > 「检查 16KB 页大小对齐（ELF LOAD 段，当前已合规）」已删掉 `continue-on-error`、升级为**真门禁**，
@@ -227,8 +230,9 @@ scripts/collect-baseline-profile.sh <device-serial>
 > （设备指纹含 `generic`、无 `cpufreq`、ART 的类加载时机与真机不同）。
 > 在模拟器上采出的 profile 装到真机上**没有收益甚至有害**。
 >
-> 当前 `baseline-prof.txt` 是**手写占位版**（309 条类级规则，100% 命中 dex），
-> 采集链路已就绪，待有真机时执行采集替换。
+> 当前 `baseline-prof.txt` 是**手写占位版**（308 条类级规则，
+> `scripts/verify-baseline-profile.sh` 校验 308/308 命中 dex），采集链路已就绪，
+> 待具备物理设备时执行采集替换（Macrobenchmark 明确拒绝模拟器）。
 
 ---
 
@@ -246,6 +250,10 @@ scripts/collect-baseline-profile.sh <device-serial>
 ---
 
 ## 📝 版本历史
+
+> **版本号规则（自 v2.0.0 起）**：各段保持一位数，某段到 9 后再 +1 时进位到前一段并归零；
+> 序列 `2.0.0 → … → 2.0.9 → 2.1.0 → … → 2.9.9 → 3.0.0`。
+> `v1.9.13` 及更早版本是旧规则下第三段出现两位数的遗留。
 
 | 版本 | 要点 |
 | --- | --- |
@@ -292,6 +300,22 @@ scripts/collect-baseline-profile.sh <device-serial>
 | v1.8.6 | **设置结构调整 + 智能歌单图标修复 + 播放自动停止修复**：①「诊断」整组从设置页顶层迁入「实验室」分类（实验室关闭时随父级隐藏），说明文案压缩为单行「仅导出崩溃与设备信息，不含任何个人曲库内容」并加 `maxLines=1`；②修复智能歌单三枚图标完全不渲染——`DrawTransform.scale` 默认以画布中心为轴心，而图标坐标是 0..24 左上角原点，缩放后整枚图标被推出画布外，改为 `pivot = Offset.Zero`；③修复「播放自动停止」：关闭无缝播放时旧实现只 `pause()` 不续播（每播完一首永久停住），新增 `InterTrackGap` 做「暂停→1.2s→续播」并可被用户命令打断；播放失败（非 APE）不再整队停死，改为跳下一首（连续 3 首失败才放弃且保留队列）；④新增 `PlaybackEventLog` 环形事件日志并纳入诊断报告，补齐「自动停止」缺证据链的问题。详见 `dist/v1.8.6_设置诊断迁移与播放自愈_2026-11-02.md` |
 | v1.8.7 | **交叉淡化导致「自动暂停 / 一首播完就停」根因修复**：①音频焦点上移到应用层（新增 `AudioFocusController` + `PlaybackAudioFocus`，两个 ExoPlayer 均改为 `handleAudioFocus=false`）——修复「备援起播申请 GAIN → 系统把 AUDIOFOCUS_LOSS 派给主播放器 → 淡出方当场静音」；②`CrossfadeCoordinator.finalize()` 改为「先交权（player 引用/MediaSession/监听器）再复位旧主」，并把空闲停服判据改成「主/备两个实例都不在播且都没有队列」——修复旧主清空瞬间被误判空闲、整个服务被停掉（连带 release 两个播放器、随后 FGS 超时崩溃）；③主监听器按播放器实例创建 + 事件恒等校验，修复换主后残留异步回调把「新曲」误记为完整播放 / 误触发播完本曲停止；④附带：finalize 真取消渐变协程、cancel 归还让出的下一首、新增 crossfade-*/audio-focus-*/service-stop 事件日志。本地 `test/assembleDebug/detekt/lint` 与文件行数门禁全绿，模拟器 4s 淡化连播 4 个边界全程 PLAYING（前后对照见文档）。详见 `dist/v1.8.7_交叉淡化自动暂停修复_2026-11-02.md` |
 | v1.8.8 | **交叉淡化后队列索引漂移修复**：根因——换主后新主播放器只持有「剩余尾部」，而代码始终假设「播放器索引 == UI 完整队列绝对索引」(queueOffset=0)，导致①播放页队列高亮错位（点完下一首高亮跑偏）、②第二次淡化的 `maybeStart` 用相对索引去完整队列取 APE 判定项取错歌。修复——在 `onFinalize` 把已播前缀重新 prepend 回新主、维持「主播放器持有完整队列」不变式（queueOffset 恒为 0）；`CrossfadeCoordinator.Host` 增 `queueOffset` 契约、`maybeStart`/`finalize` 改为用绝对下标取判定项与记日志；`PlaybackUiState` 增 `queueOffset` 字段。`CrossfadeCoordinatorTest` 增绝对下标换算契约测试，本地 test/assembleDebug/detekt/lint/文件行数门禁全绿，模拟器 4s 淡化连播 9+ 次 crossfade-start/finalize 严格配对无异常、队列高亮随播放精确归位（CF Test 1→第1行、CF Test 4→第4行）。详见 `dist/v1.8.8_交叉淡化队列索引漂移修复_2026-11-02.md` |
+| v1.8.9 | 修复「播完本曲停止」在交叉淡化边界误触发。详见 `dist/v1.8.9_播完本曲停止_交叉淡化边界修复_2026-11-02.md` |
+| v1.9.0 | 进度条四态×三交互态重设计（轨道居中、响应式 + 单测/预览）；投屏「未发现设备」权限修复、本地播放音频焦点不再暂停；补提交智能歌单图标配套代码使 CI lint 转绿 |
+| v1.9.1 | 四项用户反馈修复：智能歌单「最近添加」图标、投屏真机发现失败（补 `MulticastLock` + 诊断落盘，顺带修诊断假绿灯 / 主线程冻结 / 吞 `CancellationException`）、歌词多渠道下载并校验曲名防给错歌、默认海报方案 B。详见 `dist/v1.9.1_四项反馈修复_交付说明_2026-11-03.md` |
+| v1.9.2 | 16KB **ELF 层**兼容闭环：换 `dev.ffmpegkit-maintained:ffmpeg-kit-min:6.0.3`，ABI 收敛为 arm64-v8a / x86_64 / universal；投屏 M3 补齐投射音量 UI；`PlaybackManager` 拆分收尾（1385→933 行、11 协作类）。详见 `dist/v1.9.2_P1-1_PlaybackManager拆分收尾_2026-11-03.md` |
+| v1.9.3 | **验证包批次（code 55，未打 tag、未发正式 Release）**：卡片锁屏进度同步与遥控页布局、投屏后台冻结与曲末推进、投屏自动暂停与进度同步、循环模式换主与本地播放音频取证，逐项出 VERIFY 包，文书见 `dist/v1.9.3_*_验证包_*.md` |
+| v1.9.4 | 正式发版（code 56）：投屏保活根治 / 进度同步 / 遥控页重设计 / 循环模式换主修复与音频取证；听歌报告阶段 3（周/月/年趋势分桶）；lint baseline 清零、UTC 年报归零修复、失效 Baseline Profile 规则清理、编排层拆分与单测 |
+| v1.9.5 | 投屏六轮真机复测修复：曲末推进 / 建立确认 / 死循环 / 误报；`DlnaCastManager` 音量链路与 UI 大文件拆分。详见 `dist/v1.9.5_投屏六轮真机复测修复_发布说明_2026-11-08.md` |
+| v1.9.6 | 第三轮审查低风险批（非法 Range 响应码 / JSON `null` 字面量 / SOAP 响应体上限 / NSC 公网明文 / 换曲日志计数）；投屏 H1 卡死兜底、170435 建立确认判据、建立期 UI 兜底与四个大文件拆分。详见 `dist/v1.9.6_后续修复与结构治理_发布说明_2026-11-09.md` |
+| v1.9.7 | P2-1 HTTP server 绑 Wi-Fi IP、P2-3 目标校验五轮、`cast-build` 包身份日志；第三轮 P3 低风险批（MIME 注入 / 原子快照 / 一次性实体解码）；R7 取流诊断埋点；DEX 比对工具提升到 `tools/`。详见 `dist/v1.9.7_发布说明_2026-11-12.md` |
+| v1.9.8 | A 方案「投屏拖动后静音压降」seek-recover + VERIFY-120805 收尾；三轮 VERIFY 真机取证未复现曲中 STOPPED，保留代码与单测后收口（**收口 ≠ 真机验收**）。详见 `dist/v1.9.8_A方案seek-recover真机取证收口_2026-11-13.md` |
+| v1.9.9 | `#220` KSP1→KSP2 独立工作线收口（Room 2.7.0 + Hilt 2.56.2 + `ksp.useKSP2=true`，Kotlin/AGP/Gradle 不动，非功能变更）；第四轮审查 R4-1~R4-6 全量落地 + 第 6 刀异步窗口守护。详见 `dist/v1.9.9_发布说明.md` |
+| v1.9.10 | Compose BOM 2024.09.00 → 2025.02.00 + 清理 detekt 未用 import + README 同步；Kotlin / KSP / AGP / 投屏行为零变更 |
+| v1.9.11 | 无障碍补完：13 个 UI 源文件 `contentDescription` 审计 + 触控目标达标（均衡器「删除预设」改 `IconButton(48.dp)`）；零依赖、零行为变更 |
+| v1.9.12 | AGP 9.5.1 协调升级（Kotlin 2.2.10 / BOM 2025.09.01 / Hilt 2.60.1 / Gradle 9.6.0 / Build Tools 36）+ 16KB **ZIP 层**对齐补全（根因 `zipalign -P 16 4`） |
+| v1.9.13 | 投屏链路单测加固（`CastVolumeControllerTest` 7 例防音量漂移）+ `allNetworks` 弃用清理改 `NetworkCallback` + `DlnaTransport` 加 `open` 测试缝 |
+| **v2.0.0** | **新版本规则首发**：依赖升级批次（9 项 + ben-manes 插件 id）、响度设置去英文/改开关/关闭态隐藏子设置、Robolectric 4.18 替身适配、`CastNetworkBridge` 网络所有权单测、启动器前景下移 2dp；三次远端 CI 26/26 全绿，5 项资产 Release。详见 `dist/archive/v2.0.0/ReleaseNotes-v2.0.0.md` |
 
 ---
 

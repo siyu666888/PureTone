@@ -18,6 +18,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -78,7 +79,12 @@ class MusicRepositorySyncTest {
         settingsFile.delete()
     }
 
-    private fun song(path: String, id: Long = 0L, favorite: Boolean = false) = SongEntity(
+    private fun song(
+        path: String,
+        id: Long = 0L,
+        favorite: Boolean = false,
+        mimeType: String = "audio/mpeg"
+    ) = SongEntity(
         id = id,
         mediaStoreId = path.hashCode().toLong(),
         title = path.substringAfterLast('/'),
@@ -88,7 +94,7 @@ class MusicRepositorySyncTest {
         duration = 200_000,
         path = path,
         size = 1_000L,
-        mimeType = "audio/mpeg",
+        mimeType = mimeType,
         favorite = favorite
     )
 
@@ -150,8 +156,74 @@ class MusicRepositorySyncTest {
         assertFalse(remaining.any { it.path.endsWith(".amr", ignoreCase = true) })
         assertEquals(3, result.removed)
         assertEquals(2, result.total)
+        assertFalse("正常删除不得被误判为抑制", result.suppressed)
         // 收藏标记不因同步丢失
         assertTrue(remaining.first { it.path == musicA }.favorite)
+    }
+
+    /**
+     * 第五轮复审 B5：删除保险的分子/分母必须复用同一份 MIME 元数据。
+     *
+     * 这里故意用「路径看起来完全像音乐、只有 MIME 是录音」的行：
+     * `.m4a` 不在 RECORDING_EXTENSIONS、`Music/` 也不在 EXCLUDED_DIRS，
+     * 单靠路径判不出来。修复前 `removedMusic` 传空 MIME，3 条录音被算成音乐，
+     * ratio = 3/4 > 0.5 → 触发抑制 → 本该清掉的录音全部残留。
+     */
+    @Test
+    fun `只靠MIME识别的录音不得误触发删除抑制`() = runTest {
+        val music = listOf(
+            "/storage/emulated/0/Music/a.mp3",
+            "/storage/emulated/0/Music/b.flac",
+            "/storage/emulated/0/Music/c.mp3",
+            "/storage/emulated/0/Music/d.flac"
+        )
+        val recordings = listOf(
+            "/storage/emulated/0/Music/clip1.m4a",
+            "/storage/emulated/0/Music/clip2.m4a",
+            "/storage/emulated/0/Music/clip3.m4a"
+        )
+        db.songDao().upsertAll(
+            music.mapIndexed { i, path -> song(path, id = i + 1L) } +
+                recordings.mapIndexed { i, path -> song(path, id = 10L + i, mimeType = "audio/amr") }
+        )
+        val provider = registerMediaStore(*music.toTypedArray())
+
+        val result = repo.syncLibrary()
+
+        assertTrue("查询未送达 provider", provider.fullProjectionQueries > 0)
+        assertEquals("provider 应返回全部 4 行音乐", 4, provider.returnedRows)
+        assertFalse("纯录音移除不该触发防误删保险", result.suppressed)
+        assertEquals("3 条录音应真实删除", 3, result.removed)
+        assertEquals("total 应为同步后真实曲库行数", 4, result.total)
+        assertEquals(4, db.songDao().getAll().size)
+        assertFalse(
+            "录音不得残留",
+            db.songDao().getAll().any { it.mimeType == "audio/amr" }
+        )
+    }
+
+    /**
+     * 第五轮复审 B1：删除被安全闸抑制时 `deletePaths` 为空，旧实现仍返回
+     * `removed = removed.size`、`total = currentPaths.size`，UI 会显示「已移除 2 首」
+     * 而库里一首没删。修复后两个数字都必须取事务提交后的真实结果。
+     */
+    @Test
+    fun `删除被抑制时不虚报移除数且total是真实曲库行数`() = runTest {
+        val oldA = "/storage/emulated/0/Music/old-a.mp3"
+        val oldB = "/storage/emulated/0/Music/old-b.mp3"
+        val fresh = "/storage/emulated/0/Music/fresh.mp3"
+        db.songDao().upsertAll(listOf(song(oldA, id = 1L), song(oldB, id = 2L)))
+        val provider = registerMediaStore(fresh)
+
+        val result = repo.syncLibrary()
+
+        assertTrue("查询未送达 provider", provider.fullProjectionQueries > 0)
+        assertEquals("provider 应只返回 1 行新歌", 1, provider.returnedRows)
+        assertTrue("2/2 首音乐被移除应命中防误删保险", result.suppressed)
+        assertEquals("抑制时一个都没删，不得虚报 2 首", 0, result.removed)
+        assertEquals("total 应为 Room 真实行数（2 旧 + 1 新）", 3, result.total)
+        assertEquals(3, db.songDao().getAll().size)
+        assertTrue(db.songDao().getAll().any { it.path == fresh })
     }
 
     /**
@@ -247,6 +319,32 @@ class MusicRepositorySyncTest {
         assertEquals(2, db.songDao().getAll().size)
         assertEquals(0, result.removed)
         assertEquals(2, result.total)
+    }
+
+    /**
+     * A2 第二道校验的接线测试（真实 Room）：删掉 MusicRepository 里的
+     * CoverUrlPolicy.sanitize 调用，本例必须变红；同时锁死本地 albumart 占位不被误清。
+     */
+    @Test
+    fun `落库前拒绝不合规联网封面且保留本地封面`() = runTest {
+        db.songDao().upsertAll(listOf(song("/music/a.mp3", id = 1L)))
+
+        repo.updateSongInfo(1L, "T", "A", "B", "http://evil.example.com/a.jpg", 2020)
+        assertNull("明文 http 不得落库", db.songDao().getById(1L)?.coverUri)
+
+        repo.updateSongInfo(1L, "T", "A", "B", "https://evil.example.com/a.jpg", 2020)
+        assertNull("非白名单主机不得落库", db.songDao().getById(1L)?.coverUri)
+
+        val legal = "https://is1-ssl.mzstatic.com/image/thumb/a/600x600bb.jpg"
+        repo.updateSongInfo(1L, "T", "A", "B", legal, 2020)
+        assertEquals(legal, db.songDao().getById(1L)?.coverUri)
+
+        val local = "content://media/external_primary/audio/albumart/42"
+        repo.updateCover(1L, local)
+        assertEquals("本地占位 URI 必须原样保真", local, db.songDao().getById(1L)?.coverUri)
+
+        repo.updateCover(1L, "http://192.168.1.1/probe")
+        assertNull("updateCover 同样受策略约束", db.songDao().getById(1L)?.coverUri)
     }
 
     private companion object {

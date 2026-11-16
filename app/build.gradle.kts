@@ -26,11 +26,16 @@ val appVersionCode = 66
  * 导致真机报告无法反推装的是哪枚包。见
  * `dist/v1.9.6_213812-215108判读_包身份订正与P2-3零误杀验收_2026-11-11.md`。
  *
- * 出包时用 `-PcastVariant=VERIFY-<时间戳>` 显式指定可读标签；未指定时自动带构建时刻，
- * 保证任意两枚 APK 的诊断都不会同形。显式传参时值固定，同参数构建仍可 UP-TO-DATE。
+ * 出包时用 `-PcastVariant=<版本>-official` / `-PcastVariant=VERIFY-<时间戳>` 显式指定
+ * 可读标签，用来区分「确实需要区分的两枚 APK」（当前出包流程已经这么做，不受影响）。
+ *
+ * 第五轮复审 C1：默认值**不能**带 `System.currentTimeMillis()`。它会在每次 Gradle 配置
+ * 阶段改变 `BuildConfig.CAST_VARIANT`，导致依赖它的 Kotlin 类全部重编译、Build Cache
+ * 失效——恰是本地门禁与 CI 耗时里可消除的一块。默认值改为只由版本常量派生的稳定串，
+ * 同一 commit 的普通开发构建完全可复现、可 UP-TO-DATE。
  */
 val castVariant: String = (findProperty("castVariant") as? String)?.takeIf { it.isNotBlank() }
-    ?: "dev-${appVersionName}-c${appVersionCode}-${System.currentTimeMillis()}"
+    ?: "dev-${appVersionName}-c${appVersionCode}"
 
 /**
  * 产物文件名包含完整版本号。
@@ -91,12 +96,10 @@ android {
         // 构建身份标签：诊断导出必有 `cast-build variant=…`，详见文件顶部 castVariant 注释
         buildConfigField("String", "CAST_VARIANT", "\"$castVariant\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        ksp {
-            arg("room.incremental", "true")
-        }
     }
 
     // Room schema 导出（供后续版本迁移校验）
+    // D5：room.incremental 原先在 defaultConfig 内重复声明一次，已统一收敛到此处
     ksp {
         arg("room.schemaLocation", "$projectDir/schemas")
         arg("room.incremental", "true")

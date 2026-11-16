@@ -313,8 +313,9 @@ fun PlaybackProgressBar(
                             val dx = change.position.x - change.previousPosition.x
                             if (dx != 0f) {
                                 change.consume()
-                                dragFraction = (change.position.x / size.width).coerceIn(0f, 1f)
-                                onSeekPreview?.invoke((dragFraction!! * safeDuration).toLong())
+                                val f = (change.position.x / size.width).coerceIn(0f, 1f)
+                                dragFraction = f
+                                onSeekPreview?.invoke((f * safeDuration).toLong())
                             }
                         }
                     }

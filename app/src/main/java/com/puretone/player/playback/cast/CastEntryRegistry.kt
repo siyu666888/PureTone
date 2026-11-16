@@ -18,11 +18,21 @@ import java.util.concurrent.ConcurrentHashMap
  * 每次 [find] 命中都刷新时刻，所以「还在被访问」的旧 token 不会被清掉；只有真正
  * 沉寂超过 [ENTRY_TTL_MS] 的条目才淘汰。
  *
+ * ## 并发边界（第五轮复审 B6）
+ *
+ * `ConcurrentHashMap` 的迭代器是弱一致的：旧实现在迭代器里判定超时后直接
+ * `iterator.remove()`，若另一个 worker 上的 [find] 恰在「判定」与「删除」之间刷新了
+ * `lastAccessMs`，仍会把正在供流的 token 删掉，电视下一次 Range 请求直接 404。
+ * 现在 [find] 与 [prune] 的读-改-删都走 `computeIfPresent`（同一 key 上串行），
+ * 且删除前在回调内**二次判定**最新访问时刻；[onExpiryObserved] 只用于把
+ * 「观察到超时 → 执行删除」这段窗口暴露给并发回归测试，生产侧默认空实现。
+ *
  * 时钟可注入，纯 JVM 单测即可锁定边界，不需要起 socket。
  */
 internal class CastEntryRegistry(
     private val ttlMs: Long = ENTRY_TTL_MS,
     private val clock: () -> Long = { System.currentTimeMillis() },
+    private val onExpiryObserved: (String) -> Unit = {},
 ) {
 
     /** 对外只暴露供流需要的两个字段，避免调用方改到时间戳 */
@@ -46,21 +56,33 @@ internal class CastEntryRegistry(
 
     /** 命中则刷新最近访问时刻，避免正在供流的旧 token 被淘汰 */
     fun find(token: String): Snapshot? {
-        val entry = entries[token] ?: return null
-        entry.lastAccessMs = clock()
-        return Snapshot(entry.file, entry.mimeType)
+        var snapshot: Snapshot? = null
+        entries.computeIfPresent(token) { _, entry ->
+            entry.lastAccessMs = clock()
+            snapshot = Snapshot(entry.file, entry.mimeType)
+            entry
+        }
+        return snapshot
     }
 
     /** 淘汰「沉寂严格超过 ttlMs」的条目；恰好等于上限仍保留 */
     fun prune(nowMs: Long = clock()): List<String> {
         val evicted = ArrayList<String>()
-        val iterator = entries.entries.iterator()
-        while (iterator.hasNext()) {
-            val item = iterator.next()
-            if (nowMs - item.value.lastAccessMs > ttlMs) {
-                evicted += item.key
-                iterator.remove()
+        // 只用弱一致 key 视图枚举；判定与删除走 computeIfPresent，与 find 在同一 key 上串行。
+        for (key in entries.keys) {
+            val observed = entries[key] ?: continue
+            if (nowMs - observed.lastAccessMs <= ttlMs) continue
+            onExpiryObserved(key)
+            var removed = false
+            entries.computeIfPresent(key) { _, current ->
+                if (nowMs - current.lastAccessMs > ttlMs) {
+                    removed = true
+                    null // 返回 null 即由 ConcurrentHashMap 原子删除该 key
+                } else {
+                    current // 期间被 find 刷新过：放弃淘汰
+                }
             }
+            if (removed) evicted += key
         }
         return evicted
     }

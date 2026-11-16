@@ -19,6 +19,16 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+# 最小权限（第五轮复审 A3）：工作流顶层未声明 permissions 时会继承仓库级
+# GITHUB_TOKEN 权限（常见为 contents: write），而本 workflow 的 Release 签名步骤
+# 会在 env 里接触 SIGNING_KEY / KEY_STORE_PASSWORD / KEY_PASSWORD / KEY_ALIAS 四个
+# secrets。显式收紧到 contents: read，可限制上游 Action 一旦被投毒时的影响面。
+# 本 workflow 无任何写操作：构建与校验只读源码，产物走 actions/upload-artifact
+# （用 ACTIONS_RUNTIME_TOKEN，不需要 GITHUB_TOKEN 权限），$GITHUB_STEP_SUMMARY
+# 是写本地文件。故不需要在 job 级提权；fork PR 无 secrets 的回退逻辑不变。
+permissions:
+  contents: read
+
 jobs:
   build:
     name: 构建与测试
@@ -27,10 +37,10 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 设置 JDK 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
         with:
           distribution: temurin
           java-version: 17
@@ -58,7 +68,7 @@ jobs:
         run: bash scripts/check-file-size.sh
 
       - name: 缓存 Gradle 依赖
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.gradle/caches
@@ -223,7 +233,7 @@ jobs:
 
       - name: 上传 APK 产物
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: apks
           path: |
@@ -233,7 +243,7 @@ jobs:
 
       - name: 上传测试报告
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: test-reports
           path: app/build/reports/tests/
@@ -241,7 +251,7 @@ jobs:
 
       - name: 上传 lint 报告
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: lint-reports
           path: app/build/reports/lint-results-debug.html

@@ -148,6 +148,8 @@
     <string name="pt_browse_050" formatted="false">暂无文件夹</string>
     <!-- ${folder.songCount} 首 -->
     <string name="pt_browse_051" formatted="false">%1$s 首</string>
+    <!-- 曲库同步：防误删保险抑制了本次删除（%1$s = 事务提交后曲库真实行数） -->
+    <string name="pt_browse_052" formatted="false">疑似大量歌曲被移除，已暂停清理以防误删（当前保留 %1$s 首）；请检查存储权限与文件后再扫描</string>
     <!-- 均衡器 -->
     <string name="pt_eq_001" formatted="false">均衡器</string>
     <!-- 返回 -->
@@ -820,4 +822,6 @@
     <string name="pt_report_delta_period_week" formatted="false">上周</string>
     <string name="pt_report_delta_period_month" formatted="false">上月</string>
     <string name="pt_report_delta_period_year" formatted="false">去年</string>
+    <!-- 桌面小组件封面图的无障碍描述（D3：从硬编码中文归位到资源） -->
+    <string name="pt_widget_cover" formatted="false">封面</string>
 </resources>

@@ -8,6 +8,7 @@ package com.puretone.player.ui.screens
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
+import com.puretone.player.domain.grouping.AlbumGroupKey
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -95,6 +96,7 @@ fun BrowseScreen(
     val isScanning by libVm.isScanning.collectAsStateWithLifecycle()
     val backfill by metadataVm.backfill.collectAsStateWithLifecycle()
     val metaMessage by metadataVm.message.collectAsStateWithLifecycle()
+    val syncMessage by libVm.syncMessage.collectAsStateWithLifecycle()
     val playlists by libVm.playlists.collectAsStateWithLifecycle()
     // P1 智能歌单入口数据：三类自动歌单（不落 PlaylistEntity，纯聚合）
     val recentlyAdded by libVm.recentlyAdded.collectAsStateWithLifecycle()
@@ -136,6 +138,15 @@ fun BrowseScreen(
         if (metaMessage != null) {
             delay(2600)
             metadataVm.consumeMessage()
+        }
+    }
+
+    // 曲库同步结果提示（防误删抑制）展示片刻后自动消失，与补全提示同口径。
+    // 两者各用独立 LaunchedEffect 与独立渲染位，避免互相覆盖 / 提前消费。
+    LaunchedEffect(syncMessage) {
+        if (syncMessage != null) {
+            delay(2600)
+            libVm.consumeSyncMessage()
         }
     }
 
@@ -273,6 +284,18 @@ fun BrowseScreen(
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+
+        // 曲库同步防误删抑制提示：独立一行，不与补全进度 / 结果提示共用上面的 Text，
+        // 否则两者同时出现时会互相覆盖。用 error 色与常规进度提示区分严重性。
+        val syncMsg = syncMessage
+        if (syncMsg != null) {
+            Text(
+                text = syncMsg.resolve(LocalContext.current),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
         }
@@ -424,7 +447,10 @@ fun BrowseScreen(
                 vm = libVm,
                 onAlbumClick = { album ->
                     navController.navigate(
-                        Routes.groupDetail("album", "${album.volumeName}|${album.albumId}|${album.album}")
+                        Routes.groupDetail(
+                            "album",
+                            AlbumGroupKey.encode(album.volumeName, album.albumId, album.album)
+                        )
                     )
                 }
             )

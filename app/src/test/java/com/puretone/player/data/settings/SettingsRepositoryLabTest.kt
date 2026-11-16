@@ -69,4 +69,14 @@ class SettingsRepositoryLabTest {
         repo.setLabEnabled(true)
         assertEquals(true, current().labEnabled)
     }
+
+    /** B4：Compose Slider 的离散点数 = steps + 2，49 个点才是每 0.5 dB 一档 */
+    @Test
+    fun `响度补偿滑杆档位数对应0点5dB步长`() {
+        assertEquals(47, PureToneSettings.RG_PREAMP_STEPS)
+        val points = PureToneSettings.RG_PREAMP_STEPS + 2
+        val step = (PureToneSettings.RG_PREAMP_MAX_DB - PureToneSettings.RG_PREAMP_MIN_DB) /
+            (points - 1)
+        assertEquals(0.5f, step, 0.0001f)
+    }
 }

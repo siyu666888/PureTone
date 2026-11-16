@@ -12,6 +12,7 @@ import com.puretone.player.data.local.entity.SongEntity
 import com.puretone.player.data.media.ScannedSong
 import com.puretone.player.data.media.MediaStoreScanner
 import com.puretone.player.data.media.isNonMusicPath
+import com.puretone.player.data.metadata.CoverUrlPolicy
 import com.puretone.player.data.settings.SettingsRepository
 import com.puretone.player.domain.report.ReportPeriod
 import com.puretone.player.playback.ReplayGainExtractor
@@ -41,10 +42,14 @@ enum class SongSortOrder {
 /** 曲库同步结果 */
 data class SyncResult(
     val added: Int,
+    /** 本次**实际删除**的行数（删除被安全闸抑制时为 0，不再虚报应删数） */
     val removed: Int,
+    /** 同步完成后 Room `songs` 表的真实行数 */
     val total: Int,
     /** 本次扫描跳过的非音乐文件数（录音 / 铃声 / 提示音等） */
-    val skippedNonMusic: Int = 0
+    val skippedNonMusic: Int = 0,
+    /** 防误删保险是否抑制了本次删除（true = 一个都没删，需下次全量收敛） */
+    val suppressed: Boolean = false
 )
 
 /**
@@ -193,6 +198,7 @@ class MusicRepository @Inject constructor(
         // 注意判据用的是 currentPaths（当前媒体库全量路径）而不是 scanned：
         // 增量下 scanned 为空是**正常**的（没有变更），不能据此判定异常。
         if (currentPaths.isEmpty()) {
+            // 此处不写库，existing 就是 songs 表的行快照，与 B1 的 countSongs() 口径一致。
             return@withContext SyncResult(
                 added = 0, removed = 0, total = existing.size, skippedNonMusic = skippedNonMusic
             )
@@ -240,8 +246,11 @@ class MusicRepository @Inject constructor(
         // 删了音乐。录音 / 铃声等非音乐文件被过滤移除是预期行为，必须从口径中剔除，否则会
         // 误伤（曲库里混有较多录音时，正常移除录音会触发误判、导致本应删的录音残留）。
         // 因此只在「被移除的音乐占现有音乐比例过高」时跳过删除，留待下次全量扫描收敛，并报错落盘。
+        // B5：分子与分母必须复用同一份 existing 元数据。旧实现给 removedMusic 传空 MIME，
+        // 于是「路径看起来像音乐、只靠 MIME 判为录音」的行（如 Music/clip.m4a + audio/amr）
+        // 被算成音乐：分子偏大、分母偏小 → ratio 更容易 > 0.5 → 误触发抑制，录音残留。
         val existingMusic = existingPaths.filterNot { p -> isNonMusicPath(p, existingByPath[p]?.mimeType ?: "") }
-        val removedMusic = removed.filterNot { isNonMusicPath(it, "") }
+        val removedMusic = removed.filterNot { isNonMusicPath(it, existingByPath[it]?.mimeType ?: "") }
         val musicRemovalRatio = if (existingMusic.isNotEmpty()) removedMusic.size.toDouble() / existingMusic.size else 0.0
         val deletePaths = if (removedMusic.isNotEmpty() && musicRemovalRatio > 0.5) {
             PureToneApplication.writeCrash(
@@ -275,11 +284,15 @@ class MusicRepository @Inject constructor(
         // 不会把「本次没扫到的变更」永久跳过。
         settings.setLastScanMs(System.currentTimeMillis())
 
+        // B1：删除被安全闸抑制时 deletePaths 为空，旧实现仍返回 removed = removed.size
+        // （UI 会显示「已移除 N 首」而库里原封不动），且 total 用媒体库路径数而非曲库行数。
+        // 现在两个数字都以「事务提交后的真实结果」为准，并把抑制状态显式带出。
         SyncResult(
             added = added,
-            removed = removed.size,
-            total = currentPaths.size,
-            skippedNonMusic = skippedNonMusic
+            removed = deletePaths.size,
+            total = songDao.countSongs(),
+            skippedNonMusic = skippedNonMusic,
+            suppressed = deletePaths.size != removed.size
         )
     }
 
@@ -402,7 +415,13 @@ class MusicRepository @Inject constructor(
 
     // ---------- 歌曲信息编辑 / 联网匹配 ----------
 
-    /** 更新歌曲展示信息（标题/歌手/专辑/封面/年份），保留 path 与统计字段 */
+    /**
+     * 更新歌曲展示信息（标题/歌手/专辑/封面/年份），保留 path 与统计字段。
+     *
+     * A2 第二道校验：所有联网封面 URL 统一在此过 [CoverUrlPolicy]，覆盖现有与将来
+     * 新增的元数据 Provider、自动填充与批量补全；本地 content:// / file:// 封面
+     * （albumart 占位、手动选择、撤销自动填充恢复的原值）原样保留。
+     */
     suspend fun updateSongInfo(
         id: Long,
         title: String,
@@ -415,11 +434,12 @@ class MusicRepository @Inject constructor(
         title = title.trim().ifBlank { "未知歌曲" },
         artist = artist.trim(),
         album = album.trim(),
-        coverUri = coverUri,
+        coverUri = CoverUrlPolicy.sanitize(coverUri),
         year = year
     )
 
-    suspend fun updateCover(id: Long, coverUri: String?) = songDao.updateCover(id, coverUri)
+    suspend fun updateCover(id: Long, coverUri: String?) =
+        songDao.updateCover(id, CoverUrlPolicy.sanitize(coverUri))
 
     suspend fun getSongsMissingCover(limit: Int = 200): List<SongEntity> =
         songDao.getSongsMissingCover(limit)
@@ -434,9 +454,13 @@ class MusicRepository @Inject constructor(
     fun observePlaylist(playlistId: Long): Flow<PlaylistWithSongs?> =
         playlistDao.observeWithSongs(playlistId)
 
-    /** 歌单快照（一次性，M3U 导出用） */
+    /**
+     * 歌单快照（一次性，M3U 导出用）。
+     * D4：改走 DAO 的 @Transaction 直查，不再为取一次快照而建立
+     * InvalidationTracker 观察再立刻取消；歌单不存在时直接返回 null。
+     */
     suspend fun getPlaylistWithSongs(playlistId: Long): PlaylistWithSongs? =
-        observePlaylist(playlistId).firstOrNull()
+        playlistDao.getWithSongs(playlistId)
 
     /** 全库歌曲快照（M3U 导入匹配用） */
     suspend fun getAllSongs(): List<SongEntity> = songDao.getAll()

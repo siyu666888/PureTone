@@ -22,6 +22,12 @@
      对**已知公网域名**可以逐条显式拒绝明文，见下方 <domain-config>。
      LAN IP 仍不在任何 domain-config 里，故走 base-config 的放行，DLNA 不受影响。
 
+  ⚠️ 补偿控制（第五轮复审 A2）：base-config 无法按网段收窄，因此**所有联网封面
+     URL 必须在应用层校验**。data/metadata/CoverUrlPolicy.kt 只放行 https +
+     *.mzstatic.com / *.apple.com，且在 MusicRepository 落库前统一二次校验；
+     本地 content:// / file:// 封面不参与该校验（albumart 占位与手动选择需保真）。
+     今后新增任何联网元数据 Provider 都必须复用这条策略，不能只靠下方域名拒绝清单。
+
   说明：自分发（不上 Google Play），不受 Google Play 的 16KB 页对齐**政策**约束。
   但这里要区分两件常被混为一谈的事：
    · 政策层——Play 要求面向 Android 15+（targetSdk 35+）的应用支持 16KB 页。

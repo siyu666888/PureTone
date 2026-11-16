@@ -11,6 +11,8 @@ import com.puretone.player.PureToneApplication
 import com.puretone.player.R
 import com.puretone.player.playback.PlaybackEventLog
 import com.puretone.player.playback.cast.CastNetworkLog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -127,7 +129,14 @@ object DiagnosticExport {
         if (out.isNullOrBlank()) context.getString(R.string.pt_diag_018) else out.take(4000) // 截断，避免报告过长
     }.getOrDefault(context.getString(R.string.pt_diag_019))
 
-    /** 写报告到 cacheDir/diagnostics/，返回文件；失败抛异常由调用方处理。 */
+    /**
+     * 写报告到 cacheDir/diagnostics/，返回文件；失败抛异常由调用方处理。
+     *
+     * **这是阻塞调用**：组装报告要读三个日志文件、查 `PowerManager` / `FFmpegKit` 的
+     * Binder 状态，落盘又是同步文件 I/O。**必须在 IO 线程执行**，不能占用主线程——
+     * 否则用户点一下「导出诊断」，界面就卡住几百毫秒到数秒不等，慢盘上更久。
+     * 想要「一步到位（写盘 + 拉起分享面板）」请用 [exportAndShare]。
+     */
     fun writeReport(context: Context): File {
         val dir = File(context.cacheDir, DIAG_DIR).apply { mkdirs() }
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
@@ -136,7 +145,32 @@ object DiagnosticExport {
         return file
     }
 
-    /** 经系统分享面板导出报告文件（授予目标应用临时读权限）。 */
+    /**
+     * 导出诊断报告并拉起系统分享面板（线程安全的完整链路）。
+     *
+     * 线程约定（2026-11-16）：
+     * - **报告组装 + 文件写盘**在 [Dispatchers.IO] 执行——这是重活（多份日志读取 +
+     *   Binder 查询 + 同步写盘），放主线程会掉帧，慢盘上可能触发 ANR。
+     * - **分享面板**（`startActivity`）必须在主线程启动，故显式切回主线程。
+     *   用 `Main.immediate` 而非 `Main`：已经在主线程时不额外 post 一次，少一帧延迟；
+     *   不在主线程时行为与 `Main` 一致（照常 post 到主 Looper）。
+     *
+     * 与 [com.puretone.player.ui.report.PosterShare.share] 同一套线程模型。
+     */
+    suspend fun exportAndShare(context: Context): File {
+        val file = withContext(Dispatchers.IO) { writeReport(context) }
+        withContext(Dispatchers.Main.immediate) { share(context, file) }
+        return file
+    }
+
+    /**
+     * 经系统分享面板导出报告文件（授予目标应用临时读权限）。
+     *
+     * **必须在主线程调用**，且必须用 **Activity（或带 `FLAG_ACTIVITY_NEW_TASK` 的）Context**：
+     * `startActivity` 在非 Activity context 上会抛
+     * `Calling startActivity() from outside of an Activity context requires the FLAG_ACTIVITY_NEW_TASK flag`。
+     * 设置页传的是 `LocalContext.current`（Activity），满足该前提。
+     */
     fun share(context: Context, file: File) {
         val uri = FileProvider.getUriForFile(context, context.packageName + AUTHORITY_SUFFIX, file)
         val intent = Intent(Intent.ACTION_SEND).apply {

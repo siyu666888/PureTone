@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,7 +42,10 @@ import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.ui.Routes
 import com.puretone.player.ui.SettingsViewModel
 import com.puretone.player.ui.DiagnosticExport
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.Locale
 
 /**
  * 设置页。
@@ -352,8 +356,9 @@ fun SettingsScreen(
                         label = stringResource(R.string.pt_settings_042),
                         value = s.replayGainPreampDb,
                         valueRange = PureToneSettings.RG_PREAMP_MIN_DB..PureToneSettings.RG_PREAMP_MAX_DB,
-                        steps = 48, // -12..12 共 24 个整数 dB，每 0.5 一档 → 48 步
-                        valueText = "%.1f dB".format(s.replayGainPreampDb),
+                        steps = PureToneSettings.RG_PREAMP_STEPS, // 49 个离散点覆盖 24 dB，步长恰为 0.5 dB
+                        // dB 是国际单位符号无需翻译；显式 Locale.US 保证小数分隔符恒为「.」
+                        valueText = String.format(Locale.US, "%.1f dB", s.replayGainPreampDb),
                         onValueChange = { vm.setReplayGainPreamp(it) }
                     )
                     Text(
@@ -372,20 +377,37 @@ fun SettingsScreen(
             // 唯一导航入口就是这里的这一行（实验室关闭时随之隐藏）。
             SettingsGroup(title = stringResource(R.string.pt_settings_019)) {
                 var exportMsg by remember { mutableStateOf<String?>(null) }
+                // 2026-11-16：导出诊断改为异步。报告组装 + 文件写盘是阻塞 I/O
+                // （读三份日志、查 PowerManager/FFmpegKit 的 Binder 状态、同步落盘），
+                // 放主线程会直接掉帧，慢盘上可能拖到秒级。线程约定见
+                // DiagnosticExport.exportAndShare。
+                // exporting 兼作「防连点」闸门：导出期间重复点击不再叠开第二个分享面板。
+                var exporting by remember { mutableStateOf(false) }
+                val exportScope = rememberCoroutineScope()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(SETTINGS_ROW_HEIGHT)
-                        .clickable {
-                            runCatching {
-                                val file = DiagnosticExport.writeReport(context)
-                                DiagnosticExport.share(context, file)
-                            }.onFailure {
-                                PureToneApplication.writeCrash("exportDiagnostics", it)
-                                exportMsg = context.getString(
-                                    R.string.pt_settings_020,
-                                    it.message ?: it.javaClass.simpleName
-                                )
+                        .clickable(enabled = !exporting) {
+                            // 导出改成异步后连点会叠出多个分享面板：这里同步置位挡掉重复触发
+                            // （enabled 标志要等重组才生效，挡不住这一瞬）。
+                            if (exporting) return@clickable
+                            exporting = true
+                            exportScope.launch {
+                                try {
+                                    DiagnosticExport.exportAndShare(context)
+                                } catch (e: CancellationException) {
+                                    // 协程被取消不是错误：原样上抛，别把它显示成「导出失败」。
+                                    throw e
+                                } catch (e: Exception) {
+                                    PureToneApplication.writeCrash("exportDiagnostics", e)
+                                    exportMsg = context.getString(
+                                        R.string.pt_settings_020,
+                                        e.message ?: e.javaClass.simpleName
+                                    )
+                                } finally {
+                                    exporting = false
+                                }
                             }
                         },
                     verticalAlignment = Alignment.CenterVertically

@@ -12,7 +12,8 @@ import javax.inject.Singleton
  *
  * - 端点：[NetworkConfig.ITUNES_SEARCH_BASE]?entity=song&limit=...&term=...
  * - 解析用系统 org.json，无额外依赖；
- * - 封面取 artworkUrl100 并升级到 600x600 高清；
+ * - 封面取 artworkUrl100 并升级到 600x600 高清，且**先过 [CoverUrlPolicy]**：
+ *   只接受 https + `*.mzstatic.com` / `*.apple.com`，不合格置 null（第五轮复审 A2）；
  * - 全程 IO 线程，超时取自 [NetworkConfig]；任何异常都吞掉返回空列表（离线/限流时优雅降级）。
  */
 @Singleton
@@ -36,7 +37,8 @@ class ItunesMetadataProvider @Inject constructor() : SongMetadataProvider {
             runCatching { parse(body) }.getOrDefault(emptyList())
         }
 
-    private fun parse(body: String): List<MetadataCandidate> {
+    /** internal 而非 private：让解析层的 URL 准入接线可被单测直接证伪，无需起网络 */
+    internal fun parse(body: String): List<MetadataCandidate> {
         val results = runCatching { JSONObject(body).optJSONArray("results") }.getOrNull()
             ?: return emptyList()
         val out = ArrayList<MetadataCandidate>()
@@ -46,7 +48,9 @@ class ItunesMetadataProvider @Inject constructor() : SongMetadataProvider {
             val title = obj.optNonNullString("trackName") ?: continue
             val artist = obj.optNonNullString("artistName") ?: "未知艺术家"
             val album = obj.optNonNullString("collectionName").orEmpty()
-            val art = obj.optNonNullString("artworkUrl100")?.replace("100x100bb", "600x600bb")
+            // A2：外部字段先过协议/主机白名单，不合格直接置 null，不落库、不交给 Coil
+            val art = CoverUrlPolicy.sanitize(obj.optNonNullString("artworkUrl100"))
+                ?.replace("100x100bb", "600x600bb")
             val year = obj.optNonNullString("releaseDate")?.takeIf { it.length >= 4 }
                 ?.take(4)?.toIntOrNull() ?: 0
             out += MetadataCandidate(title = title, artist = artist, album = album, artworkUrl = art, year = year)

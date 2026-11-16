@@ -16,6 +16,8 @@ import com.puretone.player.BuildConfig
 import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -52,6 +54,35 @@ object CastNetworkLog {
     private const val MAX_LINES = 120
 
     private const val TRIM_THRESHOLD_BYTES = 48 * 1024
+
+    /**
+     * 单条日志正文上限（第五轮复审 A1）。
+     *
+     * 投屏诊断会原样带上一部分外部输入（HTTP 请求路径、Range 头、设备名）。局域网内
+     * 任一设备都能连上本机随机端口，若不截断：① 一行可达 MB 级，`readLines()` 的
+     * trim 会把整行读进堆；② 含 `\n` 的内容能**伪造日志行**，污染真机判读证据。
+     */
+    internal const val MAX_MESSAGE_CHARS = 512
+
+    /** [log] 与 [trim] 共用的落盘锁：3 个 HTTP worker + 1Hz 轮询 + 发现协程会并发写 */
+    private val fileLock = Any()
+
+    /**
+     * C2：SimpleDateFormat 构造远贵于一次格式化，且实例非线程安全。
+     * 单例复用 + @Synchronized 串行格式化，避免每条日志都新建解析器。
+     */
+    private val stampFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+
+    @Synchronized
+    private fun stamp(): String = stampFormat.format(Date())
+
+    /**
+     * 净化外部输入：换行 → 空格（杜绝伪造日志行），再按字符截断。
+     *
+     * 纯函数，单测可直接在 JVM 下验证「超长单行被截断」「含换行不产生第二行」。
+     */
+    internal fun sanitizeMessage(message: String): String =
+        message.replace('\n', ' ').replace('\r', ' ').take(MAX_MESSAGE_CHARS)
 
     /**
      * 构建身份行：只读常量，**不经过 [log]**，避免 JVM 单测里踩 Android Log stub。
@@ -160,15 +191,33 @@ object CastNetworkLog {
         }
     }
 
-    /** 追加一行带时间戳的记录 */
+    /**
+     * 追加一行带时间戳的记录。
+     *
+     * 第五轮复审 B8：此前 `appendText()` 与 [trim] 的读-改写完全没有同步，
+     * `:137` 的 `synchronized` 只保护网络回调注册。诊断文件是本项目真机判读的
+     * 核心证据，行交错 / 丢行 / 被 trim 整体覆盖会让证据本身不可信。
+     * 现在 [appendLine] 与 [trim] 共用 [fileLock]，且 trim 走临时文件 + 原子替换。
+     */
     fun log(message: String) {
-        Log.i(TAG, message)
+        val safe = sanitizeMessage(message)
+        Log.i(TAG, safe)
         val target = logFile ?: return
-        val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-        runCatching {
-            val f = target
-            if (f.exists() && f.length() > TRIM_THRESHOLD_BYTES) trim(f)
-            f.appendText("[$stamp] $message\n")
+        runCatching { appendLine(target, message) }
+    }
+
+    /**
+     * 落盘一条已净化的记录（串行化）。
+     *
+     * 抽成 `internal` 且显式接收目标文件，是为了让单测直接传临时文件验证
+     * 「净化 + 截断 + trim 原子替换」，不必依赖 [init] 的静态状态。
+     */
+    internal fun appendLine(target: File, message: String) {
+        val safe = sanitizeMessage(message)
+        synchronized(fileLock) {
+            val stamp = stamp()
+            if (target.exists() && target.length() > TRIM_THRESHOLD_BYTES) trim(target)
+            target.appendText("[$stamp] $safe\n")
         }
     }
 
@@ -180,7 +229,7 @@ object CastNetworkLog {
      */
     internal fun withIdentity(body: String): String {
         if (body.lines().any { it.contains(IDENTITY_MARKER) }) return body
-        val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+        val stamp = stamp()
         return "[$stamp] $IDENTITY_LINE\n$body"
     }
 
@@ -193,12 +242,35 @@ object CastNetworkLog {
         }.getOrNull()
     }
 
-    private fun trim(file: File) {
-        runCatching {
-            val lines = file.readLines()
-            if (lines.size <= MAX_LINES) return
-            val kept = lines.takeLast(MAX_LINES)
-            file.writeText(kept.joinToString("\n") + "\n")
+    /**
+     * 环形裁剪：保留最后 [MAX_LINES] 行。
+     *
+     * B8：旧实现 `file.writeText()` 是「读→清空→写」，在并发 append 的窗口里会把刚
+     * 写入的行整体覆盖，且中途异常会留下半截文件。改为写同目录临时文件后用
+     * [Files.move] 原子替换（`REPLACE_EXISTING`，优先 `ATOMIC_MOVE`），
+     * 不支持原子移动的 filesystem 退回普通覆盖移动。
+     *
+     * 与 [appendLine] 共用 [fileLock]；Java 监视器可重入，从 appendLine 内调用不会自锁。
+     */
+    internal fun trim(file: File) {
+        synchronized(fileLock) {
+            runCatching {
+                val lines = file.readLines()
+                if (lines.size > MAX_LINES) {
+                    val tmp = File(file.parentFile, "${file.name}.tmp")
+                    tmp.writeText(lines.takeLast(MAX_LINES).joinToString("\n") + "\n")
+                    val ok = runCatching {
+                        Files.move(
+                            tmp.toPath(), file.toPath(),
+                            StandardCopyOption.REPLACE_EXISTING,
+                            StandardCopyOption.ATOMIC_MOVE
+                        )
+                    }.isSuccess || runCatching {
+                        Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                    }.isSuccess
+                    if (!ok) tmp.delete()
+                }
+            }
         }
     }
 

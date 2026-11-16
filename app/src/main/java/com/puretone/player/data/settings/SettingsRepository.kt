@@ -176,6 +176,14 @@ data class PureToneSettings(
         const val RG_ALBUM = "ALBUM"
         const val RG_PREAMP_MIN_DB = -12f
         const val RG_PREAMP_MAX_DB = 12f
+        /** 响度补偿滑杆的档距（dB）：-12 ~ +12 每 0.5 dB 一档 */
+        const val RG_PREAMP_STEP_DB = 0.5f
+        /**
+         * Compose `Slider.steps` 是「离散点总数 - 2」（不含两端）。
+         * 49 个点覆盖 24 dB，步长恰为 0.5 dB；写成 48 会得到 50 个点、步长 0.4898。
+         */
+        val RG_PREAMP_STEPS: Int =
+            ((RG_PREAMP_MAX_DB - RG_PREAMP_MIN_DB) / RG_PREAMP_STEP_DB).toInt() - 1
 
         /** 自定义睡眠定时的分钟数下限（1 分钟） */
         const val SLEEP_MIN_MINUTES = 1

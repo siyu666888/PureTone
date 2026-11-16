@@ -134,7 +134,7 @@ private fun CoverArt(cover: Bitmap?, tint: Color) {
         ?: remember(tint) { iconProvider(context, R.drawable.ic_widget_album, tint, ICON_PX * 2) }
     Image(
         provider = provider,
-        contentDescription = "封面",
+        contentDescription = context.getString(R.string.pt_widget_cover),
         modifier = GlanceModifier.size(56.dp).cornerRadius(10.dp),
         contentScale = ContentScale.Crop
     )

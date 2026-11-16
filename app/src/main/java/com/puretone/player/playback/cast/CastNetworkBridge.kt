@@ -8,6 +8,7 @@ import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.PowerManager
+import android.os.SystemClock
 import java.net.Inet4Address
 
 /**
@@ -21,6 +22,16 @@ import java.net.Inet4Address
  * 全局设置，若每次音量/轮询都 bind 一次再 restore 一次，多路协程会把彼此
  * 「还原」成默认网络——真机日志里 1 秒内十几对 `wifi_net_bound/restored` 交织，
  * 轮询恰好落在被还原的窗口就会误判「投屏设备已断开」。
+ *
+ * **2026-11-15 第五轮复审 B2**：上面这条「单点」此前只写在注释里，实现层
+ * [castNetHeld] / [castNetPrevious] / [sessionActive] 都是普通 `var`，而
+ * `CastDeviceDiscovery` 的搜索协程、`CastVolumeController` 的音量探针协程与
+ * `DlnaCastManager.beginCastSession()` 分属不同协程、可同时进入 [holdCastNetwork]。
+ * 并发下第二个 `acquireKeepAlive()` 会先释放第一个刚拿到的保活锁，两次
+ * `bindToWifiNetwork()` 还会把 [castNetPrevious] 覆盖成「已绑定 Wi-Fi」的 Network，
+ * 最终 `endCastSession()` 只 restore 到这个错误值 → 退出投屏后进程仍被绑死在 Wi-Fi。
+ * 因此本类所有读写这份状态的方法统一 `@Synchronized` 串行化（Java 监视器可重入，
+ * [beginCastSession] 内部调用 [holdCastNetwork] 不会自锁）。
  */
 internal class CastNetworkBridge(private val appContext: Context) {
 
@@ -127,13 +138,17 @@ internal class CastNetworkBridge(private val appContext: Context) {
      *
      * @return true = 本次调用真正建立了绑定，借用方负责归还
      */
+    @Synchronized
     fun holdCastNetwork(): Boolean {
         if (castNetHeld) {
             CastNetworkLog.log("wifi_net_bound=reused（投屏会话已持有）")
             return false
         }
         acquireKeepAlive()
-        castNetPrevious = bindToWifiNetwork()
+        // 只在「首次真正绑定」这一条路径上记录还原目标，重复 hold 走上面的 return，
+        // 绝不会把 castNetPrevious 覆盖成已经绑到 Wi-Fi 的 Network（B2）。
+        val previous = bindToWifiNetwork()
+        castNetPrevious = previous
         castNetHeld = true
         return true
     }
@@ -145,6 +160,7 @@ internal class CastNetworkBridge(private val appContext: Context) {
      * 真机上「设备发现结束」的清理可能先于投送成功发生，晚一步锁就被释放了。
      * 投送失败由 [endCastSession] 归还，成功则一直持有到停止投屏。
      */
+    @Synchronized
     fun beginCastSession() {
         holdCastNetwork()
         sessionActive = true
@@ -152,6 +168,7 @@ internal class CastNetworkBridge(private val appContext: Context) {
     }
 
     /** 投屏会话结束（stopCast / 投送失败 / 失联回退 / release）：唯一无条件释放出口 */
+    @Synchronized
     fun endCastSession() {
         sessionActive = false
         releaseCastNetwork()
@@ -164,6 +181,7 @@ internal class CastNetworkBridge(private val appContext: Context) {
      * 发起方，这两件事必须活到 [endCastSession]，不能被一次搜索结束清掉。
      * 幂等：复用别人的绑定（owned=false）时本就是无操作。
      */
+    @Synchronized
     fun releaseBorrowedNetwork(owned: Boolean) {
         if (CastKeepAlivePolicy.shouldReleaseOnBorrowerReturn(owned, sessionActive)) {
             releaseCastNetwork()
@@ -183,10 +201,26 @@ internal class CastNetworkBridge(private val appContext: Context) {
      * 下一份诊断就能直接区分「锁丢了」（生命周期 bug）与「锁在但系统仍掐网/冻结」
      * （需要用户放行白名单），不用再靠猜。
      */
-    fun keepAliveSnapshot(): String =
-        "wake=${sessionWakeLock?.isHeld == true} wifi=${sessionWifiLock?.isHeld == true} " +
+    // C2：电池/Doze 标签的短缓存（keepAliveSnapshot 会被 1Hz 轮询拼进诊断日志）
+    private var deviceStateCachedAtMs = 0L
+    private var cachedBatteryLabel = "unknown"
+    private var cachedDozeLabel = "unknown"
+
+    @Synchronized
+    fun keepAliveSnapshot(): String {
+        refreshDeviceStateIfStale()
+        return "wake=${sessionWakeLock?.isHeld == true} wifi=${sessionWifiLock?.isHeld == true} " +
             "bound=$castNetHeld session=$sessionActive " +
-            "battery=${batteryOptimizationLabel()} doze=${deviceIdleLabel()}"
+            "battery=$cachedBatteryLabel doze=$cachedDozeLabel"
+    }
+
+    private fun refreshDeviceStateIfStale() {
+        val nowMs = SystemClock.elapsedRealtime()
+        if (deviceStateCachedAtMs != 0L && nowMs - deviceStateCachedAtMs < DEVICE_STATE_CACHE_MS) return
+        cachedBatteryLabel = batteryOptimizationLabel()
+        cachedDozeLabel = deviceIdleLabel()
+        deviceStateCachedAtMs = nowMs
+    }
 
     /** 电池优化白名单：true=已忽略（放行）、false=受限制、null=读取失败 */
     private fun batteryOptimizationLabel(): String = runCatching {
@@ -201,6 +235,7 @@ internal class CastNetworkBridge(private val appContext: Context) {
     }.getOrNull().let { if (it == true) "on" else if (it == false) "off" else "unknown" }
 
     /** 还原投屏会话的进程网络（幂等：未持有时无操作，不会误撤别人的绑定） */
+    @Synchronized
     private fun releaseCastNetwork() {
         if (!castNetHeld) return
         restoreNetwork(castNetPrevious)
@@ -234,6 +269,9 @@ internal class CastNetworkBridge(private val appContext: Context) {
      *
      * Wi-Fi 锁在高版本对第三方应用可能被系统忽略，属 best-effort；CPU 锁是硬保证。
      * 两者都包在 runCatching 里，任何机型上的拒绝都只记日志、不影响投屏。
+     *
+     * B2：只允许在 [holdCastNetwork] 的同步块内调用。开头的「先 release 旧锁」在
+     * 串行化后已不可能误放别人的锁，但保留它以防将来出现新的调用入口。
      */
     @Suppress("DEPRECATION")
     @SuppressLint("WakelockTimeout")
@@ -327,5 +365,8 @@ internal class CastNetworkBridge(private val appContext: Context) {
          * PowerManager 要求 `前缀:名称` 形式，否则 lint InvalidWakeLockTag 直接报错。
          */
         private const val KEEPALIVE_TAG = "puretone:CastSession"
+
+        /** C2：电池/Doze 状态是慢变化的系统服务查询，快照 3 秒内复用 */
+        private const val DEVICE_STATE_CACHE_MS = 3_000L
     }
 }
