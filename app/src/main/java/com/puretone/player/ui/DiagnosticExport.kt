@@ -163,7 +163,14 @@ object DiagnosticExport {
         return file
     }
 
-    /** 经系统分享面板导出报告文件（授予目标应用临时读权限）。**必须在主线程调用**。 */
+    /**
+     * 经系统分享面板导出报告文件（授予目标应用临时读权限）。
+     *
+     * **必须在主线程调用**，且必须用 **Activity（或带 `FLAG_ACTIVITY_NEW_TASK` 的）Context**：
+     * `startActivity` 在非 Activity context 上会抛
+     * `Calling startActivity() from outside of an Activity context requires the FLAG_ACTIVITY_NEW_TASK flag`。
+     * 设置页传的是 `LocalContext.current`（Activity），满足该前提。
+     */
     fun share(context: Context, file: File) {
         val uri = FileProvider.getUriForFile(context, context.packageName + AUTHORITY_SUFFIX, file)
         val intent = Intent(Intent.ACTION_SEND).apply {

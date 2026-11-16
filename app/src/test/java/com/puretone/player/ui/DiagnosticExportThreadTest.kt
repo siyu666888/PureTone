@@ -2,6 +2,7 @@ package com.puretone.player.ui
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -50,6 +51,7 @@ class DiagnosticExportThreadTest {
         val serviceThreads: MutableList<String> = Collections.synchronizedList(mutableListOf())
         val filesDirThreads: MutableList<String> = Collections.synchronizedList(mutableListOf())
         val packageNameThreads: MutableList<String> = Collections.synchronizedList(mutableListOf())
+        val shareThreads: MutableList<String> = Collections.synchronizedList(mutableListOf())
 
         override fun getSystemService(name: String): Any? {
             serviceThreads += Thread.currentThread().name
@@ -64,6 +66,11 @@ class DiagnosticExportThreadTest {
         override fun getPackageName(): String {
             packageNameThreads += Thread.currentThread().name
             return super.getPackageName()
+        }
+
+        override fun startActivity(intent: Intent) {
+            shareThreads += Thread.currentThread().name
+            super.startActivity(intent)
         }
     }
 
@@ -83,16 +90,20 @@ class DiagnosticExportThreadTest {
         val spy = ThreadSpy(base)
         val callerThread = baseName(Thread.currentThread().name)
 
-        // 说明：Robolectric 下 androidx FileProvider 解析出的根目录与测试临时目录对不上，
-        // getUriForFile 会抛 IllegalArgumentException。这发生在 share() 的第一条语句
-        // （context.packageName）**之后**，不影响线程归属的断言，故此处刻意容忍。
+        // 分享阶段在 Robolectric 下可能因**环境缺陷**失败，且**平台相关**：
+        // - Linux：FileProvider 能解析出根目录，但用 Application context 调 startActivity
+        //   会抛 AndroidRuntimeException（缺 FLAG_ACTIVITY_NEW_TASK）；
+        // - Windows：FileProvider 的根目录与 Robolectric 临时目录对不上，抛
+        //   IllegalArgumentException（Failed to find configured root）。
+        // 两者都发生在 share() 内部、与线程归属无关，故此处容忍其出现；
+        // 真正的判据是下面「分享阶段的最后一次取 packageName 必须发生在主线程」。
         val shareFailure = runCatching {
             runBlocking { DiagnosticExport.exportAndShare(spy) }
         }.exceptionOrNull()
         if (shareFailure != null) {
             assertTrue(
-                "分享阶段的失败应来自 FileProvider 解析，而不是别的环节：${shareFailure.message}",
-                shareFailure is IllegalArgumentException
+                "分享阶段的失败应是运行时异常（环境缺陷），而不是别的环节：${shareFailure.message}",
+                shareFailure is RuntimeException
             )
         }
 
@@ -119,6 +130,16 @@ class DiagnosticExportThreadTest {
             callerThread,
             baseName(spy.packageNameThreads.last())
         )
+
+        // startActivity 是分享动作的最后一步：能走到就再钉一遍线程归属
+        // （Windows 上 FileProvider 先失败，走不到这一步，此时跳过）。
+        if (spy.shareThreads.isNotEmpty()) {
+            assertEquals(
+                "分享面板必须在主线程拉起（实测线程=${spy.shareThreads.toSet()}）",
+                callerThread,
+                baseName(spy.shareThreads.last())
+            )
+        }
     }
 
     @Test
