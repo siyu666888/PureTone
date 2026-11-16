@@ -45,6 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
 import com.puretone.player.data.local.entity.SongEntity
+import com.puretone.player.domain.grouping.AlbumGroupKey
 import com.puretone.player.ui.LibraryViewModel
 import com.puretone.player.ui.MetadataViewModel
 import com.puretone.player.ui.PlayerViewModel
@@ -55,7 +56,8 @@ import com.puretone.player.ui.components.DefaultCoverGlyph
 /**
  * 分组二级详情页（专辑 / 歌手 / 文件夹通用）。
  *
- * - type ∈ {album, artist, folder}；key 为分组标识（album 形如 "albumId|album"）；
+ * - type ∈ {album, artist, folder}；key 为分组标识，album 形如
+ *   "volumeName|albumId|album"（P2-4 三段口径，编解码见 AlbumGroupKey）；
  * - 展示大封面 / 标题 / 副标题 / 歌曲数量 +「播放全部」；
  * - 下列为可点播、可长按唤出操作面板的歌曲列表，交互与音乐页一致。
  */
@@ -80,8 +82,8 @@ fun GroupDetailScreen(
     val first = songs.firstOrNull()
     val (title, subtitle, coverUri) = when (type) {
         "album" -> {
-            val seg = key.split("|", limit = 3)
-            val albumName = seg.getOrNull(2) ?: first?.album ?: stringResource(R.string.pt_group_001)
+            val albumName = AlbumGroupKey.decode(key).album
+                ?: first?.album ?: stringResource(R.string.pt_group_001)
             Triple(first?.album ?: albumName, first?.artist, songs.firstNotNullOfOrNull { it.coverUri })
         }
         "artist" -> Triple(key, null, songs.firstNotNullOfOrNull { it.coverUri })

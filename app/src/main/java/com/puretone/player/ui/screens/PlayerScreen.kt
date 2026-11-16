@@ -232,9 +232,9 @@ fun PlayerScreen(
                     )
                 }
             }
-            if (state.error != null) {
+            state.error?.let { error ->
                 Text(
-                    state.error!!,
+                    error,
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                     // P3-27：可点掉，不必等它自己消失
@@ -431,12 +431,14 @@ fun PlayerScreen(
     }
 
     // 歌曲信息浮层（长按封面唤起；含查看/编辑 + 联网匹配）
-    if (showInfo && currentSong != null) {
-        SongInfoSheet(
-            song = currentSong!!,
-            playerVm = vm,
-            metadataVm = metadataVm,
-            onDismiss = { showInfo = false }
-        )
+    if (showInfo) {
+        currentSong?.let { song ->
+            SongInfoSheet(
+                song = song,
+                playerVm = vm,
+                metadataVm = metadataVm,
+                onDismiss = { showInfo = false }
+            )
+        }
     }
 }

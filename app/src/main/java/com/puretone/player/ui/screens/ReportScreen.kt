@@ -91,7 +91,7 @@ fun ReportScreen(
         state.data?.let { ReportFormat.toPosterContent(context, it) }
     }
 
-    val canShare = state.statsEnabled && content != null && !state.data!!.isEmpty
+    val canShare = state.statsEnabled && content != null && state.data?.isEmpty == false
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -130,7 +130,7 @@ fun ReportScreen(
             }
             else -> {
                 val c = content
-                val data = state.data!!
+                val topSongs = state.data?.topSongs.orEmpty()
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -146,8 +146,8 @@ fun ReportScreen(
                     ReportHero(content = c)
                     ReportTrendCard(content = c)
                     ReportCapsules(content = c)
-                    if (data.topSongs.isNotEmpty()) {
-                        ReportTopSongs(content = c, songs = data.topSongs)
+                    if (topSongs.isNotEmpty()) {
+                        ReportTopSongs(content = c, songs = topSongs)
                     }
                     if (c.funTag.isNotBlank()) {
                         ReportFunTag(content = c)

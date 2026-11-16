@@ -7,6 +7,7 @@ package com.puretone.player.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.ui.res.stringResource
 import com.puretone.player.R
+import com.puretone.player.domain.grouping.AlbumGroupKey
 import com.puretone.player.ui.components.SmartPlaylistBrandIcon
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -198,7 +199,7 @@ internal fun AlbumsTabContent(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        items(albums, key = { "${it.volumeName}|${it.albumId}|${it.album}" }) { album ->
+        items(albums, key = { AlbumGroupKey.encode(it.volumeName, it.albumId, it.album) }) { album ->
             AlbumCard(album = album, onClick = { onAlbumClick(album) })
         }
     }

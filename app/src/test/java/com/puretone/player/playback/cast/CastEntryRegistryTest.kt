@@ -1,11 +1,14 @@
 package com.puretone.player.playback.cast
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * [CastEntryRegistry] 单测（第三轮审查 P2-1）。
@@ -147,5 +150,58 @@ class CastEntryRegistryTest {
         registry.clear()
         assertEquals(0, registry.size())
         assertNull(registry.find("a"))
+    }
+
+    /**
+     * B6 确定性回归：把「观察到超时 → 执行删除」这段竞态窗口用注入钩子打开。
+     * 钩子模拟电视在 prune 判定之后、删除之前恰好重连旧 URL 刷新 lastAccessMs，
+     * 此时必须放弃淘汰；旧实现的 iterator.remove() 会无条件删掉，本例即变红。
+     */
+    @Test
+    fun `判定超时后又被访问的token不会被淘汰`() {
+        val clock = FakeClock()
+        lateinit var registry: CastEntryRegistry
+        registry = CastEntryRegistry(
+            ttlMs = 100L,
+            clock = { clock.nowMs },
+            onExpiryObserved = { token -> registry.find(token) }
+        )
+        registry.register("old", flac, "audio/flac")
+        clock.advance(101L)
+
+        val evicted = registry.prune()
+
+        assertTrue("删除前已被重新访问，不得淘汰", evicted.isEmpty())
+        assertNotNull(registry.find("old"))
+        assertEquals(1, registry.size())
+    }
+
+    /** B6 并发回归：任何一轮「find 命中」都不允许同时出现在淘汰名单里。 */
+    @Test
+    fun `并发访问与淘汰不产生已命中却被淘汰的条目`() {
+        repeat(200) { round ->
+            val clock = FakeClock()
+            val registry = subject(clock, ttlMs = 100L)
+            registry.register("old", flac, "audio/flac")
+            clock.advance(101L)
+
+            val gate = CountDownLatch(1)
+            val evicted = AtomicReference<List<String>>(emptyList())
+            val found = AtomicReference<CastEntryRegistry.Snapshot?>(null)
+            val pruner = Thread { gate.await(); evicted.set(registry.prune(101L)) }
+            val reader = Thread { gate.await(); found.set(registry.find("old")) }
+            pruner.start()
+            reader.start()
+            gate.countDown()
+            pruner.join()
+            reader.join()
+
+            if (found.get() != null) {
+                assertFalse(
+                    "第 $round 轮：find 命中却仍被淘汰",
+                    evicted.get().contains("old")
+                )
+            }
+        }
     }
 }

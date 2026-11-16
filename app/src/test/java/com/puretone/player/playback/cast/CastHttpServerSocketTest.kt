@@ -128,6 +128,43 @@ class CastHttpServerSocketTest {
         assertEquals(HTTP_METHOD_NOT_ALLOWED, request("POST", "/file/$token").status)
     }
 
+    // 第五轮复审 A1：无换行的超长请求行必须在共享字节预算处被挡下并回 431，
+    // 而不是让 BufferedReader 无上限累积字符串。
+
+    @Test
+    fun `无换行超长请求行返回 431`() {
+        // 恰好耗尽预算：服务端读完这些字节后下一次循环即判 TooLong，无残留未读数据。
+        val raw = ByteArray(CastHttpServer.MAX_REQUEST_BYTES) { 'A'.code.toByte() }
+        val response = Socket(HOST, server.port).use { socket ->
+            socket.soTimeout = SOCKET_TIMEOUT_MS
+            socket.getOutputStream().apply { write(raw); flush() }
+            readResponse(socket.getInputStream())
+        }
+        assertEquals(HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE, response.status)
+        assertTrue(String(response.body, Charsets.UTF_8).contains("Request Header Fields Too Large"))
+    }
+
+    // 第五轮复审 B7：start 幂等、stop 后能重建 worker 池并重新监听。
+
+    @Test
+    fun `重复 start 幂等且监听端口不变`() {
+        val port = server.port
+        assertTrue(server.start(null))
+        assertEquals("重复 start 不得另开一个 ServerSocket", port, server.port)
+    }
+
+    @Test
+    fun `stop 后重新 start 仍能完整供流`() {
+        server.stop()
+        assertEquals(-1, server.port)
+        assertTrue("stop 后应能惰性重建 worker 池并重新监听", server.start(null))
+        assertTrue(server.port > 0)
+        val token = register()
+        val response = request("GET", "/file/$token")
+        assertEquals(HTTP_OK, response.status)
+        assertArrayEquals(file.readBytes(), response.body)
+    }
+
     /** 登记当前文件并返回渲染器可见的 token（每次登记都会重置本轮取流状态） */
     private fun register(): String =
         server.urlFor(file, MIME, HOST)!!.substringAfterLast('/')
@@ -211,5 +248,6 @@ class CastHttpServerSocketTest {
         const val HTTP_NOT_FOUND = 404
         const val HTTP_METHOD_NOT_ALLOWED = 405
         const val HTTP_RANGE_NOT_SATISFIABLE = 416
+        const val HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE = 431
     }
 }

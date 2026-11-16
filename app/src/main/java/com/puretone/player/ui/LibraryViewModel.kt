@@ -7,6 +7,7 @@ import com.puretone.player.data.local.dao.PlaylistWithSongs
 import com.puretone.player.data.repository.MusicRepository
 import com.puretone.player.data.repository.SongSortOrder
 import com.puretone.player.data.repository.SyncResult
+import com.puretone.player.domain.grouping.AlbumGroupKey
 import com.puretone.player.domain.grouping.AlbumSummary
 import com.puretone.player.domain.grouping.ArtistSummary
 import com.puretone.player.domain.grouping.FolderSummary
@@ -104,6 +105,15 @@ class LibraryViewModel @Inject constructor(
     val isScanning = MutableStateFlow(false)
     val lastSync = MutableStateFlow<SyncResult?>(null)
 
+    /**
+     * 曲库同步结果提示（当前仅「防误删保险抑制了删除」一类），UI 消费后清空。
+     * 与 M3U / 元数据提示一样走 [UiMessage] 统一资源化；判据由 [SyncResult.toNotice]
+     * 纯函数锁定，VM 内不再自行推断，避免与生产侧安全闸语义漂移。
+     */
+    private val _syncMessage = MutableStateFlow<UiMessage?>(null)
+    val syncMessage: StateFlow<UiMessage?> = _syncMessage
+    fun consumeSyncMessage() { _syncMessage.value = null }
+
     /** 扫描互斥：避免自动扫描与手动扫描并发跑两遍全库同步（P0-6） */
     private val scanMutex = Mutex()
 
@@ -151,15 +161,13 @@ class LibraryViewModel @Inject constructor(
 
     /**
      * 分组详情页取歌：type ∈ {album, artist, folder}，key 为分组标识。
-     * album 的 key 形如 "volumeName|albumId|album"（P2-4：卷名隔离同名 album_id）。
+     * album 的 key 形如 "volumeName|albumId|album"（P2-4：卷名隔离同名 album_id），
+     * 编解码统一走 [AlbumGroupKey]，这里只做转发，不再内联 split。
      */
     fun observeGroupSongs(type: String, key: String): Flow<List<SongEntity>> = when (type) {
         "album" -> {
-            val seg = key.split("|", limit = 3)
-            val volumeName = seg.getOrNull(0) ?: ""
-            val albumId = seg.getOrNull(1)?.toLongOrNull() ?: 0L
-            val album = seg.getOrNull(2) ?: ""
-            repo.observeSongsByAlbum(albumId, album, volumeName)
+            val parsed = AlbumGroupKey.decode(key)
+            repo.observeSongsByAlbum(parsed.albumId, parsed.album ?: "", parsed.volumeName)
         }
         "artist" -> repo.observeSongsByArtist(key)
         else -> repo.observeSongsByFolder(key)
@@ -179,7 +187,15 @@ class LibraryViewModel @Inject constructor(
             // 同步异常不静默吞掉：落盘到 crash_last.txt，真机 pull 即可定位
             // 「列表空白」是否由扫描/对账异常（如 MediaStore 查询、路径口径）引起。
             val syncRes = runCatching { repo.syncLibrary() }
-            syncRes.onSuccess { lastSync.value = it }
+            syncRes.onSuccess { result ->
+                lastSync.value = result
+                // 防误删保险抑制删除时明确告知用户：一个都没删、曲库维持原样，
+                // 否则「扫描完列表没变化」会被误判为扫描失效而反复重试。
+                // 判据由 SyncResult.toNotice()、资源与参数由 SyncNotice.toMessage()
+                // 分层锁定；None 返回 null，清掉上一次未消费的提示，
+                // 保证「以最新一次同步结果为准」。VM 这里只做一行转发，不含判定逻辑。
+                _syncMessage.value = result.toNotice().toMessage()
+            }
             syncRes.onFailure { PureToneApplication.writeCrash("syncLibrary", it) }
             // ReplayGain 回填：同步后挑一批未分析歌曲跑 ffprobe（ffprobe 较重，分批进行，
             // 多次扫描逐步收敛，不会阻塞 UI）；失败/无标签的歌曲留待下次重试。

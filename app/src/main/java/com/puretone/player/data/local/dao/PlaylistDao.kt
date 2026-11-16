@@ -9,6 +9,7 @@ import androidx.room.Transaction
 import androidx.room.Update
 import com.puretone.player.data.local.entity.PlaylistEntity
 import com.puretone.player.data.local.entity.PlaylistSongEntity
+import com.puretone.player.data.local.entity.SongEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -105,6 +106,28 @@ interface PlaylistDao {
         """
     )
     fun observePlaylistSongRowsOf(playlistId: Long): Flow<List<PlaylistSongRow>>
+
+    /**
+     * D4：一次性直查的歌单歌曲（按 position 排序）。
+     * 直接把 `songs.*` 映射回 [SongEntity]，不再复用上面带别名的
+     * [PlaylistSongRow] 投影，避免为「取一次快照」维护第二份 26 列 SQL。
+     */
+    @Query(
+        """
+        SELECT s.* FROM songs AS s
+        INNER JOIN playlist_songs AS ps ON ps.song_id = s.id
+        WHERE ps.playlist_id = :playlistId
+        ORDER BY ps.position
+        """
+    )
+    suspend fun getSongsOf(playlistId: Long): List<SongEntity>
+
+    /** D4：歌单快照；不存在返回 null。@Transaction 保证元数据与关联行同一时刻 */
+    @Transaction
+    suspend fun getWithSongs(playlistId: Long): PlaylistWithSongs? {
+        val playlist = getById(playlistId) ?: return null
+        return PlaylistWithSongs(playlist, getSongsOf(playlistId))
+    }
 
     /**
      * 全部歌单及其歌曲（按 position 排序）。

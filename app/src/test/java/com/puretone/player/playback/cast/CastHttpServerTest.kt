@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
 import java.io.File
 
 /**
@@ -274,5 +275,56 @@ class CastHttpServerTest {
     @Test
     fun `skip未到位时给出可落盘的失败原因`() {
         assertEquals("FileTooShort:skip=128", CastHttpServer.skipShortfallReason(128L))
+    }
+
+    // 第五轮复审 A1：请求行/请求头共用一份字节预算，超限必须可判读为 TooLong。
+    // 这几例直接测 HeaderReader，不必起 socket，纯 JVM 即可复现「无换行超长流式灌入」。
+
+    private fun reader(bytes: ByteArray, budget: Int = 256) =
+        CastHttpServer.HeaderReader(ByteArrayInputStream(bytes), budget)
+
+    @Test
+    fun `CRLF分行且去掉回车`() {
+        val r = reader("GET /file/abc HTTP/1.1\r\nHost: tv\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
+        assertEquals(
+            CastHttpServer.LineResult.Ok("GET /file/abc HTTP/1.1"),
+            r.readLine()
+        )
+        assertEquals(CastHttpServer.LineResult.Ok("Host: tv"), r.readLine())
+        assertEquals(CastHttpServer.LineResult.Ok(""), r.readLine())
+        assertEquals(CastHttpServer.LineResult.EndOfStream, r.readLine())
+    }
+
+    @Test
+    fun `无换行的超长请求行越过共享预算返回TooLong`() {
+        val r = reader("A".repeat(10_000).toByteArray(Charsets.ISO_8859_1))
+        assertEquals(CastHttpServer.LineResult.TooLong, r.readLine())
+    }
+
+    @Test
+    fun `多行累计也会耗尽同一份字节预算`() {
+        val first = "GET /file/abc HTTP/1.1\r\n".toByteArray(Charsets.ISO_8859_1)
+        val rest = "X-Pad: ${"P".repeat(10_000)}\r\n".toByteArray(Charsets.ISO_8859_1)
+        val r = reader(first + rest)
+        assertTrue(r.readLine() is CastHttpServer.LineResult.Ok)
+        assertEquals(CastHttpServer.LineResult.TooLong, r.readLine())
+    }
+
+    @Test
+    fun `裸回车不当行尾会被严格判为超长`() {
+        val r = reader("GET /file/abc\rHost: tv\r".repeat(100).toByteArray(Charsets.ISO_8859_1))
+        assertEquals(CastHttpServer.LineResult.TooLong, r.readLine())
+    }
+
+    @Test
+    fun `流结束时残留半行返回内容空流返回EndOfStream`() {
+        assertEquals(
+            CastHttpServer.LineResult.Ok("GET /file/abc"),
+            reader("GET /file/abc".toByteArray(Charsets.ISO_8859_1)).readLine()
+        )
+        assertEquals(
+            CastHttpServer.LineResult.EndOfStream,
+            reader(ByteArray(0)).readLine()
+        )
     }
 }

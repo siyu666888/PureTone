@@ -5,8 +5,10 @@ import androidx.test.core.app.ApplicationProvider
 import com.puretone.player.data.local.dao.DailyTrendRow
 import com.puretone.player.data.local.dao.HourCountRow
 import com.puretone.player.data.local.dao.NamedCountRow
+import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.domain.report.PeriodType
 import com.puretone.player.domain.report.ReportData
+import com.puretone.player.ui.report.PosterTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -123,5 +125,136 @@ class ReportFormatTest {
             assertEquals("type=$type", count, content.trendBuckets.size)
             assertEquals(150_000L, content.trendBuckets.sumOf { it.listenMs })
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 2026-11-16：补 ReportFormat 五个纯函数的**直接**断言。
+    //
+    // 此前它们只被 toPosterContent / formatDelta 的间接路径覆盖：改了
+    // formatListenMs 的分支、formatPct 的去 .0、formatPeriodBadge 的周号，
+    // 只要 toPosterContent 仍然能拼出字符串，单测就全绿——海报上的数字悄悄
+    // 变了也没人拦。这里按「函数 + 分支」逐条钉死，并补负向断言（负值、
+    // 未知枚举、跨零临界），让改坏必变红。
+    // ------------------------------------------------------------------
+
+    /**
+     * 把 [LocalDate] 折成 epoch 毫秒。
+     *
+     * 用**正午**而不是零点：零点落在少数时区的夏令时缺口里时，
+     * `atStartOfDay` 会前移一小时，epoch 回折时日期就差一天，测试在 CI
+     * （UTC）与本地（GMT+8）会给出不同结论。正午永不在缺口里。
+     */
+    private fun epochAtNoon(date: LocalDate): Long =
+        date.atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    @Test
+    fun `formatListenMs 覆盖零秒分时四个分支并把负值兜底为零`() {
+        // ms <= 0 走零分支（负值也走这里，绝不能出现负数文案）
+        assertEquals("0 分钟", ReportFormat.formatListenMs(context, 0L))
+        assertEquals("0 分钟", ReportFormat.formatListenMs(context, -1L))
+        assertEquals("0 分钟", ReportFormat.formatListenMs(context, Long.MIN_VALUE))
+        // 秒分支：不足 1 分钟
+        assertEquals("1 秒", ReportFormat.formatListenMs(context, 1_500L))
+        // 分分支：1 ~ 59 分钟（向下取整，2.5 分钟显示 2 分钟）
+        assertEquals("2 分钟", ReportFormat.formatListenMs(context, 150_000L))
+        // 时分支：60 分钟以上，拆成「X 小时 Y 分」
+        assertEquals("1 小时 0 分", ReportFormat.formatListenMs(context, 3_600_000L))
+        assertEquals("1 小时 30 分", ReportFormat.formatListenMs(context, 5_400_000L))
+    }
+
+    @Test
+    fun `formatListenMs 在秒与分与小时的临界点上切换分支`() {
+        assertEquals("59 秒", ReportFormat.formatListenMs(context, 59_999L))
+        assertEquals("1 分钟", ReportFormat.formatListenMs(context, 60_000L))
+        assertEquals("59 分钟", ReportFormat.formatListenMs(context, 3_599_999L))
+        assertEquals("1 小时 0 分", ReportFormat.formatListenMs(context, 3_600_000L))
+        assertEquals("2 小时 1 分", ReportFormat.formatListenMs(context, 7_260_000L))
+    }
+
+    @Test
+    fun `formatPct 去掉多余的点零并对负数取绝对值`() {
+        assertEquals("50", ReportFormat.formatPct(50.0))
+        assertEquals("100", ReportFormat.formatPct(100.0))
+        assertEquals("0", ReportFormat.formatPct(0.0))
+        assertEquals("12.3", ReportFormat.formatPct(12.34))
+        // 负数取绝对值：涨跌方向由调用方用文案区分，数字本身不带负号
+        assertEquals("50", ReportFormat.formatPct(-50.0))
+        assertEquals("12.3", ReportFormat.formatPct(-12.34))
+    }
+
+    @Test
+    fun `formatPct 在零点附近与四舍五入边界上表现稳定`() {
+        assertEquals("0", ReportFormat.formatPct(0.04))
+        assertEquals("0.1", ReportFormat.formatPct(0.05))
+        assertEquals("0.3", ReportFormat.formatPct(0.25))
+        assertEquals("0.8", ReportFormat.formatPct(0.75))
+        assertEquals("100", ReportFormat.formatPct(99.99))
+        assertEquals("1234.6", ReportFormat.formatPct(1234.56))
+    }
+
+    @Test
+    fun `formatPeriodBadge 按周期给出年与周号月号`() {
+        val day = epochAtNoon(LocalDate.parse("2026-11-16"))
+        assertEquals(
+            "周报 · 2026 第 47 周",
+            ReportFormat.formatPeriodBadge(context, PeriodType.WEEK, day)
+        )
+        assertEquals(
+            "月报 · 2026 年 11 月",
+            ReportFormat.formatPeriodBadge(context, PeriodType.MONTH, day)
+        )
+        assertEquals(
+            "年报 · 2026 年",
+            ReportFormat.formatPeriodBadge(context, PeriodType.YEAR, day)
+        )
+    }
+
+    @Test
+    fun `formatPeriodBadge 的周号随日期变化而不是写死`() {
+        assertEquals(
+            "周报 · 2026 第 10 周",
+            ReportFormat.formatPeriodBadge(context, PeriodType.WEEK, epochAtNoon(LocalDate.parse("2026-03-05")))
+        )
+        assertEquals(
+            "周报 · 2026 第 25 周",
+            ReportFormat.formatPeriodBadge(context, PeriodType.WEEK, epochAtNoon(LocalDate.parse("2026-06-15")))
+        )
+        assertEquals(
+            "月报 · 2026 年 3 月",
+            ReportFormat.formatPeriodBadge(context, PeriodType.MONTH, epochAtNoon(LocalDate.parse("2026-03-05")))
+        )
+        assertEquals(
+            "年报 · 2027 年",
+            ReportFormat.formatPeriodBadge(context, PeriodType.YEAR, epochAtNoon(LocalDate.parse("2027-01-01")))
+        )
+    }
+
+    @Test
+    fun `formatRangeText 按周期给出区间年月`() {
+        val start = epochAtNoon(LocalDate.parse("2026-11-02"))
+        val end = epochAtNoon(LocalDate.parse("2026-11-09"))
+        assertEquals(
+            "11.02 - 11.09",
+            ReportFormat.formatRangeText(context, PeriodType.WEEK, start, end)
+        )
+        assertEquals(
+            "2026.11",
+            ReportFormat.formatRangeText(context, PeriodType.MONTH, start, end)
+        )
+        assertEquals(
+            "2026",
+            ReportFormat.formatRangeText(context, PeriodType.YEAR, start, end)
+        )
+    }
+
+    @Test
+    fun `defaultPosterTheme 按主题模式映射并在未知值回落浅色`() {
+        assertEquals(PosterTheme.LIGHT, ReportFormat.defaultPosterTheme(PureToneSettings.THEME_LIGHT))
+        assertEquals(PosterTheme.DARK, ReportFormat.defaultPosterTheme(PureToneSettings.THEME_DARK))
+        assertEquals(PosterTheme.BLACK, ReportFormat.defaultPosterTheme(PureToneSettings.THEME_BLACK))
+        // 未知值（含空串、大小写不符）必须回落浅色，不能崩也不能错配
+        assertEquals(PosterTheme.LIGHT, ReportFormat.defaultPosterTheme(""))
+        assertEquals(PosterTheme.LIGHT, ReportFormat.defaultPosterTheme("system"))
+        assertEquals(PosterTheme.LIGHT, ReportFormat.defaultPosterTheme("UNKNOWN_THEME"))
     }
 }

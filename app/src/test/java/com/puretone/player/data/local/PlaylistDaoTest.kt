@@ -142,6 +142,29 @@ class PlaylistDaoTest {
         assertEquals(listOf("/b.mp3"), db.playlistDao().observeWithSongs(playlistId).first()!!.songs.map { it.path })
     }
 
+    /**
+     * D4：M3U 导出用的一次性快照。旧实现用 Flow.firstOrNull() 建立观察再立刻取消，
+     * 这里锁死「直查不挂起、不存在返回 null、顺序按 position、空歌单返回非 null」。
+     */
+    @Test
+    fun `getWithSongs 直查按position返回且不存在时为null`() = runTest {
+        assertNull("不存在的歌单应直接返回 null", db.playlistDao().getWithSongs(999L))
+
+        db.songDao().upsertAll(listOf(song(1L, "/a.mp3"), song(2L, "/b.mp3"), song(3L, "/c.mp3")))
+        val playlistId = db.playlistDao().insert(PlaylistEntity(name = "列表"))
+        db.playlistDao().addSongsAtEnd(playlistId, listOf(3L, 1L, 2L))
+
+        val snapshot = db.playlistDao().getWithSongs(playlistId)
+        assertNotNull(snapshot)
+        assertEquals("列表", snapshot!!.playlist.name)
+        assertEquals(listOf("/c.mp3", "/a.mp3", "/b.mp3"), snapshot.songs.map { it.path })
+
+        val emptyId = db.playlistDao().insert(PlaylistEntity(name = "空"))
+        val empty = db.playlistDao().getWithSongs(emptyId)
+        assertNotNull("空歌单仍应返回快照", empty)
+        assertTrue(empty!!.songs.isEmpty())
+    }
+
     @Test
     fun `upsertAll keeps playlist membership when song row changes`() = runTest {
         // 回归：REPLACE upsert 会触发 CASCADE 清掉子表（"同步一次歌单全没"）

@@ -1,15 +1,17 @@
 package com.puretone.player.playback.cast
 
 import android.util.Log
-import java.io.BufferedReader
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
-import java.io.InputStreamReader
+import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -40,6 +42,65 @@ internal class CastHttpServer {
 
     /** 一次 GET 的实际供流结果，只用于诊断，不参与响应构造 */
     private data class CopyResult(val written: Long, val costMs: Long, val error: String?)
+
+    /** 单行读取结果（第五轮复审 A1） */
+    internal sealed interface LineResult {
+        data class Ok(val text: String) : LineResult
+
+        /** 本行或整个请求头块超过字节预算 */
+        data object TooLong : LineResult
+
+        /** 流结束且本行一个字节都没有 */
+        data object EndOfStream : LineResult
+    }
+
+    /** 请求头块的读取结果：携带 Range 头原始值 */
+    internal sealed interface HeadersResult {
+        data class Ok(val range: String?) : HeadersResult
+        data object TooLong : HeadersResult
+    }
+
+    /**
+     * 带**全局字节预算**的请求行读取器（第五轮复审 A1）。
+     *
+     * 旧实现用 `BufferedReader.readLine()` 读请求行与请求头：`MAX_HEADERS = 32` 只数
+     * 行数不数字节，`soTimeout` 只限制两次 read 之间的等待，不限制总字节数。局域网内
+     * 任一设备只要连上随机端口、发一个不含 `\n` 的超长请求行并以小包持续灌入，就能让
+     * 3 个 worker 各自持有一份无上限的字符串缓冲 → 堆内存膨胀；超长 Range 头还会原样
+     * 落进诊断文件，含换行的内容甚至能伪造日志行。
+     *
+     * 这里改成逐字节读、请求行与所有请求头**共用一份** [maxBytes] 预算：
+     * 越过预算立刻回 431 并关闭连接，无论对方分多少次、多慢地发。
+     * HTTP/1.1 以 `\r\n` 分行，故只把 `\n` 当行尾并去掉紧邻的 `\r`；
+     * 裸 `\r` 不当行尾（会一路累积到预算耗尽 → 431），这是刻意的严格化。
+     */
+    internal class HeaderReader(private val input: InputStream, private val maxBytes: Int) {
+        private var remaining = maxBytes
+
+        fun readLine(): LineResult {
+            val buf = ByteArrayOutputStream()
+            while (true) {
+                if (remaining <= 0) return LineResult.TooLong
+                val byte = input.read()
+                if (byte < 0) {
+                    val bytes = buf.toByteArray()
+                    if (bytes.isEmpty()) return LineResult.EndOfStream
+                    return LineResult.Ok(String(bytes, Charsets.ISO_8859_1))
+                }
+                remaining--
+                if (byte == '\n'.code) {
+                    val bytes = buf.toByteArray()
+                    val length = if (bytes.lastOrNull()?.toInt() == '\r'.code) {
+                        bytes.size - 1
+                    } else {
+                        bytes.size
+                    }
+                    return LineResult.Ok(String(bytes, 0, length, Charsets.ISO_8859_1))
+                }
+                buf.write(byte)
+            }
+        }
+    }
 
     /** Range 解析结果（纯函数产物，单测覆盖） */
     sealed interface RangeSpec {
@@ -103,9 +164,26 @@ internal class CastHttpServer {
     /** PAUSED 跳变时取一份请求级快照，供 [CastFetchIdleLog] 落进同一行 */
     fun fetchTraceSnapshot(nowMs: Long): String = fetchTrace.snapshot(nowMs)
 
-    private val workers = Executors.newFixedThreadPool(WORKER_COUNT) { runnable ->
-        Thread(runnable, "PureTone-CastHttp").apply { isDaemon = true }
-    }
+    /**
+     * worker 线程池：由 [start] 惰性创建、由 [stop] `shutdownNow()`（第五轮复审 B7）。
+     *
+     * 旧实现是 `val`，`stop()` 后 3 个 daemon 线程仍驻留，且正在 `copy()` 的旧流不会被
+     * 中断。改为启停配对：stop 一并把 [openClients] 里的在途 socket 关掉，让写操作抛异常
+     * 自然结束；下次 start 再建一个干净的池。启停都 `@Synchronized`，避免并发首次启动
+     * 各建一个 `ServerSocket`、后者覆盖字段导致前一个端口与 acceptor 线程永远关不到。
+     */
+    private var workers: ExecutorService? = null
+
+    /**
+     * 在途 client socket 集合，供 [stop] 统一中断。
+     *
+     * 刻意用 `CopyOnWriteArraySet` 而不是 `ConcurrentHashMap.newKeySet()`：后者是弱一致
+     * 迭代器，`stop()` 里做 `toList()` 时若 worker 恰好 `remove()`，Kotlin 的 `size==1`
+     * 快路径会直接 `iterator().next()` 抛 `NoSuchElementException`（本轮全量门禁实测）。
+     * 快照迭代器让「枚举待关闭连接」这一步与并发移除完全解耦；连接数最多 3 个，
+     * 写时复制的开销可以忽略。
+     */
+    private val openClients = CopyOnWriteArraySet<Socket>()
 
     /** 监听端口；未启动返回 -1 */
     val port: Int get() = server?.localPort ?: -1
@@ -121,8 +199,13 @@ internal class CastHttpServer {
      *
      * 端口仍由系统分配；`bind=any` 时行为与改造前完全一致。
      */
+    @Synchronized
     fun start(bindHost: String? = null): Boolean {
         if (running) return true
+        // 幂等兜底：上一次 stop 若异常退出留下未关闭的 socket，赋值前先关掉，
+        // 杜绝「新 socket 覆盖字段后旧监听端口再也关不到」。
+        runCatching { server?.close() }
+        server = null
         return runCatching {
             val decision = CastServerBindPolicy.decide(bindHost)
             val candidate = decision.bindHost
@@ -146,10 +229,14 @@ internal class CastHttpServer {
                 }
             }
             val actual = socket ?: ServerSocket(0)
+            val pool = Executors.newFixedThreadPool(WORKER_COUNT) { runnable ->
+                Thread(runnable, "PureTone-CastHttp").apply { isDaemon = true }
+            }
+            workers = pool
             boundHost = bound
             server = actual
             running = true
-            acceptor = Thread({ acceptLoop(actual) }, "PureTone-CastHttp-accept").apply {
+            acceptor = Thread({ acceptLoop(actual, pool) }, "PureTone-CastHttp-accept").apply {
                 isDaemon = true
                 start()
             }
@@ -164,6 +251,8 @@ internal class CastHttpServer {
             acceptor = null
             boundHost = null
             running = false
+            runCatching { workers?.shutdownNow() }
+            workers = null
             Log.w(TAG, "start failed", it)
             CastNetworkLog.log("http-server start_fail ${it.javaClass.simpleName} ${it.message}")
             false
@@ -203,12 +292,19 @@ internal class CastHttpServer {
         return url
     }
 
+    @Synchronized
     fun stop() {
         running = false
         runCatching { server?.close() }
         server = null
         acceptor = null
         boundHost = null
+        // 关掉在途连接：正在 copy() 的写操作会抛 SocketException 自然结束，
+        // 不会让旧流继续占用 worker / 继续给电视供上一首歌。
+        openClients.toList().forEach { client -> runCatching { client.close() } }
+        openClients.clear()
+        runCatching { workers?.shutdownNow() }
+        workers = null
         registry.clear()
         loggedRequests.set(0)
         fetchTrace.reset()
@@ -216,7 +312,7 @@ internal class CastHttpServer {
         lastFetchMs.set(0L)
     }
 
-    private fun acceptLoop(socket: ServerSocket) {
+    private fun acceptLoop(socket: ServerSocket, pool: ExecutorService) {
         while (running) {
             val client = try {
                 socket.accept()
@@ -224,18 +320,44 @@ internal class CastHttpServer {
                 if (running) Log.w(TAG, "accept failed", e)
                 return
             }
-            workers.execute {
-                runCatching { handle(client) }.onFailure { Log.w(TAG, "handle failed", it) }
+            // stop() 可能在 accept() 返回后立刻执行：此时不再提交新任务，直接关连接。
+            if (!running) {
+                runCatching { client.close() }
+                return
             }
+            runCatching {
+                pool.execute {
+                    openClients.add(client)
+                    try {
+                        runCatching { handle(client) }.onFailure { Log.w(TAG, "handle failed", it) }
+                    } finally {
+                        openClients.remove(client)
+                        runCatching { client.close() }
+                    }
+                }
+            }.onFailure { runCatching { client.close() } }
         }
     }
 
     private fun handle(socket: Socket) {
         socket.use { client ->
             client.soTimeout = SOCKET_TIMEOUT_MS
-            val reader = BufferedReader(InputStreamReader(client.getInputStream(), Charsets.ISO_8859_1))
-            val requestLine = reader.readLine() ?: return
-            val range = readHeaders(reader)
+            val reader = HeaderReader(client.getInputStream(), MAX_REQUEST_BYTES)
+            val requestLine = when (val read = reader.readLine()) {
+                is LineResult.Ok -> read.text
+                LineResult.TooLong -> {
+                    respondText(client, 431, "Request Header Fields Too Large")
+                    return
+                }
+                LineResult.EndOfStream -> return
+            }
+            val range = when (val headers = readHeaders(reader)) {
+                is HeadersResult.Ok -> headers.range
+                HeadersResult.TooLong -> {
+                    respondText(client, 431, "Request Header Fields Too Large")
+                    return
+                }
+            }
             val parts = requestLine.split(' ')
             if (parts.size < 2) {
                 respondText(client, 400, "Bad Request")
@@ -245,19 +367,30 @@ internal class CastHttpServer {
         }
     }
 
-    /** 读完请求头（GET/HEAD 无正文），返回 Range 头原始值 */
-    private fun readHeaders(reader: BufferedReader): String? {
+    /**
+     * 读完请求头（GET/HEAD 无正文），返回 Range 头原始值。
+     *
+     * A1：每一行都走 [HeaderReader] 的共享字节预算，超限立即 431；
+     * `MAX_HEADERS` 仍是行数上限（正常渲染器远用不到），两者互补。
+     */
+    private fun readHeaders(reader: HeaderReader): HeadersResult {
         var range: String? = null
         var index = 0
         while (index < MAX_HEADERS) {
-            val line = reader.readLine() ?: break
-            if (line.isEmpty()) break
-            if (line.substringBefore(':').trim().equals("Range", ignoreCase = true)) {
-                range = line.substringAfter(':').trim()
+            when (val read = reader.readLine()) {
+                is LineResult.Ok -> {
+                    val line = read.text
+                    if (line.isEmpty()) return HeadersResult.Ok(range)
+                    if (line.substringBefore(':').trim().equals("Range", ignoreCase = true)) {
+                        range = line.substringAfter(':').trim()
+                    }
+                }
+                LineResult.TooLong -> return HeadersResult.TooLong
+                LineResult.EndOfStream -> return HeadersResult.Ok(range)
             }
             index++
         }
-        return range
+        return HeadersResult.Ok(range)
     }
 
     private fun serve(socket: Socket, method: String, path: String, rangeHeader: String?) {
@@ -424,7 +557,10 @@ internal class CastHttpServer {
         if (previous >= MAX_LOGGED_REQUESTS) return
         val from = runCatching { socket.inetAddress.hostAddress }.getOrNull() ?: "?"
         CastNetworkLog.log(
-            "http-fetch from=$from path=${path.take(48)} range=${range ?: "-"} status=$status" +
+            // A1：Range 是纯外部输入，原样落盘会撑爆诊断文件（甚至伪造日志行，
+            // 由 CastNetworkLog.sanitizeMessage 兜底）。这里先在源头截断到 64 字符。
+            "http-fetch from=$from path=${path.take(48)} " +
+                "range=${(range ?: "-").take(MAX_RANGE_LOG_CHARS)} status=$status" +
                 if (detail.isEmpty()) "" else " $detail"
         )
     }
@@ -440,6 +576,12 @@ internal class CastHttpServer {
         private const val MAX_HEADERS = 32
         private const val MAX_LOGGED_REQUESTS = 8
         private const val BUFFER_SIZE = 64 * 1024
+
+        /** 请求行 + 所有请求头共享的字节预算（第五轮复审 A1） */
+        internal const val MAX_REQUEST_BYTES = 8 * 1024
+
+        /** 诊断里保留的 Range 头长度（第五轮复审 A1） */
+        internal const val MAX_RANGE_LOG_CHARS = 64
 
         /**
          * 命中 token 后确认文件仍可供流（纯函数，供单测锁定）。
