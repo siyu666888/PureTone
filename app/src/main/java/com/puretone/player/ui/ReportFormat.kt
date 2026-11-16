@@ -59,13 +59,24 @@ object ReportFormat {
         }
     }
 
-    /** 周期范围文案，如「11.03 - 11.09」 */
+    /**
+     * 周期范围文案，如「11.03 - 11.09」；跨年周写全两端年份，如「2026.12.28 - 2027.01.03」。
+     *
+     * 周区间是「ISO 周一 ~ 周日」，年末那周几乎每年都跨日历年（`ReportPeriod.lastCompletedWeeks`），
+     * 只写 `M.dd` 会把「12.28 - 1.03」这类区间丢掉年份、无从判断属于哪一年。跨年判断用
+     * **日历年**（`start.year != end.year`）——这里只解决区间展示的年份歧义，与周角标用的
+     * 周所属年是两码事，不要混用 `weekBasedYear()`。同年区间维持原格式不变。
+     */
     fun formatRangeText(context: Context, type: PeriodType, startMs: Long, endMs: Long): String {
         val zone = ZoneId.systemDefault()
         val start = Instant.ofEpochMilli(startMs).atZone(zone).toLocalDate()
         val end = Instant.ofEpochMilli(endMs).atZone(zone).toLocalDate()
         return when (type) {
             PeriodType.WEEK -> {
+                if (start.year != end.year) {
+                    val f = DateTimeFormatter.ofPattern("yyyy.MM.dd", Locale.US)
+                    return "${start.format(f)} - ${end.format(f)}"
+                }
                 val f = DateTimeFormatter.ofPattern("M.dd", Locale.US)
                 "${start.format(f)} - ${end.format(f)}"
             }

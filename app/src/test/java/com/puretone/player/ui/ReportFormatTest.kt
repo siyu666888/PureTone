@@ -270,10 +270,11 @@ class ReportFormatTest {
 
     @Test
     fun `formatRangeText 按周期给出区间年月`() {
+        // 生产口径：周区间 end 是「下周一 00:00 - 1ms」→ 落在周日，不是周一
         val start = epochAtNoon(LocalDate.parse("2026-11-02"))
-        val end = epochAtNoon(LocalDate.parse("2026-11-09"))
+        val end = epochAtNoon(LocalDate.parse("2026-11-08"))
         assertEquals(
-            "11.02 - 11.09",
+            "11.02 - 11.08",
             ReportFormat.formatRangeText(context, PeriodType.WEEK, start, end)
         )
         assertEquals(
@@ -283,6 +284,48 @@ class ReportFormatTest {
         assertEquals(
             "2026",
             ReportFormat.formatRangeText(context, PeriodType.YEAR, start, end)
+        )
+    }
+
+    @Test
+    fun `formatRangeText 跨年周给两端补年份而同年区间不变`() {
+        // 年末完整周：2026-12-28（周一）~ 2027-01-03（周日），ISO 2026-W53
+        assertEquals(
+            "2026.12.28 - 2027.01.03",
+            ReportFormat.formatRangeText(
+                context, PeriodType.WEEK,
+                epochAtNoon(LocalDate.parse("2026-12-28")),
+                epochAtNoon(LocalDate.parse("2027-01-03"))
+            )
+        )
+        // 另一跨年样本：ISO 2019-W01 的周一落在上一年 12 月
+        assertEquals(
+            "2018.12.31 - 2019.01.06",
+            ReportFormat.formatRangeText(
+                context, PeriodType.WEEK,
+                epochAtNoon(LocalDate.parse("2018-12-31")),
+                epochAtNoon(LocalDate.parse("2019-01-06"))
+            )
+        )
+        // 同年跨月不补年，防止把「仅跨年补年」写宽成「永远补年」
+        assertEquals(
+            "11.30 - 12.06",
+            ReportFormat.formatRangeText(
+                context, PeriodType.WEEK,
+                epochAtNoon(LocalDate.parse("2026-11-30")),
+                epochAtNoon(LocalDate.parse("2026-12-06"))
+            )
+        )
+        // 月报 / 年报不受跨年影响：仍按起始日的日历年输出
+        val crossStart = epochAtNoon(LocalDate.parse("2026-12-28"))
+        val crossEnd = epochAtNoon(LocalDate.parse("2027-01-03"))
+        assertEquals(
+            "2026.12",
+            ReportFormat.formatRangeText(context, PeriodType.MONTH, crossStart, crossEnd)
+        )
+        assertEquals(
+            "2026",
+            ReportFormat.formatRangeText(context, PeriodType.YEAR, crossStart, crossEnd)
         )
     }
 

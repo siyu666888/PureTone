@@ -74,7 +74,7 @@
 | 音频处理 | `dev.ffmpegkit-maintained:ffmpeg-kit-min` 6.0.3（本地 vendored AAR，16KB 页对齐） |
 | 桌面小部件 | Glance AppWidget 1.1.0 |
 | 构建 | AGP 9.5.1 · Gradle Wrapper 9.6.0 · Build Tools 36.0.0 · JDK 17 · compileSdk 35 / targetSdk 35 / minSdk 26 |
-| 测试 | Robolectric 4.18 · Turbine 1.2.1（**112 类 / 1116 例全绿**） |
+| 测试 | Robolectric 4.18 · Turbine 1.2.1（**112 类 / 1117 例全绿**） |
 | 静态检查 | Android Lint（`warningsAsErrors` + baseline 存量 0 条）· detekt 1.23.8（baseline 存量 0 条）· 文件行数门禁 ≤ 1200 行（白名单 0 个） |
 | CI | GitHub Actions（单测 / Debug+Release 构建 / apksigner 验签 / Baseline Profile 打包断言 **+ 规则有效性校验** / lint / detekt / 文件行数 / **16KB 对齐真门禁**）+ Dependabot 依赖升级 + 每周依赖漂移巡检 |
 
