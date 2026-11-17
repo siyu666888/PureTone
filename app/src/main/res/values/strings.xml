@@ -388,18 +388,12 @@
     <string name="pt_settings_015" formatted="false">隐私</string>
     <!-- 联网补全元数据与歌词 -->
     <string name="pt_settings_016" formatted="false">联网补全元数据与歌词</string>
-    <!-- 已开启：向iTunes与LRCLIB发送信息匹配歌词与元数据 -->
-    <string name="pt_settings_017" formatted="false">已开启：向iTunes与LRCLIB发送信息匹配歌词与元数据</string>
-    <!-- 已关闭：不会向任何服务器发送曲目信息 -->
-    <string name="pt_settings_018" formatted="false">已关闭：不会向任何服务器发送曲目信息</string>
     <!-- 诊断 -->
     <string name="pt_settings_019" formatted="false">诊断</string>
     <!-- 导出失败：${it.message ?: it.javaClass.simpleName} -->
     <string name="pt_settings_020" formatted="false">导出失败：%1$s</string>
     <!-- 导出诊断日志 -->
     <string name="pt_settings_021" formatted="false">导出诊断日志</string>
-    <!-- 诊断（已迁入「实验室」分类）：说明压缩为单行，避免两行长句破坏分类节奏 -->
-    <string name="pt_settings_022" formatted="false">仅导出崩溃与设备信息，不含任何个人曲库内容</string>
     <!-- 实验室 -->
     <string name="pt_settings_023" formatted="false">实验室</string>
     <!-- 桌面 -->
@@ -456,16 +450,8 @@
     <string name="pt_settings_055" formatted="false">投屏音量</string>
     <!-- 跟随手机：实验室设置项（原「播放」分类迁入，改名精简）；开启后手机音量键直接调电视 -->
     <string name="pt_settings_049" formatted="false">跟随手机</string>
-    <!-- 已开启：音量键通常直接调电视；连蓝牙音箱（绝对音量）时按键会被截走，请用应用内滑块 -->
-    <string name="pt_settings_050" formatted="false">已开启：音量键通常直接调电视；连蓝牙时按键会被截走，请用应用内滑块</string>
-    <!-- 已关闭：用应用内滑块调节电视音量（音量键仍控制手机） -->
-    <string name="pt_settings_051" formatted="false">已关闭：用应用内滑块调电视音量（音量键仍控制手机）</string>
     <!-- 听歌数据统计 -->
     <string name="pt_settings_052" formatted="false">听歌数据统计</string>
-    <!-- 已开启：记录播放历史与播放次数，仅保存在本机 -->
-    <string name="pt_settings_053" formatted="false">已开启：记录播放历史与播放次数，仅保存在本机</string>
-    <!-- 已关闭：不再写播放历史/播放次数（最近播放停止更新），已有数据可在听歌数据中清除 -->
-    <string name="pt_settings_054" formatted="false">已关闭：不再写播放历史/播放次数（最近播放停止更新），已有数据可在「听歌数据」中清除</string>
     <!-- 未知艺术家 -->
     <string name="pt_songinfo_001" formatted="false">未知艺术家</string>
     <!-- 歌曲信息 -->
@@ -794,20 +780,10 @@
     <string name="pt_report_fun_day" formatted="true">☀️ 日常听众：高频时段 %1$d:00</string>
     <!-- 趣味标签：活跃天数（%1$s 周期词，%2$d 天） -->
     <string name="pt_report_fun_active" formatted="true">📅 %1$s有 %2$d 天在听歌</string>
-    <!-- 页脚隐私声明 -->
-    <string name="pt_report_footer" formatted="false">数据仅保存在本机 · 未上传</string>
+    <!-- 报告页脚品牌口令 -->
+    <string name="pt_report_footer" formatted="false">PureTone·纯净之音</string>
     <!-- 生成日期（%1$s 为 yyyy-MM-dd） -->
     <string name="pt_report_generated" formatted="true">%1$s 生成</string>
-    <!-- 海报主题：浅色 -->
-    <string name="pt_report_theme_light" formatted="false">浅色</string>
-    <!-- 海报主题：深色 -->
-    <string name="pt_report_theme_dark" formatted="false">深色</string>
-    <!-- 海报主题：纯黑 -->
-    <string name="pt_report_theme_black" formatted="false">纯黑</string>
-    <!-- 海报主题选择区标题 -->
-    <string name="pt_report_theme_title" formatted="false">海报主题</string>
-    <!-- 海报主题选择区说明 -->
-    <string name="pt_report_theme_desc" formatted="false">选择分享海报的配色主题（浅色 / 深色 / 纯黑）</string>
 
     <!-- ===== 需求4 阶段3：月报 / 年报 ===== -->
     <!-- 周期切换 Tab -->
@@ -824,4 +800,32 @@
     <string name="pt_report_delta_period_year" formatted="false">去年</string>
     <!-- 桌面小组件封面图的无障碍描述（D3：从硬编码中文归位到资源） -->
     <string name="pt_widget_cover" formatted="false">封面</string>
+
+    <!-- ===== 听歌报告 V2「声色叙事」：时段条 / 热力 / 绝对差 / 行为金句 ===== -->
+    <!-- 时段分布条标题（%1$s 为周期词「一周/一个月」） -->
+    <string name="pt_report_time_title" formatted="true">你的%1$s在几点</string>
+    <!-- 时段标题周期词 -->
+    <string name="pt_report_time_span_week" formatted="false">一周</string>
+    <string name="pt_report_time_span_month" formatted="false">一个月</string>
+    <!-- 时段条四段（宽度即占比，不用图例） -->
+    <string name="pt_report_time_dawn" formatted="false">清晨</string>
+    <string name="pt_report_time_noon" formatted="false">午后</string>
+    <string name="pt_report_time_dusk" formatted="false">晚间</string>
+    <string name="pt_report_time_night" formatted="false">深夜</string>
+    <!-- 时段峰值注记（%1$s 为时段名） -->
+    <string name="pt_report_time_peak" formatted="true">峰值 %1$s</string>
+    <!-- 行为金句：深夜听众（%1$d 为深夜播放占比整数） -->
+    <string name="pt_report_golden_night" formatted="true">你 %1$d%% 的音乐，都给了 23 点之后的那间屋子</string>
+    <!-- 行为金句：非深夜听众（%1$s 为峰值时段名） -->
+    <string name="pt_report_golden_day" formatted="true">%1$s是你的主场，音乐跟着作息走</string>
+    <!-- 绝对环比差（%1$s 为上一周期词，%2$s 为时长文案） -->
+    <string name="pt_report_delta_abs_up" formatted="true">比%1$s多 %2$s</string>
+    <string name="pt_report_delta_abs_down" formatted="true">比%1$s少 %2$s</string>
+    <!-- 日均听歌（%1$s 为时长文案） -->
+    <string name="pt_report_daily_avg" formatted="true">日均 %1$s</string>
+    <!-- 最长连续天数（%1$d 为天数） -->
+    <string name="pt_report_streak" formatted="true">最长连续 %1$d 天</string>
+    <!-- 声音日历（月报热力网格） -->
+    <string name="pt_report_heat_title" formatted="false">声音日历</string>
+    <string name="pt_report_heat_hint" formatted="false">颜色越暖 = 听得越多</string>
 </resources>
