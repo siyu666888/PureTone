@@ -317,6 +317,7 @@ scripts/collect-baseline-profile.sh <device-serial>
 | v1.9.13 | 投屏链路单测加固（`CastVolumeControllerTest` 7 例防音量漂移）+ `allNetworks` 弃用清理改 `NetworkCallback` + `DlnaTransport` 加 `open` 测试缝 |
 | **v2.0.0** | **新版本规则首发**：依赖升级批次（9 项 + ben-manes 插件 id）、响度设置去英文/改开关/关闭态隐藏子设置、Robolectric 4.18 替身适配、`CastNetworkBridge` 网络所有权单测、启动器前景下移 2dp；三次远端 CI 26/26 全绿，5 项资产 Release。详见 `dist/archive/v2.0.0/ReleaseNotes-v2.0.0.md` |
 | **v2.0.1** | **第五轮/第六轮复审 19 条落地**：投屏网络所有权同步化 / HTTP 请求行长上限 / 日志串行化 / 同步计数订正 / 响度 Slider 档位 / token 淘汰竞态 / 联网封面 URL 白名单 / 歌单快照直查 / 主源码 `!!` 清零 / CI 供应链最小权限 + Action 固定 SHA；同步抑制提示接线、专辑分组 key 收敛、ReportFormat 五函数补直接断言、诊断导出移出主线程、**周角标「周所属年」口径修正**；三次远端 CI 26/26 全绿，5 项资产 Release。详见 `dist/archive/v2.0.1/ReleaseNotes-v2.0.1.md` |
+| **v2.0.2** | **听歌报告 V2「声色叙事」改造**：新增配色单一真源 `ReportPalette` + 数据派生层 `ReportInsights`，周报面积折线/时段条/行为金句/绝对差、月报声音日历热力/周柱/日均/最长连续，海报画幅 1080×2016；**主题随 App 自动切换**（删手动按钮）、页脚改「PureTone·纯净之音」、设置页删 4 处底部说明；合并 PR #26 **区间文案跨年补年 + 月份补零**。114 类/1142 例全绿，远端 CI 26/26，5 项资产 Release。详见 `dist/archive/v2.0.2/ReleaseNotes-v2.0.2.md` |
 
 ---
 
