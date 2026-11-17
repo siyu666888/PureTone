@@ -1,11 +1,10 @@
 package com.puretone.player.ui.screens
 
 import android.widget.Toast
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,12 +32,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,23 +52,30 @@ import com.puretone.player.ui.PlayerViewModel
 import com.puretone.player.ui.ReportFormat
 import com.puretone.player.ui.ReportViewModel
 import com.puretone.player.ui.components.BarChart
+import com.puretone.player.ui.report.CalendarHeatmap
+import com.puretone.player.ui.report.LocalReportPalette
 import com.puretone.player.ui.report.PosterContent
 import com.puretone.player.ui.report.PosterShare
-import com.puretone.player.ui.report.PosterTheme
+import com.puretone.player.ui.report.ProvideReportPalette
+import com.puretone.player.ui.report.ReportGradients
+import com.puretone.player.ui.report.SpectrumAreaChart
+import com.puretone.player.ui.report.TimeSegmentBar
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
- * 听歌报告页（需求4 阶段2 周报 + 阶段3 月报/年报）：周期切换 + 差异化趋势图 + 分享海报。
+ * 听歌报告页（需求4 阶段2 周报 + 阶段3 月报/年报 + V2「声色叙事」改造）。
  *
  * 通过 [ReportFormat.toPosterContent] 一次性产出全部本地化文案，屏幕展示与分享海报
- * 共用同一份 [PosterContent]，保证口径与措辞完全一致（趋势柱也共用 [PosterContent.trendBuckets]）。
- * 隐私开关（[ReportViewModel] 的 [ReportUiState.statsEnabled]）关闭时仍可查看存量，
- * 但禁用「生成分享海报」并说明原因。
+ * 共用同一份 [PosterContent]（趋势柱、时段条、热力格也共用），保证口径与措辞完全一致。
+ * V2 改造：周/月切换新图表（面积折线 / 日历热力 / 时段条）与叙事光谱配色，
+ * 年报保留 V1 柱状骨架不动。配色由 [ProvideReportPalette] 按海报主题下发，
+ * 海报渲染器（PosterRenderer）消费同一份 [com.puretone.player.ui.report.ReportPalette] 令牌。
  *
+ * 隐私开关关闭时仍可查看存量，但禁用「生成分享海报」并说明原因。
  * 复用根部下发的 [playerVm]（与 [StatsScreen] 同模式），避免重复恢复播放会话打断播放。
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReportScreen(
     navController: NavHostController,
@@ -81,10 +86,10 @@ fun ReportScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // 海报主题：默认跟随 App 当前主题（含 BLACK），用户可临时切换
-    var theme by remember(state.themeMode) {
-        mutableStateOf(ReportFormat.defaultPosterTheme(state.themeMode))
-    }
+    // 报告主题自动跟随 App 实际生效主题（SYSTEM 跟随系统深色 / 纯黑由 AMOLED 或 BLACK 触发），
+    // 不再提供手动切换；屏幕与分享海报共用同一派生结果。
+    val systemDark = isSystemInDarkTheme()
+    val theme = ReportFormat.effectivePosterTheme(state.themeMode, systemDark, state.amoledBlack)
 
     // 屏幕与海报共用同一份本地化文案
     val content = remember(state.data) {
@@ -93,185 +98,107 @@ fun ReportScreen(
 
     val canShare = state.statsEnabled && content != null && state.data?.isEmpty == false
 
-    Scaffold(
-        contentWindowInsets = WindowInsets(0),
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.pt_report_title)) },
-                windowInsets = WindowInsets(0),
-                navigationIcon = {
-                    IconButton(onClick = navController::popBackStack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.pt_stats_002))
+    ProvideReportPalette(theme = theme) {
+        Scaffold(
+            contentWindowInsets = WindowInsets(0),
+            topBar = {
+                TopAppBar(
+                    title = { Text(stringResource(R.string.pt_report_title)) },
+                    windowInsets = WindowInsets(0),
+                    navigationIcon = {
+                        IconButton(onClick = navController::popBackStack) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.pt_stats_002))
+                        }
+                    },
+                    actions = {
+                        TextButton(onClick = vm::refresh) { Text(stringResource(R.string.pt_report_refresh)) }
                     }
-                },
-                actions = {
-                    TextButton(onClick = vm::refresh) { Text(stringResource(R.string.pt_report_refresh)) }
-                }
-            )
-        }
-    ) { padding ->
-        when {
-            state.loading -> {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentAlignment = Alignment.Center
-                ) { CircularProgressIndicator() }
+                )
             }
-            content == null -> {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        ReportFormat.formatEmpty(context, state.period),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+        ) { padding ->
+            when {
+                state.loading -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(padding),
+                        contentAlignment = Alignment.Center
+                    ) { CircularProgressIndicator() }
                 }
-            }
-            else -> {
-                val c = content
-                val topSongs = state.data?.topSongs.orEmpty()
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    PeriodSelector(selected = state.period, onSelect = vm::setPeriod)
-                    if (!state.statsEnabled) {
-                        ReportPrivacyBanner()
+                content == null -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(padding),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            ReportFormat.formatEmpty(context, state.period),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                    ReportHero(content = c)
-                    ReportTrendCard(content = c)
-                    ReportCapsules(content = c)
-                    if (topSongs.isNotEmpty()) {
-                        ReportTopSongs(content = c, songs = topSongs)
-                    }
-                    if (c.funTag.isNotBlank()) {
-                        ReportFunTag(content = c)
-                    }
+                }
+                else -> {
+                    val c = content
+                    val topSongs = state.data?.topSongs.orEmpty()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding)
+                            .verticalScroll(rememberScrollState())
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        PeriodSelector(selected = state.period, onSelect = vm::setPeriod)
+                        if (!state.statsEnabled) {
+                            ReportPrivacyBanner()
+                        }
+                        ReportHero(content = c)
+                        ReportTrendCard(content = c)
+                        if (c.timeSegments.isNotEmpty()) {
+                            ReportTimeCard(content = c)
+                        }
+                        if (c.calendarCells.isNotEmpty()) {
+                            ReportHeatCard(content = c)
+                        }
+                        ReportCapsules(content = c)
+                        if (topSongs.isNotEmpty()) {
+                            ReportTopSongs(content = c, songs = topSongs)
+                        }
+                        if (c.goldenText.isNotBlank()) {
+                            ReportGolden(content = c)
+                        } else if (c.funTag.isNotBlank()) {
+                            ReportFunTag(content = c)
+                        }
 
-                    // 海报主题选择
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                stringResource(R.string.pt_report_theme_title),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                stringResource(R.string.pt_report_theme_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(10.dp))
-                            ThemeSelector(theme = theme, onTheme = { theme = it })
+                        Spacer(Modifier.height(4.dp))
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    try {
+                                        PosterShare.share(context, c, theme)
+                                    } catch (e: Exception) {
+                                        if (e is CancellationException) throw e
+                                        Toast.makeText(
+                                            context,
+                                            e.message ?: context.getString(R.string.pt_report_share_title),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
+                            },
+                            enabled = canShare,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.pt_report_share))
                         }
                     }
-
-                    Spacer(Modifier.height(4.dp))
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                try {
-                                    PosterShare.share(context, c, theme)
-                                } catch (e: Exception) {
-                                    if (e is CancellationException) throw e
-                                    Toast.makeText(
-                                        context,
-                                        e.message ?: context.getString(R.string.pt_report_share_title),
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            }
-                        },
-                        enabled = canShare,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(stringResource(R.string.pt_report_share))
-                    }
                 }
-            }
-        }
-    }
-}
-
-/** 隐私关闭横幅：仍可见存量，但分享被禁用 */
-@Composable
-private fun ReportPrivacyBanner() {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                stringResource(R.string.pt_report_privacy_title),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                stringResource(R.string.pt_report_privacy_desc),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-/** 主数字区：周期角标 + 引导语 + 听歌时长 + 范围/环比 + 估算注记 */
-@Composable
-private fun ReportHero(content: PosterContent) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            Text(
-                content.periodBadge,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                content.leadText,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                content.mainNumber,
-                style = MaterialTheme.typography.displaySmall,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    content.rangeText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    content.deltaText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            if (content.estimateNote.isNotBlank()) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    content.estimateNote,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
     }
 }
 
 /**
- * 周期切换（阶段3）：周报 / 月报 / 年报。
- * 直接接 [ReportViewModel.setPeriod]，数据层三周期分支在阶段2 已就绪。
+ * 周期切换：周报 / 月报 / 年报。直接接 [ReportViewModel.setPeriod]。
  */
 @Composable
 private fun PeriodSelector(selected: PeriodType, onSelect: (PeriodType) -> Unit) {
@@ -292,12 +219,101 @@ private fun PeriodSelector(selected: PeriodType, onSelect: (PeriodType) -> Unit)
     }
 }
 
+/** 隐私关闭横幅：仍可见存量，但分享被禁用 */
+@Composable
+private fun ReportPrivacyBanner() {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.pt_report_privacy_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = Color(LocalReportPalette.current.brand)
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                stringResource(R.string.pt_report_privacy_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/** 主数字区：周期角标 + 引导语 + 渐变听歌时长 + 绝对环比差 + 日均/连续注记 */
+@Composable
+private fun ReportHero(content: PosterContent) {
+    val p = LocalReportPalette.current
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text(
+                content.periodBadge,
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(p.brand)
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                content.leadText,
+                style = MaterialTheme.typography.bodyLarge,
+                color = Color(p.ink2)
+            )
+            Spacer(Modifier.height(4.dp))
+            // 全卡唯一渐变文字：主数字，承担「惊叹」职责
+            Text(
+                content.mainNumber,
+                style = MaterialTheme.typography.displaySmall.copy(brush = ReportGradients.aurora(p)),
+                color = Color.Unspecified
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    content.rangeText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(p.ink2)
+                )
+                if (content.deltaAbsoluteText.isNotBlank()) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        content.deltaAbsoluteText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(p.spectrum3)
+                    )
+                } else if (content.deltaText.isNotBlank()) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        content.deltaText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(p.spectrum3)
+                    )
+                }
+            }
+            if (content.estimateNote.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    content.estimateNote,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(p.ink3)
+                )
+            }
+            if (content.dailyAverageText.isNotBlank() || content.longestStreakText.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    listOf(content.dailyAverageText, content.longestStreakText)
+                        .filter { it.isNotBlank() }.joinToString(" · "),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color(p.ink2)
+                )
+            }
+        }
+    }
+}
+
 /**
- * 趋势图（阶段3）：柱序列与标签统一取自 [PosterContent.trendBuckets]，与分享海报同口径。
- * 周 7 根日柱 / 月 W1…W5 周柱 / 年 12 月柱，无数据的桶已补 0。
+ * 趋势图：周 7 日面积折线 / 月 W1…W5 光谱柱 / 年 12 月柱（V1 保留）。
+ * 序列与标签统一取自 [PosterContent.trendBuckets]，与分享海报同口径。
  */
 @Composable
 private fun ReportTrendCard(content: PosterContent) {
+    val p = LocalReportPalette.current
     val buckets = content.trendBuckets
     val peakIdx = buckets.withIndex()
         .filter { it.value.listenMs > 0 }
@@ -307,21 +323,33 @@ private fun ReportTrendCard(content: PosterContent) {
             Text(
                 content.trendTitle,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
+                color = Color(p.brand)
             )
             Spacer(Modifier.height(12.dp))
             if (buckets.all { it.listenMs == 0L }) {
                 Text(
                     stringResource(R.string.pt_report_trend_empty),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = Color(p.ink3)
                 )
             } else {
-                BarChart(
-                    values = buckets.map { it.listenMs },
-                    highlightIndex = peakIdx,
-                    barColor = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.fillMaxWidth().height(120.dp)
-                )
+                when (content.data.type) {
+                    PeriodType.WEEK -> SpectrumAreaChart(
+                        buckets = buckets,
+                        modifier = Modifier.fillMaxWidth().height(120.dp)
+                    )
+                    PeriodType.MONTH -> BarChart(
+                        values = buckets.map { it.listenMs },
+                        highlightIndex = peakIdx,
+                        barColor = Color(p.spectrum2),
+                        modifier = Modifier.fillMaxWidth().height(120.dp)
+                    )
+                    PeriodType.YEAR -> BarChart(
+                        values = buckets.map { it.listenMs },
+                        highlightIndex = peakIdx,
+                        barColor = Color(p.brand),
+                        modifier = Modifier.fillMaxWidth().height(120.dp)
+                    )
+                }
                 Spacer(Modifier.height(6.dp))
                 Row(modifier = Modifier.fillMaxWidth()) {
                     buckets.forEach { bucket ->
@@ -329,13 +357,66 @@ private fun ReportTrendCard(content: PosterContent) {
                             bucket.label,
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = Color(p.ink3),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
             }
+        }
+    }
+}
+
+/** 时段分布条（V2 新增）：一条 4 段比例条，宽度即占比，峰值注记在最右 */
+@Composable
+private fun ReportTimeCard(content: PosterContent) {
+    val p = LocalReportPalette.current
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    content.timeTitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color(p.brand)
+                )
+                if (content.timePeakText.isNotBlank()) {
+                    Text(
+                        content.timePeakText,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(p.ink3)
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            TimeSegmentBar(segments = content.timeSegments)
+        }
+    }
+}
+
+/** 声音日历（月报专属）：7 列热力网格 + 色阶说明 */
+@Composable
+private fun ReportHeatCard(content: PosterContent) {
+    val p = LocalReportPalette.current
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    content.heatTitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color(p.brand)
+                )
+                Text(
+                    content.heatHint,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(p.ink3)
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            CalendarHeatmap(
+                cells = content.calendarCells,
+                modifier = Modifier.fillMaxWidth().height(150.dp)
+            )
         }
     }
 }
@@ -352,9 +433,10 @@ private fun ReportCapsules(content: PosterContent) {
 
 @Composable
 private fun Capsule(value: String, modifier: Modifier = Modifier) {
+    val p = LocalReportPalette.current
     Card(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth().padding(14.dp), contentAlignment = Alignment.Center) {
-            Text(value, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Text(value, style = MaterialTheme.typography.titleMedium, color = Color(p.spectrum4))
         }
     }
 }
@@ -362,12 +444,13 @@ private fun Capsule(value: String, modifier: Modifier = Modifier) {
 /** Top 歌曲列表 */
 @Composable
 private fun ReportTopSongs(content: PosterContent, songs: List<TopSongRow>) {
+    val p = LocalReportPalette.current
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 content.topSongsTitle,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
+                color = Color(p.brand)
             )
             Spacer(Modifier.height(8.dp))
             songs.forEachIndexed { i, t ->
@@ -378,7 +461,7 @@ private fun ReportTopSongs(content: PosterContent, songs: List<TopSongRow>) {
                     Text(
                         "${i + 1}.",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = Color(p.spectrum3),
                         modifier = Modifier.width(24.dp)
                     )
                     Column(modifier = Modifier.weight(1f)) {
@@ -386,7 +469,7 @@ private fun ReportTopSongs(content: PosterContent, songs: List<TopSongRow>) {
                         Text(
                             "${t.artist} · ${t.playCount}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = Color(p.ink2),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -397,39 +480,39 @@ private fun ReportTopSongs(content: PosterContent, songs: List<TopSongRow>) {
     }
 }
 
-/** 趣味标签 */
+/** 行为金句（V2）：指向行为而非数量，洋红左边线 */
+@Composable
+private fun ReportGolden(content: PosterContent) {
+    val p = LocalReportPalette.current
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.width(3.dp).height(40.dp)) {
+                drawRect(Color(p.spectrum3))
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                content.goldenText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(p.ink)
+            )
+        }
+    }
+}
+
+/** 趣味标签（年报 V1 保留） */
 @Composable
 private fun ReportFunTag(content: PosterContent) {
+    val p = LocalReportPalette.current
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
                 content.funTagTitle,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
+                color = Color(p.brand)
             )
             content.funTag.split("\n").forEach { line ->
                 if (line.isNotBlank()) Text(line)
             }
-        }
-    }
-}
-
-/** 海报主题选择（浅色 / 深色 / 纯黑） */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun ThemeSelector(theme: PosterTheme, onTheme: (PosterTheme) -> Unit) {
-    val options = listOf(
-        PosterTheme.LIGHT to R.string.pt_report_theme_light,
-        PosterTheme.DARK to R.string.pt_report_theme_dark,
-        PosterTheme.BLACK to R.string.pt_report_theme_black
-    )
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        options.forEach { (t, labelRes) ->
-            FilterChip(
-                selected = theme == t,
-                onClick = { onTheme(t) },
-                label = { Text(stringResource(labelRes)) }
-            )
         }
     }
 }

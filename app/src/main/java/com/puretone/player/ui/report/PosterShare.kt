@@ -20,7 +20,7 @@ import java.util.Locale
  * `res/xml/file_paths.xml` 多了 `posters` 一条 cache-path。
  *
  * 隐私（方案 6.7）：PNG 落在 cacheDir，随系统缓存清理；不写外部存储、不申请权限；
- * 分享文本附「数据仅保存在本机 · 未上传」一句说明，不含可反推用户的标识。
+ * 分享文本附品牌口令「PureTone·纯净之音」（content.footer），不含可反推用户的标识。
  */
 object PosterShare {
 

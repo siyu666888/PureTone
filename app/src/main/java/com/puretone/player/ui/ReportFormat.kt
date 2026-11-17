@@ -5,6 +5,7 @@ import com.puretone.player.R
 import com.puretone.player.data.settings.PureToneSettings
 import com.puretone.player.domain.report.PeriodType
 import com.puretone.player.domain.report.ReportData
+import com.puretone.player.domain.report.ReportInsights
 import com.puretone.player.domain.report.ReportTrend
 import com.puretone.player.ui.report.PosterContent
 import com.puretone.player.ui.report.PosterTheme
@@ -142,17 +143,98 @@ object ReportFormat {
         return lines.joinToString("\n")
     }
 
-    /** 由 App 主题模式推导海报默认主题（默认跟随 App 当前主题） */
-    fun defaultPosterTheme(themeMode: String): PosterTheme = when (themeMode) {
-        PureToneSettings.THEME_LIGHT -> PosterTheme.LIGHT
-        PureToneSettings.THEME_DARK -> PosterTheme.DARK
-        PureToneSettings.THEME_BLACK -> PosterTheme.BLACK
-        else -> PosterTheme.LIGHT
+    /**
+     * 报告主题自动跟随 App 实际生效主题，与 PureToneTheme 的判据同源：
+     * - SYSTEM 跟随系统深色（[systemDark]），不再固定浅色；
+     * - 纯黑既可由 THEME_BLACK 触发，也可由 DARK/SYSTEM(深色) + amoledBlack 触发。
+     *
+     * @param themeMode App 主题模式字符串（SYSTEM/LIGHT/DARK/BLACK）
+     * @param systemDark 系统当前是否深色，仅 SYSTEM 模式消费
+     * @param amoledBlack 深色模式下是否启用纯黑表面
+     */
+    fun effectivePosterTheme(
+        themeMode: String,
+        systemDark: Boolean,
+        amoledBlack: Boolean
+    ): PosterTheme {
+        val dark = when (themeMode) {
+            PureToneSettings.THEME_LIGHT -> false
+            PureToneSettings.THEME_DARK, PureToneSettings.THEME_BLACK -> true
+            else -> systemDark // SYSTEM 及未知值：跟随系统，与 PureToneTheme 一致
+        }
+        val useBlack = amoledBlack || themeMode == PureToneSettings.THEME_BLACK
+        return when {
+            dark && useBlack -> PosterTheme.BLACK
+            dark -> PosterTheme.DARK
+            else -> PosterTheme.LIGHT
+        }
+    }
+
+    /** 时段档位 level 1..4 → 本地化标签 */
+    private fun timeLabelRes(level: Int): Int = when (level) {
+        1 -> R.string.pt_report_time_dawn
+        2 -> R.string.pt_report_time_noon
+        3 -> R.string.pt_report_time_dusk
+        else -> R.string.pt_report_time_night
+    }
+
+    /** 时段条：ReportInsights 只给 level/share，文案在文案层本地化 */
+    private fun buildTimeSegments(context: Context, data: ReportData): List<ReportInsights.TimeSegment> =
+        ReportInsights.timeSegments(data).map { it.copy(label = context.getString(timeLabelRes(it.level))) }
+
+    /** 绝对环比差文案；上一周期无数据或持平返回空串（V2 主打绝对差，与百分比并存） */
+    fun formatDeltaAbsolute(context: Context, data: ReportData): String {
+        val d = ReportInsights.deltaAbsoluteMs(data)
+        if (data.prevListenMs <= 0 || d == 0L) return ""
+        val res = when (ReportInsights.deltaDirection(data)) {
+            "up" -> R.string.pt_report_delta_abs_up
+            "down" -> R.string.pt_report_delta_abs_down
+            else -> return ""
+        }
+        return context.getString(
+            res,
+            context.getString(deltaPeriodRes(data.type)),
+            formatListenMs(context, ReportInsights.absDeltaMs(data))
+        )
+    }
+
+    /**
+     * 行为金句：深夜占比 >= 30% 用「夜猫子」句，否则用峰值时段「主场」句。
+     * 指向行为而非数量（设计稿标注 4），只看本机时段数据，不造对比锚点。
+     */
+    fun buildGoldenText(context: Context, data: ReportData): String {
+        val pct = ReportInsights.nightSharePct(data)
+        return if (pct >= 30) {
+            context.getString(R.string.pt_report_golden_night, pct)
+        } else {
+            val peak = ReportInsights.timeSegments(data).maxByOrNull { it.share }
+            val label = if (peak != null && peak.share > 0f) {
+                context.getString(timeLabelRes(peak.level))
+            } else {
+                context.getString(R.string.pt_report_time_dusk)
+            }
+            context.getString(R.string.pt_report_golden_day, label)
+        }
     }
 
     /** 把 [ReportData] 组装成 [PosterContent]（所有文案本地化完成） */
     fun toPosterContent(context: Context, data: ReportData): PosterContent {
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        // 年报维持 V1 骨架，V2 新模块（时段条/热力/绝对差）只对周/月生效
+        val isV2 = data.type != PeriodType.YEAR
+        val timeSegments = if (isV2) buildTimeSegments(context, data) else emptyList()
+        val peakSeg = timeSegments.maxByOrNull { it.share }
+        val timeTitle = when (data.type) {
+            PeriodType.WEEK -> context.getString(
+                R.string.pt_report_time_title,
+                context.getString(R.string.pt_report_time_span_week)
+            )
+            PeriodType.MONTH -> context.getString(
+                R.string.pt_report_time_title,
+                context.getString(R.string.pt_report_time_span_month)
+            )
+            PeriodType.YEAR -> ""
+        }
         return PosterContent(
             data = data,
             periodBadge = formatPeriodBadge(context, data.type, data.rangeStart),
@@ -170,7 +252,40 @@ object ReportFormat {
             funTag = buildFunTag(context, data),
             funTagTitle = context.getString(R.string.pt_report_label_fun),
             footer = context.getString(R.string.pt_report_footer),
-            generatedOn = context.getString(R.string.pt_report_generated, today)
+            generatedOn = context.getString(R.string.pt_report_generated, today),
+            timeSegments = timeSegments,
+            timeTitle = timeTitle,
+            timePeakText = if (peakSeg != null && peakSeg.share > 0f) {
+                context.getString(R.string.pt_report_time_peak, peakSeg.label)
+            } else {
+                ""
+            },
+            goldenText = if (isV2) buildGoldenText(context, data) else "",
+            deltaAbsoluteText = if (isV2) formatDeltaAbsolute(context, data) else "",
+            dailyAverageText = if (data.type == PeriodType.MONTH) {
+                context.getString(
+                    R.string.pt_report_daily_avg,
+                    formatListenMs(context, ReportInsights.dailyAverageMs(data))
+                )
+            } else {
+                ""
+            },
+            longestStreakText = if (data.type == PeriodType.MONTH) {
+                context.getString(R.string.pt_report_streak, ReportInsights.longestStreak(data))
+            } else {
+                ""
+            },
+            calendarCells = ReportInsights.calendarCells(data),
+            heatTitle = if (data.type == PeriodType.MONTH) {
+                context.getString(R.string.pt_report_heat_title)
+            } else {
+                ""
+            },
+            heatHint = if (data.type == PeriodType.MONTH) {
+                context.getString(R.string.pt_report_heat_hint)
+            } else {
+                ""
+            }
         )
     }
 

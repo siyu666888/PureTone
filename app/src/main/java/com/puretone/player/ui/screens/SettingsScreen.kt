@@ -177,33 +177,12 @@ fun SettingsScreen(
                 checked = s.networkMetadataEnabled,
                 onChanged = { vm.setNetworkMetadataEnabled(it) }
             )
-            // 说明文案随开关状态变化，让用户明确知道「关掉后会发生什么」。
-            Text(
-                if (s.networkMetadataEnabled) {
-                    stringResource(R.string.pt_settings_017)
-                } else {
-                    stringResource(R.string.pt_settings_018)
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1
-            )
             // 听歌数据统计：关闭后两个写库收口全部短路，已有数据不自动删除，
             // 清除动作仍由「听歌数据 → 清空历史」显式触发，符合最小必要与用户可控。
             SwitchRow(
                 label = stringResource(R.string.pt_settings_052),
                 checked = s.listeningStatsEnabled,
                 onChanged = { vm.setListeningStatsEnabled(it) }
-            )
-            Text(
-                if (s.listeningStatsEnabled) {
-                    stringResource(R.string.pt_settings_053)
-                } else {
-                    stringResource(R.string.pt_settings_054)
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2
             )
         }
 
@@ -226,16 +205,6 @@ fun SettingsScreen(
                     label = stringResource(R.string.pt_settings_049),
                     checked = s.castVolumeFollowPhone,
                     onChanged = { vm.setCastVolumeFollowPhone(it) }
-                )
-                Text(
-                    if (s.castVolumeFollowPhone) {
-                        stringResource(R.string.pt_settings_050)
-                    } else {
-                        stringResource(R.string.pt_settings_051)
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3
                 )
             }
 
@@ -427,16 +396,6 @@ fun SettingsScreen(
                         )
                     }
                 }
-                // 说明文案压缩为单行（原为两行长句），并强制不换行、超长省略——
-                // 保持与上方各分类「标题 + 一行说明」同一视觉节奏。
-                Text(
-                    stringResource(R.string.pt_settings_022),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
             }
         }
 

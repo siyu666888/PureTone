@@ -26,8 +26,10 @@ data class ReportUiState(
     val data: ReportData? = null,
     /** 听歌数据统计开关（隐私）：关闭时禁用生成/分享海报 */
     val statsEnabled: Boolean = true,
-    /** 当前 App 主题模式（SYSTEM/LIGHT/DARK/BLACK），用于海报默认主题 */
-    val themeMode: String = PureToneSettings.THEME_LIGHT
+    /** 当前 App 主题模式（SYSTEM/LIGHT/DARK/BLACK），报告主题自动跟随 */
+    val themeMode: String = PureToneSettings.THEME_LIGHT,
+    /** 深色模式下是否启用纯黑表面（AMOLED），与 App 主主题同源 */
+    val amoledBlack: Boolean = false
 )
 
 /**
@@ -85,7 +87,8 @@ class ReportViewModel @Inject constructor(
                     loading = false,
                     data = data,
                     statsEnabled = s.listeningStatsEnabled,
-                    themeMode = s.themeMode
+                    themeMode = s.themeMode,
+                    amoledBlack = s.amoledBlack
                 )
             }
         }

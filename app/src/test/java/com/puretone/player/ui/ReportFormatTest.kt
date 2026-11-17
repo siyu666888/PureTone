@@ -288,6 +288,113 @@ class ReportFormatTest {
     }
 
     @Test
+    fun `formatDeltaAbsolute 用绝对时长差并区分多寡与无数据`() {
+        // 150min vs 100min → 多 50 分钟
+        val up = buildData(PeriodType.WEEK, "2026-11-02", "2026-11-09").copy(
+            listenMs = 9_000_000L, prevListenMs = 6_000_000L
+        )
+        assertTrue(ReportFormat.formatDeltaAbsolute(context, up).contains("上周"))
+        assertTrue(ReportFormat.formatDeltaAbsolute(context, up).contains("多"))
+        assertTrue(ReportFormat.formatDeltaAbsolute(context, up).contains("50 分钟"))
+        // 反向 → 少
+        val down = up.copy(listenMs = 6_000_000L, prevListenMs = 9_000_000L)
+        assertTrue(ReportFormat.formatDeltaAbsolute(context, down).contains("少"))
+        assertTrue(ReportFormat.formatDeltaAbsolute(context, down).contains("50 分钟"))
+        // 上一周期无数据 / 持平 → 空串
+        assertEquals("", ReportFormat.formatDeltaAbsolute(context, up.copy(prevListenMs = 0L)))
+        assertEquals("", ReportFormat.formatDeltaAbsolute(context, up.copy(listenMs = 6_000_000L))) // 持平
+    }
+
+    @Test
+    fun `buildGoldenText 深夜占比高用夜猫子句否则用主场句`() {
+        // 深夜 60/100 = 60% ≥ 30 → 夜猫子句带百分比
+        val night = buildData(PeriodType.WEEK, "2026-11-02", "2026-11-09").copy(
+            hourDistribution = listOf(HourCountRow(23, 60L), HourCountRow(12, 40L))
+        )
+        val nightText = ReportFormat.buildGoldenText(context, night)
+        assertTrue("夜猫子句应含百分比：${nightText}", nightText.contains("60%"))
+        // 全在白天 → 主场句，不含百分比
+        val day = night.copy(hourDistribution = listOf(HourCountRow(12, 100L)))
+        val dayText = ReportFormat.buildGoldenText(context, day)
+        assertFalse("主场句不应含百分比：${dayText}", dayText.contains("%"))
+        assertTrue("主场句应有时段名：${dayText}", dayText.contains("午后"))
+    }
+
+    @Test
+    fun `toPosterContent V2 派生字段按周期正确填充`() {
+        val week = ReportFormat.toPosterContent(context, buildData(PeriodType.WEEK, "2026-11-02", "2026-11-09"))
+        assertEquals(4, week.timeSegments.size)
+        assertTrue(week.goldenText.isNotBlank())
+        assertTrue(week.deltaAbsoluteText.isNotBlank())
+        assertEquals("", week.heatTitle)
+        assertTrue(week.calendarCells.isEmpty())
+
+        val month = ReportFormat.toPosterContent(context, buildData(PeriodType.MONTH, "2026-11-01", "2026-12-01"))
+        assertTrue(month.heatTitle.isNotBlank())
+        assertTrue(month.dailyAverageText.isNotBlank())
+        assertTrue(month.longestStreakText.isNotBlank())
+
+        val year = ReportFormat.toPosterContent(context, buildData(PeriodType.YEAR, "2026-01-01", "2027-01-01"))
+        assertTrue("年报不启 V2 新模块", year.timeSegments.isEmpty())
+        assertTrue(year.goldenText.isEmpty())
+    }
+
+    @Test
+    fun `effectivePosterTheme 显式模式按 App 判据映射`() {
+        assertEquals(
+            PosterTheme.LIGHT,
+            ReportFormat.effectivePosterTheme(PureToneSettings.THEME_LIGHT, systemDark = true, amoledBlack = true)
+        )
+        assertEquals(
+            PosterTheme.DARK,
+            ReportFormat.effectivePosterTheme(PureToneSettings.THEME_DARK, systemDark = false, amoledBlack = false)
+        )
+        // DARK + AMOLED 开 → 纯黑；BLACK 模式无论 AMOLED 与否都是纯黑
+        assertEquals(
+            PosterTheme.BLACK,
+            ReportFormat.effectivePosterTheme(PureToneSettings.THEME_DARK, systemDark = false, amoledBlack = true)
+        )
+        assertEquals(
+            PosterTheme.BLACK,
+            ReportFormat.effectivePosterTheme(PureToneSettings.THEME_BLACK, systemDark = false, amoledBlack = false)
+        )
+    }
+
+    @Test
+    fun `effectivePosterTheme 的 SYSTEM 跟随系统深色与 AMOLED`() {
+        assertEquals(
+            PosterTheme.LIGHT,
+            ReportFormat.effectivePosterTheme(PureToneSettings.THEME_SYSTEM, systemDark = false, amoledBlack = false)
+        )
+        assertEquals(
+            PosterTheme.DARK,
+            ReportFormat.effectivePosterTheme(PureToneSettings.THEME_SYSTEM, systemDark = true, amoledBlack = false)
+        )
+        assertEquals(
+            PosterTheme.BLACK,
+            ReportFormat.effectivePosterTheme(PureToneSettings.THEME_SYSTEM, systemDark = true, amoledBlack = true)
+        )
+        // SYSTEM 但系统浅色时即使开了 AMOLED 也不该纯黑（与 PureToneTheme 判据一致）
+        assertEquals(
+            PosterTheme.LIGHT,
+            ReportFormat.effectivePosterTheme(PureToneSettings.THEME_SYSTEM, systemDark = false, amoledBlack = true)
+        )
+    }
+
+    @Test
+    fun `effectivePosterTheme 未知值与 App 一样按系统深色回落`() {
+        // 未知值不再固定浅色：与 PureToneTheme 的 else -> SYSTEM 判据同源，跟随系统
+        assertEquals(
+            PosterTheme.LIGHT,
+            ReportFormat.effectivePosterTheme("", systemDark = false, amoledBlack = false)
+        )
+        assertEquals(
+            PosterTheme.DARK,
+            ReportFormat.effectivePosterTheme("UNKNOWN_THEME", systemDark = true, amoledBlack = false)
+        )
+    }
+
+    @Test
     fun `formatRangeText 跨年周给两端补年份而同年区间不变`() {
         // 年末完整周：2026-12-28（周一）~ 2027-01-03（周日），ISO 2026-W53
         assertEquals(
@@ -357,16 +464,5 @@ class ReportFormatTest {
                 epochAtNoon(LocalDate.parse("2026-11-08"))
             )
         )
-    }
-
-    @Test
-    fun `defaultPosterTheme 按主题模式映射并在未知值回落浅色`() {
-        assertEquals(PosterTheme.LIGHT, ReportFormat.defaultPosterTheme(PureToneSettings.THEME_LIGHT))
-        assertEquals(PosterTheme.DARK, ReportFormat.defaultPosterTheme(PureToneSettings.THEME_DARK))
-        assertEquals(PosterTheme.BLACK, ReportFormat.defaultPosterTheme(PureToneSettings.THEME_BLACK))
-        // 未知值（含空串、大小写不符）必须回落浅色，不能崩也不能错配
-        assertEquals(PosterTheme.LIGHT, ReportFormat.defaultPosterTheme(""))
-        assertEquals(PosterTheme.LIGHT, ReportFormat.defaultPosterTheme("system"))
-        assertEquals(PosterTheme.LIGHT, ReportFormat.defaultPosterTheme("UNKNOWN_THEME"))
     }
 }
