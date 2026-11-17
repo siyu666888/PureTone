@@ -330,6 +330,36 @@ class ReportFormatTest {
     }
 
     @Test
+    fun `formatRangeText 同年周报的月份补零到两位`() {
+        // 1-9 月补零后与跨年分支 yyyy.MM.dd、月报 yyyy.MM 的格式一致
+        assertEquals(
+            "01.05 - 01.11",
+            ReportFormat.formatRangeText(
+                context, PeriodType.WEEK,
+                epochAtNoon(LocalDate.parse("2026-01-05")),
+                epochAtNoon(LocalDate.parse("2026-01-11"))
+            )
+        )
+        assertEquals(
+            "09.06 - 09.12",
+            ReportFormat.formatRangeText(
+                context, PeriodType.WEEK,
+                epochAtNoon(LocalDate.parse("2026-09-06")),
+                epochAtNoon(LocalDate.parse("2026-09-12"))
+            )
+        )
+        // 10/11/12 月本就是两位，补零不改变输出
+        assertEquals(
+            "11.02 - 11.08",
+            ReportFormat.formatRangeText(
+                context, PeriodType.WEEK,
+                epochAtNoon(LocalDate.parse("2026-11-02")),
+                epochAtNoon(LocalDate.parse("2026-11-08"))
+            )
+        )
+    }
+
+    @Test
     fun `defaultPosterTheme 按主题模式映射并在未知值回落浅色`() {
         assertEquals(PosterTheme.LIGHT, ReportFormat.defaultPosterTheme(PureToneSettings.THEME_LIGHT))
         assertEquals(PosterTheme.DARK, ReportFormat.defaultPosterTheme(PureToneSettings.THEME_DARK))

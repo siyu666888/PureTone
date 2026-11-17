@@ -65,7 +65,8 @@ object ReportFormat {
      * 周区间是「ISO 周一 ~ 周日」，年末那周几乎每年都跨日历年（`ReportPeriod.lastCompletedWeeks`），
      * 只写 `M.dd` 会把「12.28 - 1.03」这类区间丢掉年份、无从判断属于哪一年。跨年判断用
      * **日历年**（`start.year != end.year`）——这里只解决区间展示的年份歧义，与周角标用的
-     * 周所属年是两码事，不要混用 `weekBasedYear()`。同年区间维持原格式不变。
+     * 周所属年是两码事，不要混用 `weekBasedYear()`。同年区间用 `MM.dd`（两位月份补零，
+     * 与跨年分支、月报的格式一致）。
      */
     fun formatRangeText(context: Context, type: PeriodType, startMs: Long, endMs: Long): String {
         val zone = ZoneId.systemDefault()
@@ -77,7 +78,9 @@ object ReportFormat {
                     val f = DateTimeFormatter.ofPattern("yyyy.MM.dd", Locale.US)
                     return "${start.format(f)} - ${end.format(f)}"
                 }
-                val f = DateTimeFormatter.ofPattern("M.dd", Locale.US)
+                // 两位月份补零：与跨年分支 yyyy.MM.dd、月报 yyyy.MM 的日期格式保持一致。
+                // 1.05 -> 01.05；10/11/12 月本就是两位，输出不变。
+                val f = DateTimeFormatter.ofPattern("MM.dd", Locale.US)
                 "${start.format(f)} - ${end.format(f)}"
             }
             PeriodType.MONTH -> DateTimeFormatter.ofPattern("yyyy.MM", Locale.US).format(start)
