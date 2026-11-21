@@ -275,14 +275,14 @@ private fun ReportHero(content: PosterContent) {
                     Text(
                         content.deltaAbsoluteText,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color(p.spectrum3)
+                        color = Color(p.spectrum4)
                     )
                 } else if (content.deltaText.isNotBlank()) {
                     Spacer(Modifier.width(8.dp))
                     Text(
                         content.deltaText,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color(p.spectrum3)
+                        color = Color(p.spectrum4)
                     )
                 }
             }
@@ -461,7 +461,7 @@ private fun ReportTopSongs(content: PosterContent, songs: List<TopSongRow>) {
                     Text(
                         "${i + 1}.",
                         style = MaterialTheme.typography.titleMedium,
-                        color = Color(p.spectrum3),
+                        color = Color(p.spectrum4),
                         modifier = Modifier.width(24.dp)
                     )
                     Column(modifier = Modifier.weight(1f)) {

@@ -9,8 +9,10 @@ import com.puretone.player.data.local.dao.NamedCountRow
 import com.puretone.player.data.local.dao.TopSongRow
 import com.puretone.player.domain.report.PeriodType
 import com.puretone.player.domain.report.ReportData
+import com.puretone.player.domain.report.ReportInsights
 import com.puretone.player.ui.ReportFormat
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -112,5 +114,58 @@ class PosterRendererTest {
         assertTrue("年报无行为金句（保留趣味标签）", content.goldenText.isEmpty())
         assertTrue("年报保留趣味标签", content.funTag.isNotBlank())
         PosterTheme.values().forEach { PosterRenderer.render(content, it) }
+    }
+
+    @Test
+    fun `A1 月报布局测量所有块不越界不重叠且顺序正确`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val zone = java.time.ZoneId.systemDefault()
+        val monthData = buildData().copy(
+            type = PeriodType.MONTH,
+            rangeStart = java.time.LocalDate.of(2026, 11, 1).atStartOfDay(zone).toInstant().toEpochMilli(),
+            // A1 极端情形：满配 3 首 Top
+            topSongs = buildData().topSongs + TopSongRow(3L, "SongC", "ArtistZ", "Al", 1, null)
+        )
+        val content = ReportFormat.toPosterContent(context, monthData)
+        // A1 极端情形：3 行金句 + 30 格热力 + 3 首 Top（全压缩到底仍须装进安全区）
+        val goldenLines = listOf("第一行足够长的行为画像金句用于测量", "第二行足够长的行为画像金句", "第三行画像金句")
+        val layout = PosterRenderer.measureLayout(content, goldenLines)
+
+        assertEquals("极端情形 Top 必须保留 3 首，不得砍首数", 3, layout.topSongCount)
+        assertTrue("月报总高须装进安全区(${PosterRenderer.SAFE_BOTTOM})，实测=${layout.totalHeight}", layout.fits)
+        // 块按声明顺序自上而下，且前一块底边 <= 后一块顶边（不重叠）
+        for (i in 1 until layout.blocks.size) {
+            val prev = layout.blocks[i - 1]
+            val cur = layout.blocks[i]
+            assertTrue("块重叠: ${prev.name}->${cur.name}", prev.bottom <= cur.top)
+        }
+        assertEquals("月报必须含热力块", "heat", layout.blocks.first { it.name == "heat" }.name)
+        assertTrue("热力格经压缩后仍为正尺寸", layout.heatCell > 0f)
+        val topBlock = layout.blocks.first { it.name == "topSongs" }
+        assertTrue("Top 卡底边不得越过安全区", topBlock.bottom <= PosterRenderer.SAFE_BOTTOM)
+    }
+
+    @Test
+    fun `A1 周报年报布局同样不越界`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        for (type in listOf(PeriodType.WEEK, PeriodType.YEAR)) {
+            val content = ReportFormat.toPosterContent(context, buildData().copy(type = type))
+            val layout = PosterRenderer.measureLayout(content, emptyList())
+            assertTrue("$type 总高须装进安全区，实测=${layout.totalHeight}", layout.fits)
+        }
+    }
+
+    @Test
+    fun `A4 时段条空数据判据仅在全零时为真`() {
+        val seg = { label: String, share: Float, level: Int ->
+            ReportInsights.TimeSegment(label, share, level)
+        }
+        assertTrue(isTimeBarEmpty(listOf(
+            seg("清晨", 0f, 1), seg("午后", 0f, 2), seg("晚间", 0f, 3), seg("深夜", 0f, 4)
+        )))
+        assertFalse(isTimeBarEmpty(listOf(
+            seg("清晨", 0.25f, 1), seg("午后", 0.75f, 2)
+        )))
+        assertFalse(isTimeBarEmpty(emptyList()))
     }
 }

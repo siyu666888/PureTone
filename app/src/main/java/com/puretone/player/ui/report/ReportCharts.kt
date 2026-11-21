@@ -113,6 +113,10 @@ fun CalendarHeatmap(
     }
 }
 
+/** A4：时段条空数据判据——全段占比 <=0 即视为无数据，与海报 drawTimeCard 兜底同源 */
+internal fun isTimeBarEmpty(segments: List<ReportInsights.TimeSegment>): Boolean =
+    segments.isNotEmpty() && segments.all { it.share <= 0f }
+
 /** 时段分布条：一条 4 段比例条，宽度即占比，不用图例；段内显示文字标签 */
 @Composable
 fun TimeSegmentBar(
@@ -122,7 +126,15 @@ fun TimeSegmentBar(
 ) {
     if (segments.isEmpty()) return
     val p = LocalReportPalette.current
+    val empty = isTimeBarEmpty(segments)
     Row(modifier = modifier.fillMaxWidth().height(if (showLabels) 26.dp else 14.dp)) {
+        if (empty) {
+            // A4：零播放时画中性空条，不再把四色满格误呈现为有数据（与海报一致）
+            Canvas(modifier = Modifier.weight(1f)) {
+                drawRect(Color(p.line))
+            }
+            return@Row
+        }
         segments.forEach { seg ->
             val w = if (seg.share > 0f) seg.share else 0f
             androidx.compose.foundation.layout.Box(

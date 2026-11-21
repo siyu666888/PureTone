@@ -465,4 +465,30 @@ class ReportFormatTest {
             )
         )
     }
+
+    @Test
+    fun `B3 formatDelta 下跌与持平分支按上一周期有数据正确出文案`() {
+        val prev = context.getString(com.puretone.player.R.string.pt_report_delta_period_week)
+        // 下跌：-50% 命中 down 分支，取绝对百分比，周期词仍为「上周」
+        val down = ReportFormat.formatDelta(context, -50.0, 100_000L, PeriodType.WEEK)
+        // formatPct 去掉 .0 → "50"；百分比符号由文案资源自带 %%
+        assertEquals(context.getString(com.puretone.player.R.string.pt_report_delta_down, prev, "50"), down)
+        // 持平：prev>0 且 delta 在 ±0.5 内命中 flat，不含上涨/下跌箭头
+        val flat = ReportFormat.formatDelta(context, 0.0, 100_000L, PeriodType.WEEK)
+        assertEquals(context.getString(com.puretone.player.R.string.pt_report_delta_flat, prev), flat)
+        assertFalse(flat.contains("↑"))
+        assertFalse(flat.contains("↓"))
+    }
+
+    @Test
+    fun `B3 formatDelta 的 ±0_5 临界点落在持平分支`() {
+        val prev = context.getString(com.puretone.player.R.string.pt_report_delta_period_week)
+        val flatRes = context.getString(com.puretone.player.R.string.pt_report_delta_flat, prev)
+        // 判据是严格 >0.5 / <-0.5，恰好 ±0.5 必须判持平
+        assertEquals(flatRes, ReportFormat.formatDelta(context, 0.5, 100_000L, PeriodType.WEEK))
+        assertEquals(flatRes, ReportFormat.formatDelta(context, -0.5, 100_000L, PeriodType.WEEK))
+        // 微超阈值则分别落到 up / down
+        assertFalse(flatRes == ReportFormat.formatDelta(context, 0.51, 100_000L, PeriodType.WEEK))
+        assertFalse(flatRes == ReportFormat.formatDelta(context, -0.51, 100_000L, PeriodType.WEEK))
+    }
 }
