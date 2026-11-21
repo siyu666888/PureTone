@@ -127,6 +127,14 @@ class CastNetworkLogTest {
         logFile = File.createTempFile("cast-network-log-test", ".txt")
     }
 
+    @Test
+    fun `B1 wifi_net_bound 三态映射锁定真值不造假的诊断口径`() {
+        // 这三态是「双网卡 SSDP 收不到包」诊断的核心证据，映射写反会把用户引向错误方向
+        assertEquals("yes", CastNetworkLog.wifiBoundText(true))
+        assertEquals("failed", CastNetworkLog.wifiBoundText(false))
+        assertEquals("n/a", CastNetworkLog.wifiBoundText(null))
+    }
+
     @After
     fun deleteTempLog() {
         logFile.delete()

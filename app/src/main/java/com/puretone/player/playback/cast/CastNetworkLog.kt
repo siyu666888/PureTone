@@ -139,6 +139,16 @@ object CastNetworkLog {
     @Volatile
     private var lastWifiIp: String? = null
 
+    /**
+     * wifi_net_bound 三态映射（B1 可测化）：true→yes / false→failed / null→n/a。
+     * 抽为纯函数供 [snapshot] 与单测共用，防止「假绿灯」口径被改坏而测试全绿。
+     */
+    internal fun wifiBoundText(bound: Boolean?): String = when (bound) {
+        true -> "yes"
+        false -> "failed"
+        null -> "n/a"
+    }
+
     /** 记录本次搜索是否成功把进程绑定到 Wi-Fi 网络（由 [CastNetworkBridge] 调用） */
     fun markWifiBound(bound: Boolean, ip: String?) {
         lastWifiBound = bound
@@ -351,13 +361,7 @@ object CastNetworkLog {
             sb.appendLine()
 
             // 进程是否成功绑定到 Wi-Fi 网络（双网卡设备 SSDP 修复的核心动作）。
-            sb.append("wifi_net_bound=").append(
-                when (lastWifiBound) {
-                    true -> "yes"
-                    false -> "failed"
-                    null -> "n/a"
-                }
-            )
+            sb.append("wifi_net_bound=").append(wifiBoundText(lastWifiBound))
             sb.append(" wifi_ip=").append(lastWifiIp ?: "?")
             sb.appendLine()
         }.onFailure { sb.append("snapshot_error=").append(it.message) }

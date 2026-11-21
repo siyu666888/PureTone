@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -110,5 +111,29 @@ class SettingsRepositoryEqTest {
         val after = current()
         assertEquals(before.eqPreset, after.eqPreset)
         assertEquals(before.eqBandLevels, after.eqBandLevels)
+    }
+
+    @Test
+    fun `B8 decodeBands 对损坏与非10段数据返回null不崩溃`() {
+        val ten = (0 until 10).toList()
+        assertEquals(ten, repo.decodeBands(ten.joinToString(",")))
+        assertEquals(ten, repo.decodeBands(" 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 "))
+        assertEquals(null, repo.decodeBands(null))
+        assertEquals(null, repo.decodeBands(""))
+        assertEquals(null, repo.decodeBands("0,1,2"))          // 段数不足
+        assertEquals(null, repo.decodeBands(ten.dropLast(1).joinToString(",")))
+        assertEquals(null, repo.decodeBands("0,x,2,3,4,5,6,7,8,9")) // 含非数字
+    }
+
+    @Test
+    fun `B8 decodeCustomPresets 对损坏JSON返回空Map对合法10段正常解码`() {
+        assertTrue(repo.decodeCustomPresets(null).isEmpty())
+        assertTrue(repo.decodeCustomPresets("{bad json").isEmpty())
+        assertTrue(repo.decodeCustomPresets("").isEmpty())
+        // 合法 10 段预设正常解出；非 10 段的条目被丢弃
+        val json = "{\"Rock\":[0,1,2,3,4,5,6,7,8,9],\"Bad\":[1,2,3]}"
+        val map = repo.decodeCustomPresets(json)
+        assertEquals((0 until 10).toList(), map["Rock"])
+        assertFalse(map.containsKey("Bad"))
     }
 }

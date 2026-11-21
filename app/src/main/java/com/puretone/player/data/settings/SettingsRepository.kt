@@ -495,8 +495,8 @@ class SettingsRepository @Inject constructor(
         prefs[Keys.eqBandLevels] = bands.joinToString(",")
     }
 
-    /** 解码自定义预设 JSON（损坏/为空返回空 Map，不崩溃） */
-    private fun decodeCustomPresets(s: String?): Map<String, List<Int>> {
+    /** 解码自定义预设 JSON（损坏/为空返回空 Map，不崩溃）；internal 供 B8 直接单测 */
+    internal fun decodeCustomPresets(s: String?): Map<String, List<Int>> {
         if (s.isNullOrBlank()) return emptyMap()
         return runCatching {
             val obj = JSONObject(s)
@@ -577,7 +577,8 @@ class SettingsRepository @Inject constructor(
         dataStore.edit(block)
     }
 
-    private fun decodeBands(raw: String?): List<Int>? {
+    /** internal 供 B8 直接单测损坏数据兜底；非带参构造要求调用方传 repo 实例 */
+    internal fun decodeBands(raw: String?): List<Int>? {
         if (raw.isNullOrBlank()) return null
         val parsed = raw.split(",").mapNotNull { it.trim().toIntOrNull() }
         return if (parsed.size == PureToneSettings.EQ_BAND_COUNT) parsed else null

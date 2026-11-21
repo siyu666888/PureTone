@@ -34,6 +34,120 @@ object PosterRenderer {
     private const val MARGIN_BOTTOM = 96
     private val CONTENT_W = W - 2 * MARGIN_X
 
+    /** 内容安全底边：页脚首行画在 H-MARGIN_BOTTOM-56，内容须在其上方留 16px 空隙 */
+    internal val SAFE_BOTTOM: Int = H - MARGIN_BOTTOM - 56 - 16
+
+    /** 单个布局块：纯整数坐标，可在无 Android 依赖下断言不越界、不重叠 */
+    internal data class PosterBlock(val name: String, val top: Int, val bottom: Int)
+
+    /**
+     * 布局测量结果：每块位置 + 可压缩尺寸。
+     * 全部为纯值，[totalHeight] / [fits] 可直接被单测断言。
+     */
+    internal data class PosterLayout(
+        val blocks: List<PosterBlock>,
+        val goldenLines: List<String>,
+        val heatCell: Float,
+        val heatGap: Float,
+        val trendH: Int,
+        val timeH: Int,
+        val topRowH: Int,
+        val topSongCount: Int
+    ) {
+        val totalHeight: Int get() = blocks.maxOfOrNull { it.bottom } ?: MARGIN_TOP
+        val fits: Boolean get() = totalHeight <= SAFE_BOTTOM
+    }
+
+    /**
+     * 先测量后布局（A1 月报溢出修复）。
+     *
+     * 旧实现边画边累加 y，月报同时含金句/趋势/时段/热力/胶囊/Top3 时总高约 2290px，
+     * 超出 2016 画幅，Top3 被裁、页脚压在胶囊上。这里按固定顺序算每块高度，
+     * 超限则依次压缩热力格→趋势卡→时段卡→Top 行高，直到装进 [SAFE_BOTTOM]；
+     * **Top 首数恒为最多 3 首、页脚恒锚定底部，不参与压缩**（A1 底部锚定语义）。
+     *
+     * [goldenLines] 由绘制侧用真实 Paint 折行后传入，测量本身不碰 Android API，可纯 JVM 测。
+     */
+    internal fun measureLayout(content: PosterContent, goldenLines: List<String>): PosterLayout {
+        var heatCell = 92f
+        var heatGap = 10f
+        var trendH = 300
+        var timeH = 200
+        var topRowH = 96
+        // A1：Top 始终保留最多 3 首，不再因溢出砍首数（底部锚定语义）。
+        val topSongCount = content.data.topSongs.take(3).size
+
+        fun blockHeight(): Int {
+            var y = MARGIN_TOP
+            y += 84 + 30                 // brand
+            y += 64 + 16                 // lead
+            y += 104 + 12 + 16           // mainNumber
+            y += 60                      // rangeDelta
+            if (content.estimateNote.isNotBlank()) y += 44 + 16
+            if (goldenLines.isNotEmpty()) y += 24 + goldenLines.size * 38 + 24
+            y += trendH + 24
+            if (content.timeSegments.isNotEmpty()) y += timeH + 24
+            if (content.calendarCells.isNotEmpty()) {
+                val rows = (content.calendarCells.size + 6) / 7
+                y += (92 + rows * (heatCell + heatGap)).toInt() + 24
+            }
+            y += 120 + 24                // capsules
+            val topH = 60 + if (topSongCount == 0) 60 else topSongCount * topRowH + 20
+            y += topH + 24
+            if (content.funTag.isNotBlank() && content.goldenText.isBlank()) {
+                val lines = content.funTag.split("\n").count { it.isNotBlank() }.coerceAtLeast(1)
+                y += 50 + lines * 44 + 20
+            }
+            return y
+        }
+
+        // 按优先级压缩，直到装进安全区；每步有下限，避免无限循环。
+        // A1：为「极端月报（estimate + 3 行金句 + 满配 3 首 Top）」腾空间，热力格下限 48→40、
+        // 趋势卡下限 200→160。该情形原样累加总高 1924、超 SAFE_BOTTOM 76px；两项各多压
+        // 40px 后总高 1844 ≤ 1848，从而**永不砍 Top 首数**。Top 卡与页脚锚定底部不漂移。
+        // 时段卡(150)与 Top 行高(64)已是下限，再压会让 Top 文字行重叠，故不再下探。
+        while (blockHeight() > SAFE_BOTTOM && heatCell > 40f) {
+            heatCell -= 4f
+        }
+        while (blockHeight() > SAFE_BOTTOM && trendH > 160) {
+            trendH -= 10
+        }
+        while (blockHeight() > SAFE_BOTTOM && timeH > 150) {
+            timeH -= 10
+        }
+        while (blockHeight() > SAFE_BOTTOM && topRowH > 64) {
+            topRowH -= 4
+        }
+        // 全部压到底（3 行金句 + 热力 40 + trend 160 + time 150 + topRow 64）总高 1844
+        // ≤ SAFE_BOTTOM 1848，故此处必定 fits；若未来新增块导致仍超，交由 fits 断言暴露。
+
+        var y = MARGIN_TOP
+        val blocks = mutableListOf<PosterBlock>()
+        fun add(name: String, h: Int, trailing: Int = 0) {
+            blocks += PosterBlock(name, y, y + h)
+            y += h + trailing
+        }
+        add("brand", 84, 30)
+        add("lead", 64, 16)
+        add("mainNumber", 104 + 12, 16)
+        add("rangeDelta", 60)
+        if (content.estimateNote.isNotBlank()) add("estimate", 44, 16)
+        if (goldenLines.isNotEmpty()) add("golden", 24 + goldenLines.size * 38, 24)
+        add("trend", trendH, 24)
+        if (content.timeSegments.isNotEmpty()) add("time", timeH, 24)
+        if (content.calendarCells.isNotEmpty()) {
+            val rows = (content.calendarCells.size + 6) / 7
+            add("heat", (92 + rows * (heatCell + heatGap)).toInt(), 24)
+        }
+        add("capsules", 120, 24)
+        add("topSongs", 60 + if (topSongCount == 0) 60 else topSongCount * topRowH + 20, 24)
+        if (content.funTag.isNotBlank() && content.goldenText.isBlank()) {
+            val lines = content.funTag.split("\n").count { it.isNotBlank() }.coerceAtLeast(1)
+            add("funTag", 50 + lines * 44 + 20)
+        }
+        return PosterLayout(blocks, goldenLines, heatCell, heatGap, trendH, timeH, topRowH, topSongCount)
+    }
+
     /** 渲染一份海报 */
     fun render(content: PosterContent, theme: PosterTheme): Bitmap {
         val bitmap = createBitmap(W, H, Bitmap.Config.ARGB_8888)
@@ -41,34 +155,41 @@ object PosterRenderer {
         val p = ReportPalette.of(theme)
         canvas.drawColor(p.bg)
 
-        var y = MARGIN_TOP
-        y = drawBrand(canvas, p, content, y) + 30
-        y = drawLead(canvas, p, content, y) + 16
-        y = drawMainNumber(canvas, p, content, y) + 16
-        y = drawRangeDelta(canvas, p, content, y)
+        val goldenLines = if (content.goldenText.isNotBlank()) {
+            wrapText(paint(26f, p.ink), content.goldenText, CONTENT_W - 72f)
+        } else {
+            emptyList()
+        }
+        val layout = measureLayout(content, goldenLines)
+        val at = { name: String -> layout.blocks.first { it.name == name }.top }
+
+        drawBrand(canvas, p, content, at("brand"))
+        drawLead(canvas, p, content, at("lead"))
+        drawMainNumber(canvas, p, content, at("mainNumber"))
+        drawRangeDelta(canvas, p, content, at("rangeDelta"))
         if (content.estimateNote.isNotBlank()) {
-            y = drawEstimate(canvas, p, content, y) + 16
+            drawEstimate(canvas, p, content, at("estimate"))
         }
-        if (content.goldenText.isNotBlank()) {
-            y = drawGolden(canvas, p, content, y) + 24
+        if (goldenLines.isNotEmpty()) {
+            drawGolden(canvas, p, goldenLines, at("golden"))
         }
-        y = drawTrendCard(canvas, p, content, y) + 24
+        drawTrendCard(canvas, p, content, at("trend"), layout.trendH)
         if (content.timeSegments.isNotEmpty()) {
-            y = drawTimeCard(canvas, p, content, y) + 24
+            drawTimeCard(canvas, p, content, at("time"), layout.timeH)
         }
         if (content.calendarCells.isNotEmpty()) {
-            y = drawHeatCard(canvas, p, content, y) + 24
+            drawHeatCard(canvas, p, content, at("heat"), layout.heatCell, layout.heatGap)
         }
-        y = drawCapsules(canvas, p, content, y) + 24
-        y = drawTopSongs(canvas, p, content, y) + 24
+        drawCapsules(canvas, p, content, at("capsules"))
+        drawTopSongs(canvas, p, content, at("topSongs"), layout.topRowH, layout.topSongCount)
         if (content.funTag.isNotBlank() && content.goldenText.isBlank()) {
-            y = drawFunTag(canvas, p, content, y)
+            drawFunTag(canvas, p, content, at("funTag"))
         }
         drawFooter(canvas, p, content)
         return bitmap
     }
 
-    // ---------- 布局段落（每段返回段落底边 y） ----------
+    // ---------- 布局段落（每段按 measureLayout 给定的 top 绘制） ----------
 
     private fun drawBrand(c: Canvas, p: ReportPalette, content: PosterContent, y: Int): Int {
         val cx = MARGIN_X + 28f
@@ -123,11 +244,9 @@ object PosterRenderer {
         return y + 44
     }
 
-    /** 行为金句：洋红左边线 + chip 底 */
-    private fun drawGolden(c: Canvas, p: ReportPalette, content: PosterContent, y: Int): Int {
-        val text = content.goldenText
+    /** 行为金句：洋红左边线 + chip 底（折行由 measureLayout 共享，避免重复测量） */
+    private fun drawGolden(c: Canvas, p: ReportPalette, lines: List<String>, y: Int): Int {
         val tp = paint(26f, p.ink, bold = false)
-        val lines = wrapText(tp, text, CONTENT_W - 72f)
         val h = 24 + lines.size * 38
         val rp = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = p.card; style = Paint.Style.FILL }
         c.drawRoundRect(RectF(MARGIN_X.toFloat(), y.toFloat(), (W - MARGIN_X).toFloat(), (y + h).toFloat()), 18f, 18f, rp)
@@ -139,25 +258,27 @@ object PosterRenderer {
         return y + h
     }
 
-    private fun drawTrendCard(c: Canvas, p: ReportPalette, content: PosterContent, y: Int): Int {
+    private fun drawTrendCard(
+        c: Canvas, p: ReportPalette, content: PosterContent, y: Int, cardH: Int
+    ): Int {
         val buckets = content.trendBuckets
-        val cardH = 300
         drawCard(c, p, MARGIN_X, y, CONTENT_W, cardH)
         val pad = 36
         val innerX = MARGIN_X + pad
         val innerW = CONTENT_W - 2 * pad
         c.drawText(content.trendTitle, innerX.toFloat(), (y + pad + 30).toFloat(), paint(34f, p.brand, bold = true))
         val barTop = y + pad + 60f
-        val plotH = 150f
+        val plotH = (cardH - pad - 60f - 40f).coerceAtLeast(40f)
         val baseY = barTop + plotH
         if (buckets.all { it.listenMs == 0L }) {
             c.drawText("暂无数据", innerX.toFloat(), (barTop + 60).toFloat(), paint(26f, p.ink3))
             return y + cardH
         }
-        if (content.data.type == PeriodType.WEEK) {
-            drawAreaLine(c, p, buckets, innerX, innerW, barTop, plotH)
-        } else {
-            drawSpectrumBars(c, p, buckets, innerX, innerW, baseY, plotH)
+        when (content.data.type) {
+            PeriodType.WEEK -> drawAreaLine(c, p, buckets, innerX, innerW, barTop, plotH)
+            // A2：年报保持 V1 品牌纯色柱，与屏幕端 BarChart(brand) 同源，不被 V2 光谱渐变顺带改色
+            PeriodType.YEAR -> drawV1Bars(c, p, buckets, innerX, innerW, baseY, plotH)
+            else -> drawSpectrumBars(c, p, buckets, innerX, innerW, baseY, plotH)
         }
         val lp = paint(22f, p.ink3)
         val step = innerW / buckets.size.coerceAtLeast(1)
@@ -208,7 +329,30 @@ object PosterRenderer {
         }
     }
 
-    /** 月/年报：光谱柱，峰值满色其余半透明（渐变更贵所以省着用） */
+    /** A2 年报专用：V1 品牌纯色柱，峰值 alpha 110 其余 70，与屏幕 BarChart(brand) 同色同源 */
+    private fun drawV1Bars(
+        c: Canvas, p: ReportPalette, buckets: List<ReportTrend.TrendBucket>,
+        x: Int, w: Int, baseY: Float, h: Float
+    ) {
+        val max = (buckets.maxOfOrNull { it.listenMs } ?: 0L).coerceAtLeast(1L).toFloat()
+        val n = buckets.size
+        val gap = 12f
+        val slot = (w - gap * (n - 1)) / n
+        val barW = (slot * 0.6f).coerceAtLeast(8f)
+        val peak = buckets.withIndex().filter { it.value.listenMs > 0 }
+            .maxByOrNull { it.value.listenMs }?.index ?: -1
+        buckets.forEachIndexed { i, b ->
+            val left = x + i * (slot + gap) + (slot - barW) / 2
+            val bh = if (b.listenMs > 0) (b.listenMs / max) * (h - 4f) + 4f else 2f
+            c.drawRect(left, baseY - bh, left + barW, baseY,
+                Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = withAlpha(p.brand, if (i == peak) 110f / 255f else 70f / 255f)
+                    style = Paint.Style.FILL
+                })
+        }
+    }
+
+    /** 月报：光谱柱，峰值满色其余半透明（渐变更贵所以省着用） */
     private fun drawSpectrumBars(
         c: Canvas, p: ReportPalette, buckets: List<ReportTrend.TrendBucket>,
         x: Int, w: Int, baseY: Float, h: Float
@@ -236,8 +380,9 @@ object PosterRenderer {
     }
 
     /** 时段分布条：4 段宽度即占比，色相携带「清晨→深夜」信息 */
-    private fun drawTimeCard(c: Canvas, p: ReportPalette, content: PosterContent, y: Int): Int {
-        val cardH = 200
+    private fun drawTimeCard(
+        c: Canvas, p: ReportPalette, content: PosterContent, y: Int, cardH: Int
+    ): Int {
         drawCard(c, p, MARGIN_X, y, CONTENT_W, cardH)
         val innerX = MARGIN_X + 36f
         c.drawText(content.timeTitle, innerX, (y + 54).toFloat(), paint(34f, p.brand, bold = true))
@@ -275,11 +420,11 @@ object PosterRenderer {
         return y + cardH
     }
 
-    /** 月报专属：声音日历热力网格（7 列，空日留底不描边） */
-    private fun drawHeatCard(c: Canvas, p: ReportPalette, content: PosterContent, y: Int): Int {
+    /** 月报专属：声音日历热力网格（7 列，空日留底不描边；cell/gap 由 measureLayout 压缩） */
+    private fun drawHeatCard(
+        c: Canvas, p: ReportPalette, content: PosterContent, y: Int, cell: Float, gap: Float
+    ): Int {
         val cols = 7
-        val cell = 92f
-        val gap = 10f
         val rows = (content.calendarCells.size + cols - 1) / cols
         val cardH = (92 + rows * (cell + gap)).toInt()
         drawCard(c, p, MARGIN_X, y, CONTENT_W, cardH)
@@ -321,9 +466,10 @@ object PosterRenderer {
         return y + ch
     }
 
-    private fun drawTopSongs(c: Canvas, p: ReportPalette, content: PosterContent, y: Int): Int {
-        val list = content.data.topSongs.take(3)
-        val rowH = 96
+    private fun drawTopSongs(
+        c: Canvas, p: ReportPalette, content: PosterContent, y: Int, rowH: Int, count: Int
+    ): Int {
+        val list = content.data.topSongs.take(count)
         val titleH = 60
         val cardH = titleH + if (list.isEmpty()) 60 else list.size * rowH + 20
         drawCard(c, p, MARGIN_X, y, CONTENT_W, cardH)

@@ -134,4 +134,40 @@ class ReportInsightsTest {
         )
         assertEquals(29, cells.size)
     }
+
+    @Test
+    fun `B4 peakSegmentLabel 取占比最高时段且全零有确定口径`() {
+        // 深夜 23 点占绝对多数 → 标签为「深夜」
+        val night = data(hours = listOf(HourCountRow(23, 9L), HourCountRow(12, 1L)))
+        assertEquals("深夜", ReportInsights.peakSegmentLabel(night))
+        // 白天主场
+        val day = data(hours = listOf(HourCountRow(12, 9L), HourCountRow(23, 1L)))
+        assertEquals("午后", ReportInsights.peakSegmentLabel(day)) // hour=12 属午后段(11..16)
+        // 全零：timeSegments 四段全 0，maxByOrNull 取首段「清晨」，锁定该确定口径
+        assertEquals("清晨", ReportInsights.peakSegmentLabel(data()))
+    }
+
+    @Test
+    fun `B7 日历热力四档边界0_25与0_75精确落档`() {
+        val zone = ZoneId.systemDefault()
+        val start = LocalDate.of(2026, 11, 1).atStartOfDay(zone).toInstant().toEpochMilli()
+        // 峰值 400：100/400=0.25→档1；300/400=0.75→档3；400→档4
+        val trend = listOf(
+            DailyTrendRow("2026-11-01", 100L, 1L),
+            DailyTrendRow("2026-11-02", 300L, 1L),
+            DailyTrendRow("2026-11-03", 400L, 1L)
+        )
+        val cells = ReportInsights.calendarCells(
+            data(PeriodType.MONTH, rangeStart = start, trend = trend), zone
+        )
+        assertEquals(1, cells[0].level) // 0.25 → 1
+        assertEquals(3, cells[1].level) // 0.75 → 3
+        assertEquals(4, cells[2].level) // 峰值 → 4
+    }
+
+    @Test
+    fun `B7 nightSharePct 封顶100不越界`() {
+        val allNight = data(hours = listOf(HourCountRow(23, 100L), HourCountRow(0, 100L)))
+        assertEquals(100, ReportInsights.nightSharePct(allNight))
+    }
 }

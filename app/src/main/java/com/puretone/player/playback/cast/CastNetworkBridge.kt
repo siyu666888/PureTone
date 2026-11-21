@@ -12,6 +12,38 @@ import android.os.SystemClock
 import java.net.Inet4Address
 
 /**
+ * B5：一个网络是否可作为投屏 Wi-Fi 的判据（纯函数，供 active 优先与 allNetworks 兜底共用）。
+ * 必须同时带 Wi-Fi transport 与 INTERNET capability；缺 INTERNET 是无网局域网，SSDP 起不来。
+ */
+internal fun isUsableWifiNetwork(hasWifiTransport: Boolean, hasInternet: Boolean): Boolean =
+    hasWifiTransport && hasInternet
+
+/**
+ * B5：网络候选（[id] + 其 Wi-Fi/INTERNET 能力），把 Android 的 ConnectivityManager
+ * 查询结果压成纯值，供 [pickWifiNetwork] 在 JVM 下直接断言。[T] 为网络标识类型：
+ * 生产传 [Network]，测试传任意可比较值（如 String），故纯函数不依赖 Android 类。
+ */
+internal data class WifiCandidate<T>(
+    val id: T,
+    val hasWifiTransport: Boolean,
+    val hasInternet: Boolean
+) {
+    val usable: Boolean get() = isUsableWifiNetwork(hasWifiTransport, hasInternet)
+}
+
+/**
+ * B5：active 优先、allNetworks 兜底的选网路由（纯函数，无 Android API）。
+ *
+ * [CastNetworkBridge.findWifiNetwork] 把 `activeNetwork` 映射成 [active]、`allNetworks` 映射成
+ * [others] 后调用本函数；测试可直接构造两组候选，锁定两条路由：
+ * - active 可用 → 必须选 active（双网卡时走对网卡的关键路径）；
+ * - active 为蜂窝/缺失 → 从 others 里挑第一个可用 Wi-Fi（兜底）。
+ */
+internal fun <T> pickWifiNetwork(active: WifiCandidate<T>?, others: List<WifiCandidate<T>>): T? =
+    if (active?.usable == true) active.id
+    else others.firstOrNull { it.usable }?.id
+
+/**
  * 投屏期的 Android 网络底层：组播锁、Wi-Fi 进程绑定、本机 Wi-Fi IPv4。
  *
  * 从 [DlnaCastManager] 拆出，原因是这三件事共享同一组「进程级全局状态」
@@ -329,17 +361,19 @@ internal class CastNetworkBridge(private val appContext: Context) {
 
     /** 取一个「已连接且能上网」的 Wi-Fi 网络；优先当前 active 网络（通常就是 Wi-Fi） */
     private fun findWifiNetwork(cm: ConnectivityManager): Network? {
-        val active = cm.activeNetwork
-        val activeCaps = active?.let { cm.getNetworkCapabilities(it) }
-        if (activeCaps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true &&
-            activeCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-        ) return active
-        return cm.allNetworks.firstOrNull { net ->
-            cm.getNetworkCapabilities(net)?.let { caps ->
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
-                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            } == true
+        fun candidate(net: Network?): WifiCandidate<Network>? {
+            val caps = net?.let { cm.getNetworkCapabilities(it) } ?: return null
+            return WifiCandidate(
+                id = net,
+                hasWifiTransport = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
+                hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            )
         }
+        val active = candidate(cm.activeNetwork)
+        // B5：选网决策交给纯函数 pickWifiNetwork，active 优先 / allNetworks 兜底两条路由
+        // 均可被 JVM 单测直接覆盖（见 UsableWifiNetworkTest / WifiRouteTest）。
+        val others = cm.allNetworks.mapNotNull { candidate(it) }
+        return pickWifiNetwork(active, others)
     }
 
     /** 取某网络的 IPv4 地址（用于诊断与确认走的是 Wi-Fi 子网） */
