@@ -51,11 +51,30 @@ object PlaylistImportResolver {
     private fun fileNameKey(path: String): String =
         path.substringAfterLast('/').substringBeforeLast('.').lowercase()
 
-    /** 手写 URL 解码（仅 %XX 十六进制），避免引入 Android Uri 依赖，保持纯 JVM 可测（P2-8） */
+    /**
+     * URL 解码（%XX 十六进制 → UTF-8 字节 → 字符串），纯 JVM 可测（P2-8 / 第七轮 R8-7）。
+     * R8-7：旧实现逐 %XX 转单个 Char，把中文 UTF-8 三字节 `%E6%AD%8C` 解成三个 Latin-1
+     * 乱码字符，导致中文路径全部匹配失效；改为按字节收集后整体 UTF-8 解码。
+     * 不直接用 URLDecoder：它把 '+' 当空格，而文件路径里 '+' 是合法字符。
+     */
     private fun urlDecode(s: String): String {
         if ('%' !in s) return s
-        return s.replace(Regex("%([0-9A-Fa-f]{2})")) { match ->
-            match.groupValues[1].toInt(16).toChar().toString()
+        val bytes = java.io.ByteArrayOutputStream(s.length)
+        var i = 0
+        while (i < s.length) {
+            if (s[i] == '%' && i + 2 < s.length) {
+                val hex = s.substring(i + 1, i + 3)
+                val b = hex.toIntOrNull(16)
+                if (b != null) {
+                    bytes.write(b)
+                    i += 3
+                    continue
+                }
+            }
+            // 非 %XX：按 UTF-8 字节写入（中文原文路径同样正确）
+            bytes.write(s[i].toString().toByteArray(Charsets.UTF_8))
+            i++
         }
+        return String(bytes.toByteArray(), Charsets.UTF_8)
     }
 }

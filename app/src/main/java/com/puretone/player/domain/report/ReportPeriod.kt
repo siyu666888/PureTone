@@ -19,9 +19,6 @@ import java.time.format.DateTimeFormatter
  */
 object ReportPeriod {
 
-    /** 播放历史保留天数（决策点④：原 365 → 放宽到 400 天，覆盖更长年度趋势） */
-    const val HISTORY_RETENTION_DAYS = 400L
-
     private val DAY_KEY_FMT = DateTimeFormatter.ISO_LOCAL_DATE
 
     /**
@@ -77,19 +74,6 @@ object ReportPeriod {
             yearStart = yearStart.minusYears(1)
             range
         }
-    }
-
-    /**
-     * 尾部窗口（决策点④ 年报口径）：从 [now] 往前推 [days] 天到 [now] 的闭区间，
-     * 用于「过去 N 天」聚合（年报默认取 [HISTORY_RETENTION_DAYS]）。
-     */
-    fun trailingWindow(
-        days: Long,
-        now: Long,
-        zoneId: ZoneId = ZoneId.systemDefault()
-    ): PeriodRange {
-        val start = now - days * 24 * 60 * 60 * 1000L
-        return PeriodRange(start, now, dayKeyFromEpoch(start, zoneId))
     }
 
     /**

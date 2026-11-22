@@ -176,6 +176,14 @@ internal class PlaybackAudioFocus(
         duckTimeoutJob = null
     }
 
+    /**
+     * R8-5：交叉淡化开始时取消 DUCK 超时兜底，避免 30s 到点无条件写 volume=1f
+     * 与淡化 ramp 的逐帧音量写入打架（听感音量跳变）。淡化自身会管理双方音量。
+     */
+    internal fun cancelDuckTimeoutForCrossfade() {
+        cancelDuckTimeout()
+    }
+
     /** 包内可见：单测直接驱动焦点变化，不必经 ShadowAudioManager。 */
     internal fun dispatchFocusChange(change: Int) = controller.onFocusChange(change)
 

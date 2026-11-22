@@ -90,14 +90,17 @@ fun SettingsScreen(
             SwitchRow(label = stringResource(R.string.pt_settings_006), checked = s.resumeOnStart) { vm.setResumeOnStart(it) }
             // 交叉淡化（Crossfade）：0 = 关；1~12 秒，步长 500ms。
             // 仅常规格式生效；APE 等需转码格式在边界退化为无缝/曲间停顿。
+            val crossfadeOffText = stringResource(R.string.pt_settings_008)
             SliderRow(
                 label = stringResource(R.string.pt_settings_007),
                 value = s.crossfadeMs.toFloat(),
                 valueRange = 0f..PureToneSettings.CROSSFADE_MAX_MS.toFloat(),
                 steps = (PureToneSettings.CROSSFADE_MAX_MS / 500) - 1,
-                    valueText = if (s.crossfadeMs <= 0) stringResource(R.string.pt_settings_008)
-                        else "%.1fs".format(s.crossfadeMs / 1000f),
-                onValueChange = { vm.setCrossfadeMs(it.toInt()) }
+                valueText = { ms ->
+                    if (ms <= 0f) crossfadeOffText
+                    else String.format(Locale.US, "%.1fs", ms / 1000f) // R8-13：锁 Locale.US
+                },
+                onValueChangeFinished = { vm.setCrossfadeMs(it.toInt()) }
             )
 
             // 倍速 / 睡眠定时：单行分段控件，切换与显示方式同主题分段
@@ -327,8 +330,8 @@ fun SettingsScreen(
                         valueRange = PureToneSettings.RG_PREAMP_MIN_DB..PureToneSettings.RG_PREAMP_MAX_DB,
                         steps = PureToneSettings.RG_PREAMP_STEPS, // 49 个离散点覆盖 24 dB，步长恰为 0.5 dB
                         // dB 是国际单位符号无需翻译；显式 Locale.US 保证小数分隔符恒为「.」
-                        valueText = String.format(Locale.US, "%.1f dB", s.replayGainPreampDb),
-                        onValueChange = { vm.setReplayGainPreamp(it) }
+                        valueText = { db -> String.format(Locale.US, "%.1f dB", db) },
+                        onValueChangeFinished = { vm.setReplayGainPreamp(it) }
                     )
                     Text(
                         stringResource(R.string.pt_settings_043),

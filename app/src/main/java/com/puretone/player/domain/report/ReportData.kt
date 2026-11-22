@@ -62,6 +62,15 @@ data class ReportData(
     val peakHour: Int
         get() = hourDistribution.maxByOrNull { it.plays }?.takeIf { it.plays > 0 }?.hour ?: -1
 
-    /** 是否「深夜听众」（峰值落在 0-5 点） */
-    val isNightOwl: Boolean get() = peakHour in 0..5
+    /** 是否「深夜听众」（峰值落在深夜档）——第七轮 B5：与深夜占比、时段档共用同一权威口径 */
+    val isNightOwl: Boolean get() = peakHour in NIGHT_HOURS
+
+    companion object {
+        /**
+         * 深夜小时集合（23 点 + 0-4 点，共 6 小时）——「深夜档 / 夜猫子」唯一权威口径。
+         * 第七轮 B5 前，时段档用 {23,0..4}、nightSharePct 用 {23,0,1}、isNightOwl 用 0..5，
+         * 三套并存导致同一份报告「夜猫子」与「主场深夜」自相矛盾；现统一于此。
+         */
+        val NIGHT_HOURS: Set<Int> = ((23..23) + (0..4)).toSet()
+    }
 }

@@ -281,7 +281,7 @@ class LibraryViewModel @Inject constructor(
      * 匹配不到任何歌曲时仍给出明确提示，不静默失败。
      */
     fun importM3u(uri: Uri) = viewModelScope.launch(ceh) {
-        _m3uMessage.value = UiMessage.Raw(importM3uUseCase(uri))
+        _m3uMessage.value = importM3uUseCase(uri)
     }
 
     /** 把歌单导出为 .m3u 到应用外部目录（免权限） */

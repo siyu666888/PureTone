@@ -255,6 +255,13 @@ internal class CastSessionController(
      */
     private fun routeSessionToCast(toCast: Boolean) {
         if (toCast == routedToCast) return
+        // R8-4：淡化换主后 onFinalize 只把 session 指向新主、未重建门面；
+        // 此时 castPlayer 仍包着 bind 时的旧主（已降级为备援、队列被清空）。
+        // 每次切到投屏都用当前活跃 player 重建门面，确保通知栏/锁屏读到正确队列。
+        if (toCast) {
+            val live = playerProvider()
+            if (live != null) castPlayer = CastPlaybackPlayer(live, this)
+        }
         val target = if (toCast) castPlayer else playerProvider()
         val s = sessionProvider()
         if (target == null || s == null) return

@@ -19,7 +19,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -195,11 +195,17 @@ fun PlayerScreen(
                 onFlippedChange = { coverFlipped = it },
                 backContent = {
                     // P2-10：进度在这个 lambda 作用域内收集——重组范围被限制在歌词面板，
-                    // 不会带着封面/按钮/队列一起每 500ms 重组
-                    val lyricPositionMs by vm.positionMs.collectAsStateWithLifecycle()
+                    // 不会带着封面/按钮/队列一起每 500ms 重组。
+                    // R8-14：仅在歌词面翻转可见时才收集进度，避免封面正面时 ~2Hz 无效重组。
+                    var lyricPos by remember { mutableIntStateOf(0) }
+                    if (coverFlipped) {
+                        LaunchedEffect(Unit) {
+                            vm.positionMs.collect { lyricPos = it.toInt() }
+                        }
+                    }
                     LyricsFace(
                         lyrics = lyrics,
-                        positionMs = lyricPositionMs,
+                        positionMs = lyricPos.toLong(),
                         fontSizeSp = lyricFontSize,
                         onFontSize = { lyricFontSize = it }
                     )
@@ -382,9 +388,8 @@ fun PlayerScreen(
                             .fillMaxWidth()
                             .heightIn(max = 400.dp)
                     ) {
-                        // 用 QueueEntry.key 作稳定 key（同一首歌可多次入队，位置索引不稳定）
-                        items(state.queue, key = { it.key }) { q ->
-                            val idx = state.queue.indexOf(q)
+                        // R8-15：直接取框架索引，避免每行 indexOf 全队列线性查找（O(n²)）
+                        itemsIndexed(state.queue, key = { _, q -> q.key }) { idx, q ->
                             ReorderableItem(reorderableState, key = q.key) { _ ->
                                 QueueRow(
                                     entry = q,

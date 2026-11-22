@@ -5,15 +5,13 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
 /**
  * [ReportPeriod] 周期边界纯函数单测（需求4 阶段1）。
  *
- * 覆盖：本地时区日期键、周一始完整周、闰年二月、跨年月份、完整年、尾部窗口、
+ * 覆盖：本地时区日期键、周一始完整周、闰年二月、跨年月份、完整年、
  * 相邻周期首尾严丝合缝、count 入参校验。固定 Asia/Shanghai 时区，规避 CI 机器时区漂移。
  */
 class ReportPeriodTest {
@@ -96,18 +94,6 @@ class ReportPeriodTest {
         assertEquals(LocalDate.of(2023, 12, 31), end.toLocalDate())
         assertEquals(23, end.hour)
         assertEquals("2023-01-01", y.label)
-    }
-
-    @Test
-    fun `trailingWindow 按天数回推且为闭区间`() {
-        val now = at("2024-06-01T08:00:00+08:00")
-        val win = ReportPeriod.trailingWindow(400, now, shanghai)
-        val expectedStart = now - 400L * 24 * 60 * 60 * 1000
-        assertEquals(expectedStart, win.start)
-        assertEquals(now, win.end)
-        assertTrue(win.contains(now))
-        assertTrue(win.contains(expectedStart))
-        assertFalse("起点前一毫秒不应包含", win.contains(expectedStart - 1))
     }
 
     @Test

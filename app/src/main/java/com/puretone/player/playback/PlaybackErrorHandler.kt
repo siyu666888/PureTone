@@ -50,17 +50,23 @@ internal class PlaybackErrorHandler(
         // 按队列内索引记忆重试资格：同一索引只自动转码重试一次，防止
         // 「出错 → 转码 → 再出错 → 再转码」死循环。写法保持「判断 + 占位」原子完成。
         if (entry != null && entry.isApe && gate.tryAcquireApeRetry(index)) {
+            // R8-1：取代次快照（不取代次，避免作废其他在途命令）；转码恢复后须确认队列未变。
+            val generation = gate.currentGeneration()
+            val wasPlaying = p.isPlaying // R8-6 同类：转码期间用户暂停意图
             scope.launch {
                 // 转码失败/取消的语义统一由 apeResolver 处理（finally 复位标记，
                 // 异常收敛为 null，取消原样抛出），此处只负责结果分支。
                 val wav = apeResolver.transcodeToFile(entry.songId, entry.filePath)
+                // R8-1/R8-2：代次已变（换队列/淡化换主）则放弃，并对当前活跃 player 操作
+                if (!gate.isCurrent(generation)) return@launch
+                val live = playerProvider() ?: return@launch
                 if (wav != null) {
                     queueOrchestrator.replaceMediaItemUri(index, wav)
-                    p.prepare()
-                    p.play()
+                    live.prepare()
+                    if (wasPlaying) live.play() else live.pause()
                 } else {
                     uiState.update { it.copy(error = "「${entry.title}」APE 转码失败，已跳过") }
-                    if (p.hasNextMediaItem()) p.seekToNextMediaItem() else stop()
+                    if (live.hasNextMediaItem()) live.seekToNextMediaItem() else stop()
                 }
             }
             return

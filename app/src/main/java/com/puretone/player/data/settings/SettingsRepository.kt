@@ -440,7 +440,10 @@ class SettingsRepository @Inject constructor(
     suspend fun setEqEnabled(enabled: Boolean) = edit { it[Keys.eqEnabled] = enabled }
     suspend fun setEqPreset(preset: String) = edit { it[Keys.eqPreset] = preset }
     suspend fun setEqBandLevels(levels: List<Int>) = edit {
-        it[Keys.eqBandLevels] = levels.joinToString(",")
+        // R8-12：段数不符则拒写，避免脏串让 decodeBands 整体判 null、曲线静默回退默认
+        if (levels.size == PureToneSettings.EQ_BAND_COUNT) {
+            it[Keys.eqBandLevels] = levels.joinToString(",")
+        }
     }
 
     /**
@@ -464,8 +467,11 @@ class SettingsRepository @Inject constructor(
 
     /** 均衡器预设应用（频段 + 强度一次写入） */
     suspend fun applyEqPreset(preset: String, bandLevels: List<Int>) = edit {
-        it[Keys.eqPreset] = preset
-        it[Keys.eqBandLevels] = bandLevels.joinToString(",")
+        // R8-12：段数不符则整笔拒写（预设与频段须一致，避免半截状态）
+        if (bandLevels.size == PureToneSettings.EQ_BAND_COUNT) {
+            it[Keys.eqPreset] = preset
+            it[Keys.eqBandLevels] = bandLevels.joinToString(",")
+        }
     }
 
     /**

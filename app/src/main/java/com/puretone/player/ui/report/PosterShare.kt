@@ -8,8 +8,8 @@ import com.puretone.player.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
@@ -26,12 +26,14 @@ object PosterShare {
 
     private const val AUTHORITY_SUFFIX = ".fileprovider"
     private const val POSTER_DIR = "posters"
+    /** D5：线程安全且无构造开销；D3：精确到毫秒避免同一秒内两次分享覆盖同文件 */
+    private val TS_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS")
 
     /** 渲染并写入 [Context.getCacheDir]/posters/，返回文件（IO 线程执行，不阻塞 UI） */
     suspend fun renderToFile(context: Context, content: PosterContent, theme: PosterTheme): File {
         val bitmap = withContext(Dispatchers.IO) { PosterRenderer.render(content, theme) }
         val dir = File(context.cacheDir, POSTER_DIR).apply { mkdirs() }
-        val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val ts = LocalDateTime.now().format(TS_FMT)
         val file = File(dir, "puretone_report_${content.data.type.name.lowercase(Locale.US)}_$ts.png")
         withContext(Dispatchers.IO) {
             file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }

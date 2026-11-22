@@ -230,4 +230,26 @@ class PlaybackCommandGateTest {
         assertNull(drained.play)
         assertTrue(drained.restore)
     }
+
+    @Test
+    fun `R8-1 错误重试取代次快照后结构变化使快照失效`() {
+        val gate = PlaybackCommandGate()
+        gate.nextGeneration()
+        // APE 错误重试取代次快照（不递增，避免作废其他在途命令）
+        val snap = gate.currentGeneration()
+        assertTrue("快照当下有效", gate.isCurrent(snap))
+        // 淡化换主 / 换队列触发结构变化 → 挂起中的重试恢复后须放弃
+        gate.onQueueStructureChanged()
+        assertFalse("结构变化后旧快照须失效", gate.isCurrent(snap))
+        assertFalse("currentGeneration 只读不递增", gate.isCurrent(snap))
+    }
+
+    @Test
+    fun `R8-2 currentGeneration只读不递增而onQueueStructureChanged递增`() {
+        val gate = PlaybackCommandGate()
+        val g0 = gate.currentGeneration()
+        assertEquals("只读快照不改变代次", g0, gate.currentGeneration())
+        gate.onQueueStructureChanged()
+        assertEquals("结构变化令代次+1", g0 + 1, gate.currentGeneration())
+    }
 }

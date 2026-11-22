@@ -11,7 +11,7 @@ import kotlin.math.abs
  *
  * 全部从已有 [ReportData] 纯计算，**不新增 DAO 查询、不联网、不引入新数据**：
  * - 时段分布条：把 0-23 时播放次数折成 4 段（清晨/午后/晚间/深夜），宽度即占比；
- * - 深夜占比：23/0/1 点播放数占总播放的百分比，供「行为画像」金句使用；
+ * - 深夜占比：深夜档（23 + 0-4 点，见 [ReportData.NIGHT_HOURS]）播放数占总播放的百分比，供「行为画像」金句使用；
  * - 日均 / 最长连续：听歌时长除以活跃天数、日趋势里连续有播放的最长天数；
  * - 绝对环比差：本周期与上周期听歌时长之差（毫秒，可为负）；
  * - 日历热力：整月每日按听歌时长相对峰值的 4 档色阶（0=无播放）。
@@ -33,10 +33,8 @@ object ReportInsights {
         Band(1, (5..10).toSet()),
         Band(2, (11..16).toSet()),
         Band(3, (17..22).toSet()),
-        Band(4, ((23..23) + (0..4)).toSet())
+        Band(4, ReportData.NIGHT_HOURS)
     )
-
-    private val NIGHT_HOURS = setOf(23, 0, 1)
 
     /** 4 段时段占比；无播放时每段 share=0（调用方据此画等宽空条） */
     fun timeSegments(data: ReportData): List<TimeSegment> {
@@ -57,7 +55,7 @@ object ReportInsights {
     fun nightSharePct(data: ReportData): Int {
         val total = data.hourDistribution.sumOf { it.plays }
         if (total <= 0) return 0
-        val night = data.hourDistribution.filter { it.hour in NIGHT_HOURS }.sumOf { it.plays }
+        val night = data.hourDistribution.filter { it.hour in ReportData.NIGHT_HOURS }.sumOf { it.plays }
         return ((night.toDouble() / total.toDouble()) * 100).toInt().coerceIn(0, 100)
     }
 
@@ -73,7 +71,7 @@ object ReportInsights {
     fun longestStreak(data: ReportData): Int {
         val activeDates = data.dailyTrend
             .filter { it.plays > 0 }
-            .mapNotNull { runCatching { LocalDate.parse(it.dayKey) }.getOrNull() }
+            .map { LocalDate.parse(it.dayKey) } // D4：直接解析，脏数据须暴露而非静默吞掉
             .sorted()
             .distinct()
         var best = 0
@@ -111,10 +109,9 @@ object ReportInsights {
         if (data.type != PeriodType.MONTH) return emptyList()
         val first = Instant.ofEpochMilli(data.rangeStart).atZone(zoneId).toLocalDate()
         val ym = YearMonth.of(first.year, first.month)
-        val byDay = data.dailyTrend.mapNotNull { row ->
-            val day = runCatching { LocalDate.parse(row.dayKey).dayOfMonth }.getOrNull()
-            day?.let { it to row.listenMs }
-        }.toMap()
+        val byDay = data.dailyTrend.associate { row ->
+            LocalDate.parse(row.dayKey).dayOfMonth to row.listenMs // D4：直接解析，空/脏 dayKey 须暴露
+        }
         val peak = byDay.values.maxOrNull()?.takeIf { it > 0 } ?: 0L
         return (1..ym.lengthOfMonth()).map { day ->
             val ms = byDay[day] ?: 0L

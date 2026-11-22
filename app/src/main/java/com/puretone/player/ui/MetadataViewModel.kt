@@ -133,8 +133,8 @@ class MetadataViewModel @Inject constructor(
                 is AutoFillMetadataUseCase.AutoFillResult.Applied -> {
                     lastAutoFilled = r.original
                     _canUndoAutoFill.value = true
-                    // 候选标题为用户内容（可能含 % 等特殊字符），保持 Raw 避免 format 崩溃
-                    _message.value = UiMessage.Raw("已自动填充：「${r.candidate.title}」")
+                    // R8-16：前缀资源化；候选标题作 %1$s 占位符参数，内容含 % 不会被二次 format 解析
+                    _message.value = UiMessage.Res(R.string.pt_meta_014, listOf<Any>(r.candidate.title))
                     _results.value = emptyList()
                     _searching.value = false
                     onApplied(r.candidate)
@@ -177,8 +177,8 @@ class MetadataViewModel @Inject constructor(
                 _message.value = UiMessage.Res(R.string.pt_meta_005)
                 onUndone(original)
             }.onFailure {
-                // 异常 message 为动态内容，保持 Raw
-                _message.value = UiMessage.Raw("撤销失败：${it.message}")
+                // R8-16：前缀资源化，异常 message 作占位符参数
+                _message.value = UiMessage.Res(R.string.pt_meta_015, listOf<Any>(it.message ?: ""))
             }
         }
     }
@@ -188,14 +188,14 @@ class MetadataViewModel @Inject constructor(
         viewModelScope.launch {
             applyCandidateUseCase(songId, candidate)
                 .onSuccess {
-                    // 候选标题为用户内容，保持 Raw
-                    _message.value = UiMessage.Raw("已更新为「${candidate.title}」")
+                    // R8-16：前缀资源化，候选标题作占位符参数
+                    _message.value = UiMessage.Res(R.string.pt_meta_016, listOf<Any>(candidate.title))
                     _results.value = emptyList()
                     onApplied(candidate)
                 }
                 .onFailure {
-                    // 异常 message 为动态内容，保持 Raw
-                    _message.value = UiMessage.Raw("更新失败：${it.message}")
+                    // R8-16：前缀资源化，异常 message 作占位符参数
+                    _message.value = UiMessage.Res(R.string.pt_meta_017, listOf<Any>(it.message ?: ""))
                 }
         }
     }

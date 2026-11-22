@@ -83,6 +83,12 @@ internal class PlaybackCommandGate {
      */
     fun nextGeneration(): Int = ++generation
 
+    /**
+     * 只读当前代次快照（不递增）——供「不取代次、只需跨挂起点自检」的任务用，
+     * 例如 APE 播放错误重试：它不该作废其他在途命令，但恢复后须确认队列未变（R8-1）。
+     */
+    fun currentGeneration(): Int = generation
+
     /** 命令是否仍是最新的（挂起点之后自检用） */
     fun isCurrent(generation: Int): Boolean = generation == this.generation
 

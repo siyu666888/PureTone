@@ -155,6 +155,29 @@ class PosterRendererTest {
         }
     }
 
+    /** 确定性测量：每个字符（含省略号）宽 10px，便于纯 JVM 精确断言折行 */
+    private val charMeasure: (String) -> Float = { it.length * 10f }
+
+    @Test
+    fun `B1 超长金句折行保留三行且末行省略号无静默丢字`() {
+        val maxW = 50f // 每行 5 字
+        val text = "听歌画像行为金句真的非常非常长超过三行".repeat(3)
+        val lines = PosterRenderer.wrapTextByWidth(text, maxW, charMeasure)
+
+        assertEquals("长文本须恰好 3 行", 3, lines.size)
+        assertTrue("前两行拼接须是原串前缀", text.startsWith(lines[0] + lines[1]))
+        assertTrue("第 3 行须以省略号结尾（提示截断，非静默丢字）", lines[2].endsWith("…"))
+        for (line in lines) assertTrue("每行宽度不得超 maxW", charMeasure(line) <= maxW + 1f)
+    }
+
+    @Test
+    fun `B1 短金句不折行且不加省略号`() {
+        val lines = PosterRenderer.wrapTextByWidth("今天Loop得比昨天久", 800f, charMeasure)
+        assertEquals("短文本单行", 1, lines.size)
+        assertEquals("短文本原样返回", "今天Loop得比昨天久", lines[0])
+        assertFalse("不应加省略号", lines[0].endsWith("…"))
+    }
+
     @Test
     fun `A4 时段条空数据判据仅在全零时为真`() {
         val seg = { label: String, share: Float, level: Int ->
