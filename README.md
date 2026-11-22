@@ -319,6 +319,7 @@ scripts/collect-baseline-profile.sh <device-serial>
 | **v2.0.1** | **第五轮/第六轮复审 19 条落地**：投屏网络所有权同步化 / HTTP 请求行长上限 / 日志串行化 / 同步计数订正 / 响度 Slider 档位 / token 淘汰竞态 / 联网封面 URL 白名单 / 歌单快照直查 / 主源码 `!!` 清零 / CI 供应链最小权限 + Action 固定 SHA；同步抑制提示接线、专辑分组 key 收敛、ReportFormat 五函数补直接断言、诊断导出移出主线程、**周角标「周所属年」口径修正**；三次远端 CI 26/26 全绿，5 项资产 Release。详见 `dist/archive/v2.0.1/ReleaseNotes-v2.0.1.md` |
 | **v2.0.2** | **听歌报告 V2「声色叙事」改造**：新增配色单一真源 `ReportPalette` + 数据派生层 `ReportInsights`，周报面积折线/时段条/行为金句/绝对差、月报声音日历热力/周柱/日均/最长连续，海报画幅 1080×2016；**主题随 App 自动切换**（删手动按钮）、页脚改「PureTone·纯净之音」、设置页删 4 处底部说明；合并 PR #26 **区间文案跨年补年 + 月份补零**。114 类/1142 例全绿，远端 CI 26/26，5 项资产 Release。详见 `dist/archive/v2.0.2/ReleaseNotes-v2.0.2.md` |
 | **v2.0.3** | **代码质量工作线**（纯重构 + 测试加固，无新功能）：`PosterRenderer` 先测量后布局，极端满配月报保留全部 3 首 Top 且绝不裁切；抽 `isTimeBarEmpty`/`wifiBoundText`/泛型 `pickWifiNetwork` 等纯函数，B5 双网卡选网路由可测（active 优先/cellular 兜底，变异验证非假绿灯）；新增 4 个测试类。118 类/1169 例全绿（较上版 +4 类/+27 例），远端 CI 26/26，5 项资产 Release。详见 `dist/archive/v2.0.3/ReleaseNotes-v2.0.3.md` |
+| **v2.0.4** | **第七/八轮代码审查 26 条修复**：金句折行/海报 `fits` 断言/深夜口径单一真源；播放核心跨转码挂起点代次自检 + 重取 player、单曲循环禁淡化、换主重建投屏门面、DUCK 超时与淡化互斥（变异验证 4/4 变红）；M3U UTF-8 解码 + 1MiB 上限 + 导出失败返 null、SAF 校验挪 IO；滑杆松手落库、歌词按翻面收集、消息资源化。118 类/1176 例全绿，三次远端 CI 26/26，18/18 硬校验 + 远端 digest 5/5，5 项资产 Release。详见 `dist/archive/v2.0.4/ReleaseNotes-v2.0.4.md` |
 
 ---
 
