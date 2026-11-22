@@ -9,12 +9,11 @@ import com.puretone.player.domain.report.ReportInsights
 import com.puretone.player.domain.report.ReportTrend
 import com.puretone.player.ui.report.PosterContent
 import com.puretone.player.ui.report.PosterTheme
-import java.text.SimpleDateFormat
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.temporal.WeekFields
-import java.util.Date
 import java.util.Locale
 
 /**
@@ -219,7 +218,7 @@ object ReportFormat {
 
     /** 把 [ReportData] 组装成 [PosterContent]（所有文案本地化完成） */
     fun toPosterContent(context: Context, data: ReportData): PosterContent {
-        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)) // D5
         // 年报维持 V1 骨架，V2 新模块（时段条/热力/绝对差）只对周/月生效
         val isV2 = data.type != PeriodType.YEAR
         val timeSegments = if (isV2) buildTimeSegments(context, data) else emptyList()

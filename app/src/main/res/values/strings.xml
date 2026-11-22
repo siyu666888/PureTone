@@ -658,6 +658,11 @@
     <string name="pt_meta_011" formatted="false">没有需要补全封面的歌曲</string>
     <!-- 封面补全完成，%1$d 已补全 / %2$d 总数 / %3$d 剩余 -->
     <string name="pt_meta_012" formatted="true">封面补全完成：%1$d / %2$d 首（剩余 %3$d 首未补全）</string>
+    <!-- R8-16：消息前缀资源化，%1$s 用户内容只作占位符替换、不会被二次 format 解析 -->
+    <string name="pt_meta_014" formatted="true">已自动填充：「%1$s」</string>
+    <string name="pt_meta_015" formatted="true">撤销失败：%1$s</string>
+    <string name="pt_meta_016" formatted="true">已更新为「%1$s」</string>
+    <string name="pt_meta_017" formatted="true">更新失败：%1$s</string>
     <!-- 播放事件记录段落标题（%1$s 为日志文件名） -->
     <string name="pt_diag_021" formatted="true">---- 播放事件记录 (%1$s) ----</string>
     <!-- 播放事件记录为空时的占位 -->

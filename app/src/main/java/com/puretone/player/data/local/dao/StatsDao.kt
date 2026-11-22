@@ -119,6 +119,8 @@ interface StatsDao {
     /**
      * 周期窗内每日听歌时长与播放次数（按预存 [day_key] 聚合，升序）。
      * 复用 [DailyTrendRow]（dayKey/listenMs/plays）。周报即 7 根柱。
+     * R8-9：过滤空 day_key（v7→v8 迁移行），与 periodSummary.activeDays 口径一致——
+     * 老数据仍计入主数字但不进趋势/热力/连续天数，避免图表与主数字求和不一致。
      */
     @Query(
         """
@@ -127,6 +129,7 @@ interface StatsDao {
                COUNT(*) AS plays
         FROM play_history
         WHERE played_at BETWEEN :start AND :end
+          AND day_key <> ''   -- R8-9/D4：迁移行空 day_key 不进图，与 periodSummary.activeDays 口径对齐
         GROUP BY day_key
         ORDER BY day_key ASC
         """

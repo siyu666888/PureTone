@@ -22,6 +22,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -207,6 +210,9 @@ internal fun SwitchRow(label: String, checked: Boolean, enabled: Boolean = true,
  * 用于 ReplayGain 补偿（dB）这类连续值设置。行高统一 55dp。
  *
  * [valueRange] 用 Kotlin 区间表达；[steps] 为离散档位数（不含两端）。
+ *
+ * R8-13：拖动过程只改本地态、松手才通过 [onValueChangeFinished] 落库，
+ * 避免每次离散档位都写 DataStore 并触发播放器整包重配（照搬 EqScreen P1-5 模式）。
  */
 @Composable
 internal fun SliderRow(
@@ -215,9 +221,11 @@ internal fun SliderRow(
     valueRange: ClosedFloatingPointRange<Float>,
     steps: Int = 0,
     enabled: Boolean = true,
-    valueText: String,
-    onValueChange: (Float) -> Unit
+    valueText: (Float) -> String,
+    onValueChangeFinished: (Float) -> Unit
 ) {
+    var dragging by remember { mutableFloatStateOf(Float.NaN) } // NaN = 未在拖动
+    val shown = if (dragging.isNaN()) value else dragging
     Row(
         modifier = Modifier.fillMaxWidth().height(SETTINGS_ROW_HEIGHT),
         verticalAlignment = Alignment.CenterVertically,
@@ -229,15 +237,19 @@ internal fun SliderRow(
             color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
         )
         Slider(
-            value = value,
-            onValueChange = onValueChange,
+            value = shown,
+            onValueChange = { dragging = it },
+            onValueChangeFinished = {
+                if (!dragging.isNaN()) onValueChangeFinished(dragging)
+                dragging = Float.NaN
+            },
             valueRange = valueRange,
             steps = steps,
             enabled = enabled,
             modifier = Modifier.weight(1f)
         )
         Text(
-            valueText,
+            valueText(shown),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp)

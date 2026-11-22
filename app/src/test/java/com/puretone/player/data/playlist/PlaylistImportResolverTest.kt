@@ -108,4 +108,13 @@ class PlaylistImportResolverTest {
         val result = PlaylistImportResolver.resolve(entries, library)
         assertEquals(listOf(1L), result.map { it.id })
     }
+
+    @Test
+    fun `R8-7 多字节UTF-8中文路径解码后匹配而非乱码`() {
+        // 歌 = UTF-8 %E6%AD%8C；旧实现逐 %XX 转 Char 会得到三个 Latin-1 乱码字符，匹配全失效
+        val library = listOf(song(1, "/音乐/歌.mp3"), song(2, "/Music/other.mp3"))
+        val entries = listOf(M3uEntry("file:///%E9%9F%B3%E4%B9%90/%E6%AD%8C.mp3"))
+        val result = PlaylistImportResolver.resolve(entries, library)
+        assertEquals(listOf(1L), result.map { it.id })
+    }
 }

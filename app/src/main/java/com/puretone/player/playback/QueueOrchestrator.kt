@@ -75,7 +75,7 @@ internal class QueueOrchestrator(
         startPositionMs: Long,
         autoPlay: Boolean
     ) {
-        val p = playerProvider() ?: return
+        if (playerProvider() == null) return // R8-2：挂起后重取 player，此处只做服务就绪早退检查
         if (songs.isEmpty()) return
         // P1-3：本次「设置队列」命令的代次。下面 APE 转码会挂起（长曲可达数十秒），
         // 期间用户完全可能又点了别的歌；本协程恢复后若发现代次已被后来的命令刷新，
@@ -113,6 +113,9 @@ internal class QueueOrchestrator(
 
         // 挂起点（APE 转码）之后重新确认自己仍是「最新」的队列命令
         if (!gate.isCurrent(generation)) return
+        // R8-2：代次没变但淡化换主可能已发生（onFinalize 不取自已号），
+        // 必须重取当前活跃 player，否则会把媒体项写进已被降级/清空的旧主。
+        val live = playerProvider() ?: return
 
         // P2-14：新队列生效前复位 APE 重试标记——它是按「队列内索引」记的，
         // 旧队列 index=2 的 APE 重试过一次，新队列同样 index=2 的 APE
@@ -121,11 +124,11 @@ internal class QueueOrchestrator(
         // 把本协程刚取的号弄失效、导致下面全部写入被跳过。
         gate.resetApeRetry()
 
-        p.setMediaItems(mediaItems, startIndex, startPositionMs)
-        p.prepare()
+        live.setMediaItems(mediaItems, startIndex, startPositionMs)
+        live.prepare()
         // 投屏态不起播本地：这里只是重建「镜像队列」，出声的是随后重新投送的渲染器。
         // 否则手机与电视同时出声，且电视仍停在旧曲上。
-        if (dlnaCast.state.value.isCasting) p.pause() else if (autoPlay) p.play() else p.pause()
+        if (dlnaCast.state.value.isCasting) live.pause() else if (autoPlay) live.play() else live.pause()
         uiState.update {
             it.copy(
                 queue = entries,
@@ -200,20 +203,30 @@ internal class QueueOrchestrator(
         // 改为标记「待恢复会话」，服务起来后由 bind() 真正恢复上次队列。
         val p = playerProvider() ?: run { gate.pendRestore(); serviceLauncher.ensureStarted(); return }
         if (index !in uiState.value.queue.indices) return
+        // R8-6：挂起前记录用户播放意图，转码恢复后据此决定 play/pause，覆盖转码中的暂停意图
+        val wasPlaying = p.isPlaying
+        // R8-1：本命令取代次；APE 转码可挂起数十秒，恢复后须自检，否则会劫持换主/换队后的新队列
+        val generation = gate.nextGeneration()
         scope.launch {
-            val entry = uiState.value.queue[index]
+            val entry = uiState.value.queue.getOrNull(index) ?: return@launch
             if (entry.isApe) {
                 apeResolver.transcodeToFile(entry.songId, entry.filePath)
                     ?.let { replaceMediaItemUri(index, it) }
             }
-            p.seekTo(index, 0L)
-            p.prepare()
+            // R8-1/R8-2：跨挂起点后代次已变（换队列/淡化换主）即放弃，并重取当前 player，
+            // 避免把旧 URI 写进新队列、或对已被换主降级的旧播放器 seek/play
+            if (!gate.isCurrent(generation)) return@launch
+            val live = playerProvider() ?: return@launch
+            live.seekTo(index, 0L)
+            live.prepare()
             if (dlnaCast.state.value.isCasting) {
                 // 投屏态不本地起播：只推进本地镜像（通知栏据此显示当前曲），
                 // 真正出声的是随后重新投送的渲染器。否则手机与电视同时出声。
-                p.pause()
+                live.pause()
+            } else if (wasPlaying) {
+                live.play()
             } else {
-                p.play()
+                live.pause() // R8-6：转码期间用户已暂停 → 恢复后不擅自出声
             }
             sink.recastCurrentIfCasting()
         }

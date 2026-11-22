@@ -166,6 +166,15 @@ internal class CrossfadeCoordinator(
         val isCasting: Boolean
 
         /**
+         * 播放循环模式。R8-3：单曲循环（ONE）时淡化会把「下一首」交给备援并换主，
+         * 把用户的单曲循环悄悄改写成顺序播放——ONE 下必须禁用淡化。
+         */
+        val repeatMode: RepeatMode get() = RepeatMode.ALL
+
+        /** R8-5：淡化开始，宿主取消 DUCK 超时兜底（避免其写 volume=1f 与 ramp 打架） */
+        fun onCrossfadeStarted() {}
+
+        /**
          * 淡入结束：备援已可提升为新主。
          * 宿主负责交换主/备引用、ReplayGain 处理器、MediaSession 指向与监听器，并刷新 UI。
          */
@@ -222,6 +231,8 @@ internal class CrossfadeCoordinator(
     fun maybeStart(primary: CrossfadePlayer) {
         // 投屏守卫：投屏中本地播放器已暂停，若仍被 ticker 推进到曲尾会误触发双实例淡化。
         if (host.isCasting) return
+        // R8-3：单曲循环下淡化会把下一首交给备援并换主，静默把单曲循环改写为顺序播放。
+        if (host.repeatMode == RepeatMode.ONE) return
         if (crossfading) return
         val crossfadeMs = host.settings.crossfadeMs
         val duration = primary.durationMs.takeIf { it > 0 } ?: return
@@ -261,6 +272,7 @@ internal class CrossfadeCoordinator(
             ReplayGainAudioProcessor.computeLinearGain(s.replayGainEnabled, rgDb, s.replayGainPreampDb)
         )
         crossfading = true
+        host.onCrossfadeStarted() // R8-5：取消 DUCK 超时，避免其 30s 到点覆盖 ramp 音量
         outgoing = primary
         nextIndex = index
         absNextIndex = index + host.queueOffset

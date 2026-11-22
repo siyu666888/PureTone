@@ -77,9 +77,15 @@ data class PosterContent(
     val goldenText: String,
     /** 绝对环比差文案，如「比上周多 3 小时 12 分」；上一周期无数据时为空串 */
     val deltaAbsoluteText: String,
-    /** 日均听歌文案，如「日均 2 小时 32 分」（年报为空串） */
+    /**
+     * 日均听歌文案，如「日均 2 小时 32 分」（年报为空串）。
+     * B3：仅屏幕端 ReportHero 展示；海报为紧凑子集不渲染此字段（见 PosterRenderer 顶部注释）。
+     */
     val dailyAverageText: String,
-    /** 最长连续天数文案，如「最长连续 11 天」（年报为空串） */
+    /**
+     * 最长连续天数文案，如「最长连续 11 天」（年报为空串）。
+     * B3：仅屏幕端 ReportHero 展示；海报为紧凑子集不渲染此字段。
+     */
     val longestStreakText: String,
     /** 月报声音日历热力格（整月铺满，无数据日 level=0；非月报为空表） */
     val calendarCells: List<ReportInsights.CalendarCell>,

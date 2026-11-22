@@ -76,21 +76,7 @@ fun MeScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val isM3u = runCatching {
-            val name = context.contentResolver.query(uri, null, null, null, null)
-                ?.use { c ->
-                    if (c.moveToFirst()) {
-                        c.getString(c.getColumnIndexOrThrow(android.provider.OpenableColumns.DISPLAY_NAME))
-                    } else {
-                        ""
-                    }
-                } ?: ""
-            name.endsWith(".m3u", ignoreCase = true) || name.endsWith(".m3u8", ignoreCase = true)
-        }.getOrDefault(false)
-        if (!isM3u) {
-            Toast.makeText(context, context.getString(R.string.pt_me_001), Toast.LENGTH_SHORT).show()
-            return@rememberLauncherForActivityResult
-        }
+        // R8-17：扩展名校验移入 ImportM3uPlaylistUseCase（IO 协程内），主线程回调只传 uri
         libVm.importM3u(uri)
     }
 

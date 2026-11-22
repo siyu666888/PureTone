@@ -616,7 +616,10 @@ class MusicRepository @Inject constructor(
             .replace("%", "\\%")
             .replace("_", "\\_")
 
-        /** 播放历史保留约 400 天（决策点：原 365 天 → 放宽到 400 天，覆盖更长年度趋势） */
+        /**
+         * 播放历史保留约 400 天（决策点：原 365 天 → 放宽到 400 天，覆盖更长年度趋势）。
+         * 第七轮 D1：这是 400 天保留期的唯一权威定义（原 ReportPeriod.HISTORY_RETENTION_DAYS 死代码已删）。
+         */
         const val HISTORY_RETENTION_MS = 400L * 24 * 60 * 60 * 1000
 
         /** 过期历史清理的最小间隔（P3-19）：1 小时 */

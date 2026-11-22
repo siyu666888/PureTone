@@ -210,6 +210,8 @@ class PlaybackManager @Inject constructor(
             override val settings: PureToneSettings get() = lastSettings
             override val queue: List<QueueEntry> get() = _uiState.value.queue
             override val isCasting: Boolean get() = dlnaCast.state.value.isCasting
+            override val repeatMode: RepeatMode get() = _uiState.value.repeatMode // R8-3
+            override fun onCrossfadeStarted() { playbackFocus.cancelDuckTimeoutForCrossfade() } // R8-5
 
             override fun onFinalize(newPrimary: CrossfadePlayer, outgoing: CrossfadePlayer, nextIndex: Int) {
                 val sec = (newPrimary as? ExoCrossfadePlayer)?.exo ?: return
@@ -237,6 +239,10 @@ class PlaybackManager @Inject constructor(
                 // 各自的播放器上，随角色一并换位）
                 val outgoingGain = replayGainProcessor
                 player = sec
+                // R8-2：换主后所有在途命令（挂起在 APE 转码中的 playAtIndex / applyQueueAndPlay /
+                // 错误重试）语义已失效——它们捕获的是旧主引用。递增代次让它们恢复后自检失败放弃，
+                // 避免把队列写进已降级为备援的旧主。必须先于后续 UI/副作用更新。
+                gate.onQueueStructureChanged()
                 replayGainProcessor = replayGainProcessorB
                 // 播放顺序 / 随机 / 倍速必须随角色一起搬家：两个 ExoPlayer 各自持有自己的
                 // repeatMode，而设置流只在 bind 后发射一次、只作用于当时的主播放器。

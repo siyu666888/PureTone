@@ -95,14 +95,20 @@ class CrossfadeCoordinatorTest {
         override var isCasting: Boolean = false,
         /** 模拟「播放器只持有剩余尾部、完整队列绝对索引需偏移」的场景（生产中恒为 0） */
         override var queueOffset: Int = 0,
+        override var repeatMode: RepeatMode = RepeatMode.ALL, // R8-3
         val callLog: MutableList<String>? = null
     ) : CrossfadeCoordinator.Host {
 
         val finalized = mutableListOf<Int>()
+        var crossfadeStartedCount = 0 // R8-5
 
         override fun onFinalize(newPrimary: CrossfadePlayer, outgoing: CrossfadePlayer, nextIndex: Int) {
             callLog?.add("onFinalize")
             finalized += nextIndex
+        }
+
+        override fun onCrossfadeStarted() { // R8-5
+            crossfadeStartedCount++
         }
     }
 
@@ -445,5 +451,31 @@ class CrossfadeCoordinatorTest {
 
         // onFinalize 收到的必须是绝对索引 3，而不是 player 空间索引 1
         assertEquals(listOf(3), host.finalized)
+    }
+
+    @Test
+    fun `R8-3 单曲循环下临近结尾也不触发淡化`() = runTest {
+        val host = FakeHost(repeatMode = RepeatMode.ONE)
+        val (coordinator, h) = coordinator(host = host)
+        coordinator.attach(FakePlayer(), ReplayGainAudioProcessor())
+        val primary = nearEndPlayer() // 已命中时间窗、有下一首
+
+        coordinator.maybeStart(primary)
+        advanceUntilIdle()
+
+        assertFalse("单曲循环不得淡化", coordinator.isCrossfading)
+        assertEquals(0, primary.removeCount)
+        assertTrue(h.finalized.isEmpty())
+        assertEquals("不应通知淡化开始", 0, h.crossfadeStartedCount)
+    }
+
+    @Test
+    fun `R8-5 淡化开始时通知宿主取消duck超时`() = runTest {
+        val (coordinator, host) = coordinator()
+        coordinator.attach(FakePlayer(), ReplayGainAudioProcessor())
+        coordinator.maybeStart(nearEndPlayer())
+        advanceUntilIdle()
+
+        assertEquals("淡化开始应回调一次", 1, host.crossfadeStartedCount)
     }
 }

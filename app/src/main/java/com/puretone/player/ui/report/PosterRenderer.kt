@@ -24,6 +24,10 @@ import com.puretone.player.domain.report.ReportTrend
  *
  * V2 模块：主数字渐变、周报面积折线+时段条、月报日历热力+周柱+时段条、
  * 行为金句洋红左边线；年报保留 V1 柱榜骨架。页脚统一「数据仅存本机」。
+ *
+ * 内容子集（第七轮 B3）：海报是屏幕端 [PosterContent] 的紧凑子集——`dailyAverageText` /
+ * `longestStreakText` 仅在屏幕 `ReportHero` 展示，海报不绘制也不预留空间（画幅上限所致，
+ * A1 已把满配月报压到 1844/1848，再插块必溢出）。文案口径与屏幕同源，但字段非全渲染。
  */
 object PosterRenderer {
 
@@ -161,6 +165,9 @@ object PosterRenderer {
             emptyList()
         }
         val layout = measureLayout(content, goldenLines)
+        // 第七轮 B2：接线 fits。A1 已把极端满配月报压到 1844 ≤ SAFE_BOTTOM 1848，
+        // 正常内容必不触发；若未来新增块导致溢出，这里以断言暴露，避免静默压住页脚。
+        check(layout.fits) { "海报内容超出安全区: ${layout.totalHeight} > $SAFE_BOTTOM" }
         val at = { name: String -> layout.blocks.first { it.name == name }.top }
 
         drawBrand(canvas, p, content, at("brand"))
@@ -232,7 +239,7 @@ object PosterRenderer {
         c.drawText(content.rangeText, MARGIN_X.toFloat(), y + 34f, paint(30f, p.ink2))
         val delta = content.deltaAbsoluteText.ifBlank { content.deltaText }
         if (delta.isNotBlank()) {
-            val dp = paint(30f, p.spectrum3, bold = true)
+            val dp = paint(30f, p.spectrum4, bold = true)
             dp.textAlign = Paint.Align.RIGHT
             c.drawText(delta, (W - MARGIN_X).toFloat(), y + 34f, dp)
         }
@@ -481,7 +488,7 @@ object PosterRenderer {
         }
         var ry = y + titleH + 8
         list.forEachIndexed { i, s ->
-            c.drawText("${i + 1}", innerX.toFloat(), ry + 44f, paint(40f, p.spectrum3, bold = true))
+            c.drawText("${i + 1}", innerX.toFloat(), ry + 44f, paint(40f, p.spectrum4, bold = true))
             val title = ellipsize(paint(30f, p.ink), s.title, (CONTENT_W - 120).toFloat())
             c.drawText(title, (innerX + 60).toFloat(), ry + 38f, paint(30f, p.ink))
             val sub = ellipsize(paint(22f, p.ink2), "${s.artist} · ${s.playCount} 次", (CONTENT_W - 120).toFloat())
@@ -544,25 +551,42 @@ object PosterRenderer {
         return "$s…"
     }
 
-    /** 按宽度折行（中文逐字断行），供金句使用；上限 3 行防溢出 */
-    private fun wrapText(p: Paint, text: String, maxW: Float): List<String> {
-        val out = mutableListOf<String>()
-        var line = StringBuilder()
-        for (ch in text) {
-            val next = line.toString() + ch
-            if (p.measureText(next) > maxW && line.isNotEmpty()) {
-                out += line.toString()
-                line = StringBuilder(ch.toString())
-                if (out.size >= 2) break
-            } else {
-                line.append(ch)
+    /**
+     * 按宽度折行（中文逐字断行），供金句使用；上限 3 行防溢出。
+     * 第七轮 B1：前两行贪心切满，第 3 行并入全部剩余并省略号截断。
+     * 旧实现推满第 2 行就 break，导致第 3 行只剩溢出的单个字符、其后文字静默丢失且无省略号。
+     */
+    internal fun wrapText(p: Paint, text: String, maxW: Float): List<String> =
+        wrapTextByWidth(text, maxW) { p.measureText(it) }
+
+    /**
+     * 折行核心纯函数：[measure] 由调用方注入（生产传 Paint::measureText，测试传确定性函数），
+     * 使折行/省略号逻辑可在纯 JVM 下断言，不依赖 Robolectric 的 Paint 文本测量（其 measureText 恒为 0）。
+     */
+    internal fun wrapTextByWidth(
+        text: String,
+        maxW: Float,
+        measure: (String) -> Float
+    ): List<String> {
+        val lines = mutableListOf<String>()
+        var remaining = text
+        while (remaining.isNotEmpty() && lines.size < 2) {
+            var end = 0
+            while (end < remaining.length &&
+                measure(remaining.substring(0, end + 1)) <= maxW
+            ) end++
+            if (end == 0) end = 1 // 单字超宽也至少保留 1 字，防死循环
+            lines += remaining.substring(0, end)
+            remaining = remaining.substring(end)
+        }
+        if (remaining.isNotEmpty()) {
+            var s = remaining
+            if (measure(s) > maxW) {
+                while (s.isNotEmpty() && measure("$s…") > maxW) s = s.dropLast(1)
+                s = "$s…"
             }
+            lines += s
         }
-        if (line.isNotEmpty() && out.size < 3) {
-            var last = line.toString()
-            while (last.isNotEmpty() && p.measureText("$last…") > maxW) last = last.dropLast(1)
-            out += if (last.length < line.length) "$last…" else last
-        }
-        return out
+        return lines
     }
 }

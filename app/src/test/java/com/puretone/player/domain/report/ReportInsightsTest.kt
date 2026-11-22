@@ -3,6 +3,7 @@ package com.puretone.player.domain.report
 import com.puretone.player.data.local.dao.DailyTrendRow
 import com.puretone.player.data.local.dao.HourCountRow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -57,12 +58,28 @@ class ReportInsightsTest {
     }
 
     @Test
-    fun `深夜占比只统计23点与0到1点并封顶100`() {
+    fun `深夜占比按23点与0到4点六小时档统计并封顶100`() {
+        // B5 口径收敛：深夜档 = {23,0,1,2,3,4}（与 isNightOwl / 时段档同源）
         // 23/0/1 各 2 次 = 6，白天 14 次 → 6/20 = 30%
         val d = data(hours = listOf(HourCountRow(23, 2L), HourCountRow(0, 2L), HourCountRow(1, 2L), HourCountRow(12, 14L)))
         assertEquals(30, ReportInsights.nightSharePct(d))
-        // 全在 2 点（不算深夜）→ 0
-        assertEquals(0, ReportInsights.nightSharePct(data(hours = listOf(HourCountRow(2, 9L)))))
+        // 全在 4 点（属深夜档）→ 100
+        assertEquals(100, ReportInsights.nightSharePct(data(hours = listOf(HourCountRow(4, 9L)))))
+        // 5 点（清晨档，不属深夜）→ 0
+        assertEquals(0, ReportInsights.nightSharePct(data(hours = listOf(HourCountRow(5, 9L)))))
+    }
+
+    @Test
+    fun `B5 isNightOwl与深夜占比同源且边界小时一致`() {
+        // 峰值落在 4 点（深夜档末小时）→ isNightOwl 为真
+        val data4 = data(hours = listOf(HourCountRow(4, 9L), HourCountRow(12, 1L)))
+        assertTrue("peakHour=4 应判夜猫子", data4.isNightOwl)
+        assertEquals("深夜 9 / 总 10 = 90%", 90, ReportInsights.nightSharePct(data4))
+        // 峰值落在 5 点（清晨档）→ 非夜猫子
+        assertFalse("peakHour=5 不应判夜猫子", data(hours = listOf(HourCountRow(5, 9L))).isNightOwl)
+        // 权威集合含 23 点、不含 5 点
+        assertTrue(23 in ReportData.NIGHT_HOURS)
+        assertFalse(5 in ReportData.NIGHT_HOURS)
     }
 
     @Test
