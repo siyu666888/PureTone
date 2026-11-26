@@ -12,16 +12,29 @@ import com.puretone.player.lyrics.M3uEntry
  * 3. 文件名（不含扩展名）唯一匹配。
  *
  * 纯 JVM 逻辑，可单测。
+ *
+ * R8-11：后缀层旧实现对每个条目线性过滤全库（O(n×m)）。改为一次构建
+ * 「路径段后缀 → 库路径」倒排索引，每个条目只查索引（近似 O(d)，d=路径深度）。
+ * 匹配语义（含段边界、歧义唯一性、精确/后缀/文件名三级优先）完全不变，
+ * 由 PlaylistImportResolverTest 的新旧实现等价性测试锁定。
  */
 object PlaylistImportResolver {
+
+    /**
+     * 一次构建的匹配索引。[byPath] 供精确层与后缀层取值，[bySuffix] 供后缀层按路径判歧义，
+     * [byName] 供文件名层，[suffixToPaths] 是 R8-11 新增的倒排表。
+     */
+    private data class ImportIndex(
+        val byPath: Map<String, SongEntity>,
+        val bySuffix: Map<String, List<SongEntity>>,
+        val byName: Map<String, List<SongEntity>>,
+        val suffixToPaths: Map<String, Set<String>>
+    )
 
     fun resolve(entries: List<M3uEntry>, library: List<SongEntity>): List<SongEntity> {
         if (entries.isEmpty() || library.isEmpty()) return emptyList()
 
-        val byPath = library.associateBy { it.path }
-        val bySuffix = library.groupBy { it.path }
-        val byName = library.groupBy { fileNameKey(it.path) }
-
+        val index = buildIndex(library)
         val result = mutableListOf<SongEntity>()
         entries.forEach { entry ->
             // P2-8：导入条目可能带 file:// 前缀或 URL 编码（空格→%20 等）。
@@ -29,23 +42,56 @@ object PlaylistImportResolver {
             val normalized = urlDecode(entry.path)
                 .removePrefix("file://")
                 .replace('\\', '/')
-            // 后缀 tier 同样必须唯一：裸文件名（a.mp3）会同时命中多个目录下的同名曲库文件，
-            // 此时必须判歧义跳过，而不是静默匹配第一首（导入错歌）
-            // P2-12：必须以「路径段边界」结尾匹配。旧实现裸 endsWith 会让条目
-            // "music/a.mp3" 命中曲库里的 ".../mymusic/a.mp3"（目录名恰好同后缀），
-            // 且因为唯一而静默导入——导进来的是另一首歌。
-            val suffixMatches = bySuffix.entries.filter { (libPath, _) ->
-                libPath == normalized ||
-                    libPath.endsWith("/$normalized") ||
-                    normalized.endsWith("/$libPath")
+
+            // 后缀层：收集所有满足「路径段后缀互含」的库路径，数量必须唯一才匹配。
+            // P2-12：必须以「路径段边界」结尾匹配，倒排表的 key 正是每个 '/' 之后的子串，
+            // 天然满足段边界，裸 endsWith 命中 "mymusic/a.mp3" 的问题不会出现。
+            val candidates = HashSet<String>()
+            // 条件2：库路径以 normalized 为段后缀（libPath.endsWith("/$normalized")）。
+            index.suffixToPaths[normalized]?.let { candidates.addAll(it) }
+            // 条件1：完全相等（exact 层优先返回，此处保留仅为候选集合语义完整）。
+            if (normalized in index.byPath) candidates += normalized
+            // 条件3：normalized 以库路径为段后缀（normalized.endsWith("/$libPath")）。
+            pathSegmentSuffixes(normalized).forEach { suffix ->
+                if (suffix in index.bySuffix) candidates += suffix
             }
-            val match = byPath[normalized]
-                ?: suffixMatches.singleOrNull()?.value?.firstOrNull()
-                ?: byName[fileNameKey(normalized)]?.takeIf { it.size == 1 }?.firstOrNull()
+
+            val match = index.byPath[normalized]
+                ?: candidates.singleOrNull()?.let { index.bySuffix[it]?.firstOrNull() }
+                ?: index.byName[fileNameKey(normalized)]?.takeIf { it.size == 1 }?.firstOrNull()
                 ?: return@forEach
             if (result.none { it.id == match.id }) result += match
         }
         return result
+    }
+
+    /** 构建一次索引，复杂度 O(n×d)。 */
+    private fun buildIndex(library: List<SongEntity>): ImportIndex {
+        val byPath = library.associateBy { it.path }
+        val bySuffix = library.groupBy { it.path }
+        val byName = library.groupBy { fileNameKey(it.path) }
+        val suffixToPaths = HashMap<String, MutableSet<String>>()
+        bySuffix.keys.forEach { path ->
+            pathSegmentSuffixes(path).forEach { suffix ->
+                suffixToPaths.getOrPut(suffix) { HashSet() } += path
+            }
+        }
+        return ImportIndex(byPath, bySuffix, byName, suffixToPaths)
+    }
+
+    /**
+     * 枚举一个路径的所有「路径段后缀」：每个 '/' 之后到结尾的子串。
+     * 与 `path.endsWith("/$x")` 严格等价（x 非空且不含前导 '/'），用于倒排表构建与查询。
+     */
+    private fun pathSegmentSuffixes(path: String): Sequence<String> = sequence {
+        var start = 0
+        while (start < path.length) {
+            val slash = path.indexOf('/', start)
+            if (slash < 0) break
+            val suffix = path.substring(slash + 1)
+            if (suffix.isNotEmpty()) yield(suffix)
+            start = slash + 1
+        }
     }
 
     private fun fileNameKey(path: String): String =
